@@ -19,11 +19,12 @@ fun main() {
 }
 
 enum class BlockType(val id: Int, val texturePath: String?) {
-    EMPTY(0, null), // Pusty blok, bez tekstury
+    EMPTY(0, null),
     BLACK_BRICKS(1, "textures/black_bricks.png"),
     RED_BRICKS(2, "textures/bricks.jpg"),
     FLOOR(3, "textures/floor.jpg"),
-    CEILING(4, "textures/ceiling.jpg");
+    CEILING(4, "textures/ceiling.jpg"),
+    LIGHT_SOURCE(5, null);
 
     companion object {
         private val byId = values().associateBy { it.id }
@@ -53,9 +54,12 @@ class Main {
     private val pressedKeys = mutableSetOf<Int>()
 
     private val fogColor = floatArrayOf(0.3f, 0.3f, 0.3f, 0.5f)
-    private val fogDensity = 0.14f
+    private val fogDensity = 0.14f*1.5f
     private val fogMode = GL_EXP2
 
+    private var lightRed = 0.8f
+    private var lightGreen = 0.1f
+    private var lightBlue = 0.1f
 
     val grid1 = arrayOf(
         intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
@@ -73,7 +77,7 @@ class Main {
         intArrayOf(1, 0, 0, 0, 0, 0, 0, 0, 1),
         intArrayOf(0, 0, 0, 0, 0, 0, 0, 0, 0),
         intArrayOf(1, 0, 0, 0, 0, 0, 0, 0, 1),
-        intArrayOf(2, 0, 0, 0, 2, 0, 0, 0, 2),
+        intArrayOf(2, 0, 5, 0, 2, 0, 0, 0, 2),
         intArrayOf(1, 0, 0, 0, 0, 0, 0, 0, 1),
         intArrayOf(0, 0, 0, 0, 0, 0, 0, 0, 0),
         intArrayOf(1, 0, 0, 0, 0, 0, 0, 0, 1),
@@ -119,30 +123,6 @@ class Main {
     private fun init() {
         println()
         gridMap = GridMap(20, 5, 20)
-        /*
-        for (x in 0..8) {
-            for (y in 0..8) {
-                if (grid1[x][y] == 1) {
-                    gridMap.setBlock(x, 0, y, 1)
-                } else if (grid1[x][y] == 3) {
-                    gridMap.setBlock(x, 0, y, 3)
-                }
-                if (grid2[x][y] == 1) {
-                    gridMap.setBlock(x+3, 1, y+3, 1)
-                } else if (grid2[x][y] == 2) {
-                    gridMap.setBlock(x+3, 1, y+3, 2)
-                }
-                if (grid3[x][y] == 1) {
-                    gridMap.setBlock(x+3, 2, y+3, 1)
-                }
-                if (grid4[x][y] == 1) {
-                    gridMap.setBlock(x+3, 3, y+3, 1)
-                } else if (grid4[x][y] == 4) {
-                    gridMap.setBlock(x+3, 3, y+3, 4)
-                }
-            }
-        }*/
-        //gridMap.setBlock(2, 1, 2, true)
 
         val layers = listOf(grid1, grid2, grid3, grid4)
         layers.forEachIndexed { y, grid ->
@@ -232,7 +212,19 @@ class Main {
         }
         glEnable(GL_TEXTURE_2D)
 
-        glClearColor(fogColor[0], fogColor[1], fogColor[2], fogColor[3]) // Kolor tła
+        // --- Ustawienia oświetlenia ---
+        glEnable(GL_LIGHTING)
+        glEnable(GL_LIGHT0)
+
+        glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 0.0f)
+        val ambientColor = BufferUtils.createFloatBuffer(4).put(floatArrayOf(0.2f, 0.2f, 0.2f, 1.0f)).flip()
+        val diffuseColor = BufferUtils.createFloatBuffer(4).put(floatArrayOf(0.8f, 0.8f, 0.8f, 1.0f)).flip()
+        val specularColor = BufferUtils.createFloatBuffer(4).put(floatArrayOf(0.0f, 0.0f, 0.0f, 1.0f)).flip()
+        glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT, ambientColor)
+        glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE, diffuseColor)
+        glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, specularColor)
+
+        glClearColor(fogColor[0], fogColor[1], fogColor[2], fogColor[3])
         glEnable(GL_DEPTH_TEST)
         glEnable(GL_FOG)
         val fogColorBuffer = BufferUtils.createFloatBuffer(4).put(fogColor).flip()
@@ -299,7 +291,7 @@ class Main {
             for (y in minY..maxY) {
                 for (z in minZ..maxZ) {
                     val blockType = gridMap.getBlock(x, y, z)
-                    if (blockType != BlockType.EMPTY.id && blockType != BlockType.RED_BRICKS.id) {
+                    if (blockType != BlockType.EMPTY.id && blockType != BlockType.RED_BRICKS.id && blockType != BlockType.LIGHT_SOURCE.id) {
                         return true
                     }
                 }
@@ -329,6 +321,32 @@ class Main {
             glRotatef(pitch, 1.0f, 0.0f, 0.0f)
             glRotatef(yaw, 0.0f, 1.0f, 0.0f)
             glTranslatef(-cameraX, -cameraY, -cameraZ)
+
+            val lightSources = gridMap.getLightSources()
+            if (lightSources.isNotEmpty()) {
+                val lightX = lightSources[0].x.toFloat() + 0.5f
+                val lightY = lightSources[0].y.toFloat() + 0.5f
+                val lightZ = lightSources[0].z.toFloat() + 0.5f
+
+                val lightPositionBuffer = BufferUtils.createFloatBuffer(4).put(floatArrayOf(lightX, lightY, lightZ, 1.0f)).flip()
+                glLightfv(GL_LIGHT0, GL_POSITION, lightPositionBuffer)
+
+                val lightAmbient = BufferUtils.createFloatBuffer(4).put(floatArrayOf(0.1f, 0.1f, 0.1f, 1.0f)).flip()
+                val lightDiffuse = BufferUtils.createFloatBuffer(4).put(floatArrayOf(lightRed, lightGreen, lightBlue, 1.0f)).flip()
+                val lightSpecular = BufferUtils.createFloatBuffer(4).put(floatArrayOf(lightRed * 0.5f, lightGreen * 0.5f, lightBlue * 0.5f, 1.0f)).flip() //zmiana odbicia lustrzanego
+
+                glLightfv(GL_LIGHT0, GL_AMBIENT, lightAmbient)
+                glLightfv(GL_LIGHT0, GL_DIFFUSE, lightDiffuse)
+                glLightfv(GL_LIGHT0, GL_SPECULAR, lightSpecular)
+
+                val LIGHT_RANGE = 12.0f
+                glLightf(GL_LIGHT0, GL_CONSTANT_ATTENUATION, 0.2f)
+                glLightf(GL_LIGHT0, GL_LINEAR_ATTENUATION, 2.0f / LIGHT_RANGE)
+                glLightf(GL_LIGHT0, GL_QUADRATIC_ATTENUATION, 1.0f / (LIGHT_RANGE * LIGHT_RANGE))
+            } else {
+                glDisable(GL_LIGHT0)
+            }
+
             gridMap.render(textureIdMap)
             glfwSwapBuffers(window)
             glfwPollEvents()
@@ -420,41 +438,79 @@ class Main {
 
 object Cube {
     private val vertices = floatArrayOf(
-        // Przednia ściana
+        // Przednia ściana (Normal: 0, 0, 1)
         -0.5f, -0.5f,  0.5f,
         0.5f, -0.5f,  0.5f,
         0.5f,  0.5f,  0.5f,
         -0.5f,  0.5f,  0.5f,
 
-        // Tylna ściana
+        // Tylna ściana (Normal: 0, 0, -1)
         -0.5f, -0.5f, -0.5f,
         -0.5f,  0.5f, -0.5f,
         0.5f,  0.5f, -0.5f,
         0.5f, -0.5f, -0.5f,
 
-        // Górna ściana
+        // Górna ściana (Normal: 0, 1, 0)
         -0.5f,  0.5f, -0.5f,
         -0.5f,  0.5f,  0.5f,
         0.5f,  0.5f,  0.5f,
         0.5f,  0.5f, -0.5f,
 
-        // Dolna ściana
+        // Dolna ściana (Normal: 0, -1, 0)
         -0.5f, -0.5f, -0.5f,
         0.5f, -0.5f, -0.5f,
         0.5f, -0.5f,  0.5f,
         -0.5f, -0.5f,  0.5f,
 
-        // Prawa ściana
+        // Prawa ściana (Normal: 1, 0, 0)
         0.5f, -0.5f, -0.5f,
         0.5f,  0.5f, -0.5f,
         0.5f,  0.5f,  0.5f,
         0.5f, -0.5f,  0.5f,
 
-        // Lewa ściana
+        // Lewa ściana (Normal: -1, 0, 0)
         -0.5f, -0.5f, -0.5f,
         -0.5f, -0.5f,  0.5f,
         -0.5f,  0.5f,  0.5f,
         -0.5f,  0.5f, -0.5f
+    )
+
+    private val normals = floatArrayOf(
+        // Przednia
+        0.0f, 0.0f, 1.0f,
+        0.0f, 0.0f, 1.0f,
+        0.0f, 0.0f, 1.0f,
+        0.0f, 0.0f, 1.0f,
+
+        // Tylna
+        0.0f, 0.0f, -1.0f,
+        0.0f, 0.0f, -1.0f,
+        0.0f, 0.0f, -1.0f,
+        0.0f, 0.0f, -1.0f,
+
+        // Górna
+        0.0f, 1.0f, 0.0f,
+        0.0f, 1.0f, 0.0f,
+        0.0f, 1.0f, 0.0f,
+        0.0f, 1.0f, 0.0f,
+
+        // Dolna
+        0.0f, -1.0f, 0.0f,
+        0.0f, -1.0f, 0.0f,
+        0.0f, -1.0f, 0.0f,
+        0.0f, -1.0f, 0.0f,
+
+        // Prawa
+        1.0f, 0.0f, 0.0f,
+        1.0f, 0.0f, 0.0f,
+        1.0f, 0.0f, 0.0f,
+        1.0f, 0.0f, 0.0f,
+
+        // Lewa
+        -1.0f, 0.0f, 0.0f,
+        -1.0f, 0.0f, 0.0f,
+        -1.0f, 0.0f, 0.0f,
+        -1.0f, 0.0f, 0.0f
     )
 
     private val indices = intArrayOf(
@@ -509,7 +565,9 @@ object Cube {
         for (i in indices.indices) {
             val vertexIndex = indices[i]
             val texCoordIndex = vertexIndex * 2
+            val normalIndex = vertexIndex * 3
 
+            glNormal3f(normals[normalIndex], normals[normalIndex + 1], normals[normalIndex + 2])
             glTexCoord2f(texCoords[texCoordIndex], texCoords[texCoordIndex + 1])
             glVertex3f(vertices[vertexIndex * 3], vertices[vertexIndex * 3 + 1], vertices[vertexIndex * 3 + 2])
         }
@@ -517,8 +575,11 @@ object Cube {
     }
 }
 
+data class LightSource(val x: Int, val y: Int, val z: Int)
+
 class GridMap(val width: Int, val height: Int, val depth: Int) {
     private val blocks: Array<Array<IntArray>> = Array(width) { Array(height) { IntArray(depth) { 0 } } }
+    private val lightSources = mutableListOf<LightSource>()
 
     /**
      * Ustawia typ bloku w danej pozycji (x, y, z).
@@ -526,7 +587,15 @@ class GridMap(val width: Int, val height: Int, val depth: Int) {
      */
     fun setBlock(x: Int, y: Int, z: Int, type: Int) {
         if (x in 0 until width && y in 0 until height && z in 0 until depth) {
+            val oldType = blocks[x][y][z]
             blocks[x][y][z] = type
+
+            if (oldType == BlockType.LIGHT_SOURCE.id) {
+                lightSources.remove(LightSource(x, y, z))
+            }
+            if (type == BlockType.LIGHT_SOURCE.id) {
+                lightSources.add(LightSource(x, y, z))
+            }
         } else {
             System.err.println("Pozycja ($x, $y, $z) poza zakresem mapy.")
         }
@@ -544,32 +613,49 @@ class GridMap(val width: Int, val height: Int, val depth: Int) {
     }
 
     /**
+     * Zwraca listę wszystkich źródeł światła na mapie.
+     */
+    fun getLightSources(): List<LightSource> {
+        return lightSources
+    }
+
+    /**
      * Renderuje wszystkie bloki na mapie.
      * Teraz przyjmuje mapę ID tekstur, gdzie kluczem jest typ bloku.
      */
     fun render(textureIDs: Map<Int, Int>) {
         glEnable(GL_TEXTURE_2D)
+        glEnable(GL_COLOR_MATERIAL)
+        glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
 
         for (x in 0 until width) {
             for (y in 0 until height) {
                 for (z in 0 until depth) {
                     val blockType = getBlock(x, y, z)
-                    if (blockType != 0) {
+                    if (blockType != BlockType.EMPTY.id) {
+                        glPushMatrix()
+                        glTranslatef(x.toFloat() + 0.5f, y.toFloat() + 0.5f, z.toFloat() + 0.5f)
+
                         val textureID = textureIDs[blockType]
                         if (textureID != null) {
                             glBindTexture(GL_TEXTURE_2D, textureID)
-                            glPushMatrix()
-                            glTranslatef(x.toFloat() + 0.5f, y.toFloat() + 0.5f, z.toFloat() + 0.5f)
+                            glColor3f(1.0f, 1.0f, 1.0f)
                             Cube.render()
-                            glPopMatrix()
-                        } else {
-                            System.err.println("Brak tekstury dla typu bloku: $blockType")
                         }
+                        /*
+                        glDisable(GL_TEXTURE_2D)
+                            glColor3f(1.0f, 1.0f, 0.8f) // Jasnożółty kolor dla źródła światła
+                            Cube.render()
+                            glEnable(GL_TEXTURE_2D)
+                            glColor3f(1.0f, 1.0f, 1.0f) // Przywróć biały kolor dla tekstur
+                        */
+                        glPopMatrix()
                     }
                 }
             }
         }
         glBindTexture(GL_TEXTURE_2D, 0)
         glDisable(GL_TEXTURE_2D)
+        glDisable(GL_COLOR_MATERIAL)
     }
 }
