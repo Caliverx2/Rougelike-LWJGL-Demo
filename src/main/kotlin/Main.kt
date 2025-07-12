@@ -36,8 +36,8 @@ class Main {
     private var window: Long = NULL
     private val textureIdMap = mutableMapOf<Int, Int>()
 
-    private val width = 320*3
-    private val height = 180*3
+    private val width = 1920//320*3
+    private val height = 1080//180*3
     private val title = "LWJGL Demo"
 
     private var cameraX = 4.0f
@@ -61,6 +61,10 @@ class Main {
     private var lightGreen = 0.1f
     private var lightBlue = 0.1f
 
+    private val MAX_LIGHTS = 8 // OpenGL gwarantuje co najmniej 8
+    private val openGlLights = IntArray(MAX_LIGHTS) { GL_LIGHT0 + it }
+
+
     val grid1 = arrayOf(
         intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
         intArrayOf(1, 3, 3, 3, 3, 3, 3, 3, 1),
@@ -77,7 +81,7 @@ class Main {
         intArrayOf(1, 0, 0, 0, 0, 0, 0, 0, 1),
         intArrayOf(0, 0, 0, 0, 0, 0, 0, 0, 0),
         intArrayOf(1, 0, 0, 0, 0, 0, 0, 0, 1),
-        intArrayOf(2, 0, 5, 0, 2, 0, 0, 0, 2),
+        intArrayOf(2, 0, 0, 0, 2, 0, 0, 0, 2),
         intArrayOf(1, 0, 0, 0, 0, 0, 0, 0, 1),
         intArrayOf(0, 0, 0, 0, 0, 0, 0, 0, 0),
         intArrayOf(1, 0, 0, 0, 0, 0, 0, 0, 1),
@@ -86,7 +90,7 @@ class Main {
     val grid3 = arrayOf(
         intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
         intArrayOf(1, 0, 0, 0, 0, 0, 0, 0, 1),
-        intArrayOf(1, 0, 0, 0, 0, 0, 0, 0, 1),
+        intArrayOf(1, 0, 0, 0, 0, 0, 5, 0, 1),
         intArrayOf(1, 0, 0, 0, 0, 0, 0, 0, 1),
         intArrayOf(1, 0, 0, 0, 1, 0, 0, 0, 1),
         intArrayOf(1, 0, 0, 0, 0, 0, 0, 0, 1),
@@ -168,6 +172,7 @@ class Main {
             if (key == GLFW_KEY_G && action == GLFW_RELEASE) {
                 println("X: ${cameraX.toInt()}, Y: ${cameraY.toInt()}, Z: ${cameraZ.toInt()}")
                 println(gridMap.getBlock(cameraX.toInt(), cameraY.toInt(), cameraZ.toInt()))
+                gridMap.setBlock(cameraX.toInt(), cameraY.toInt(), cameraZ.toInt(), 5)
             }
         }
 
@@ -214,7 +219,7 @@ class Main {
 
         // --- Ustawienia oświetlenia ---
         glEnable(GL_LIGHTING)
-        glEnable(GL_LIGHT0)
+        //glEnable(GL_LIGHT0)
 
         glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 0.0f)
         val ambientColor = BufferUtils.createFloatBuffer(4).put(floatArrayOf(0.2f, 0.2f, 0.2f, 1.0f)).flip()
@@ -300,6 +305,49 @@ class Main {
         return false
     }
 
+    private fun updateLights() {
+        val lightSources = gridMap.getLightSources()
+
+        // Bufory do wielokrotnego użytku, aby nie tworzyć ich w pętli
+        val lightPositionBuffer = BufferUtils.createFloatBuffer(4)
+        val lightAmbient = BufferUtils.createFloatBuffer(4).put(floatArrayOf(0.1f, 0.1f, 0.1f, 1.0f)).flip()
+        val lightDiffuse = BufferUtils.createFloatBuffer(4)
+        val lightSpecular = BufferUtils.createFloatBuffer(4)
+
+        for (i in 0 until MAX_LIGHTS) {
+            val lightId = openGlLights[i]
+            if (i < lightSources.size) {
+                val source = lightSources[i]
+                glEnable(lightId)
+
+                // Pozycja
+                lightPositionBuffer.clear()
+                lightPositionBuffer.put(floatArrayOf(source.x + 0.5f, source.y + 0.5f, source.z + 0.5f, 1.0f)).flip()
+                glLightfv(lightId, GL_POSITION, lightPositionBuffer)
+
+                // Kolor
+                lightDiffuse.clear()
+                lightDiffuse.put(floatArrayOf(lightRed, lightGreen, lightBlue, 1.0f)).flip()
+                lightSpecular.clear()
+                lightSpecular.put(floatArrayOf(lightRed * 0.5f, lightGreen * 0.5f, lightBlue * 0.5f, 1.0f)).flip()
+
+                glLightfv(lightId, GL_AMBIENT, lightAmbient)
+                glLightfv(lightId, GL_DIFFUSE, lightDiffuse)
+                glLightfv(lightId, GL_SPECULAR, lightSpecular)
+
+                // Tłumienie (attenuation)
+                val LIGHT_RANGE = 6.0f
+                glLightf(lightId, GL_CONSTANT_ATTENUATION, 0.2f)
+                glLightf(lightId, GL_LINEAR_ATTENUATION, 2.0f / LIGHT_RANGE)
+                glLightf(lightId, GL_QUADRATIC_ATTENUATION, 1.0f / (LIGHT_RANGE * LIGHT_RANGE))
+            } else {
+                // Wyłącz nieużywane światła
+                glDisable(lightId)
+            }
+        }
+    }
+
+
     private fun loop() {
         while (!glfwWindowShouldClose(window)) {
             glClear(GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT)
@@ -322,7 +370,9 @@ class Main {
             glRotatef(yaw, 0.0f, 1.0f, 0.0f)
             glTranslatef(-cameraX, -cameraY, -cameraZ)
 
-            val lightSources = gridMap.getLightSources()
+            updateLights()
+
+            /*val lightSources = gridMap.getLightSources()
             if (lightSources.isNotEmpty()) {
                 val lightX = lightSources[0].x.toFloat() + 0.5f
                 val lightY = lightSources[0].y.toFloat() + 0.5f
@@ -339,15 +389,17 @@ class Main {
                 glLightfv(GL_LIGHT0, GL_DIFFUSE, lightDiffuse)
                 glLightfv(GL_LIGHT0, GL_SPECULAR, lightSpecular)
 
-                val LIGHT_RANGE = 12.0f
+                val LIGHT_RANGE = 6.0f
                 glLightf(GL_LIGHT0, GL_CONSTANT_ATTENUATION, 0.2f)
                 glLightf(GL_LIGHT0, GL_LINEAR_ATTENUATION, 2.0f / LIGHT_RANGE)
                 glLightf(GL_LIGHT0, GL_QUADRATIC_ATTENUATION, 1.0f / (LIGHT_RANGE * LIGHT_RANGE))
             } else {
                 glDisable(GL_LIGHT0)
-            }
+            }*/
 
-            gridMap.render(textureIdMap)
+            //gridMap.render(textureIdMap, gridMap.getLightSources())
+
+            gridMap.render(textureIdMap) // Przekazujemy już tylko mapę tekstur
             glfwSwapBuffers(window)
             glfwPollEvents()
 
@@ -371,14 +423,14 @@ class Main {
                 rightVecZ /= lengthRight
             }
 
-            var moveSpeed = 0.07f
+            var moveSpeed = 0.09f
             var newCameraX = cameraX
             var newCameraY = cameraY
             var newCameraZ = cameraZ
 
             if (pressedKeys.contains(GLFW_KEY_LEFT_SHIFT)) {
-                moveSpeed = 0.11f
-            } else moveSpeed = 0.07f
+                moveSpeed = 0.14f
+            } else moveSpeed = 0.09f
             if (pressedKeys.contains(GLFW_KEY_W)) {
                 newCameraX -= rightVecX * moveSpeed
                 newCameraZ -= rightVecZ * moveSpeed
@@ -620,6 +672,47 @@ class GridMap(val width: Int, val height: Int, val depth: Int) {
     }
 
     /**
+     * Sprawdza, czy istnieje nieprzerwana linia wzroku od punktu startowego do końcowego.
+     * @return true, jeśli linia jest czysta, false, jeśli napotkano przeszkodę.
+     */
+    fun isLineOfSightClear(startX: Float, startY: Float, startZ: Float, endX: Float, endY: Float, endZ: Float): Boolean {
+        val dx = endX - startX
+        val dy = endY - startY
+        val dz = endZ - startZ
+
+        val steps = kotlin.math.max(kotlin.math.abs(dx), kotlin.math.max(kotlin.math.abs(dy), kotlin.math.abs(dz)))
+        if (steps == 0.0f) return true
+
+        val xInc = dx / steps
+        val yInc = dy / steps
+        val zInc = dz / steps
+
+        var currentX = startX
+        var currentY = startY
+        var currentZ = startZ
+
+        // Sprawdzamy każdy "krok" wzdłuż linii
+        for (i in 0 until steps.toInt()) {
+            currentX += xInc
+            currentY += yInc
+            currentZ += zInc
+
+            val blockX = currentX.toInt()
+            val blockY = currentY.toInt()
+            val blockZ = currentZ.toInt()
+
+            val blockType = getBlock(blockX, blockY, blockZ)
+            if (blockType != BlockType.EMPTY.id && blockType != BlockType.LIGHT_SOURCE.id) {
+                if (blockX != endX.toInt() || blockY != endY.toInt() || blockZ != endZ.toInt()) {
+                    return false
+                }
+            }
+        }
+
+        return true // Brak przeszkód
+    }
+
+    /**
      * Renderuje wszystkie bloki na mapie.
      * Teraz przyjmuje mapę ID tekstur, gdzie kluczem jest typ bloku.
      */
@@ -636,26 +729,28 @@ class GridMap(val width: Int, val height: Int, val depth: Int) {
                         glPushMatrix()
                         glTranslatef(x.toFloat() + 0.5f, y.toFloat() + 0.5f, z.toFloat() + 0.5f)
 
-                        val textureID = textureIDs[blockType]
-                        if (textureID != null) {
-                            glBindTexture(GL_TEXTURE_2D, textureID)
-                            glColor3f(1.0f, 1.0f, 1.0f)
+                        if (blockType == BlockType.LIGHT_SOURCE.id) {
+                            // Bloki światła są "emisyjne" - nie wpływa na nie oświetlenie
+                            // i świecą własnym, pełnym kolorem.
+                            glDisable(GL_LIGHTING)
+                            glColor3f(1.0f, 0.8f, 0.4f) // Jaskrawy, ciepły kolor
                             Cube.render()
+                            glEnable(GL_LIGHTING)
+                        } else {
+                            // Zwykłe bloki z teksturą, podlegające oświetleniu
+                            val textureID = textureIDs[blockType]
+                            if (textureID != null) {
+                                glBindTexture(GL_TEXTURE_2D, textureID)
+                                glColor3f(1.0f, 1.0f, 1.0f) // Reset koloru dla tekstury
+                                Cube.render()
+                            }
                         }
-                        /*
-                        glDisable(GL_TEXTURE_2D)
-                            glColor3f(1.0f, 1.0f, 0.8f) // Jasnożółty kolor dla źródła światła
-                            Cube.render()
-                            glEnable(GL_TEXTURE_2D)
-                            glColor3f(1.0f, 1.0f, 1.0f) // Przywróć biały kolor dla tekstur
-                        */
                         glPopMatrix()
                     }
                 }
             }
         }
         glBindTexture(GL_TEXTURE_2D, 0)
-        glDisable(GL_TEXTURE_2D)
         glDisable(GL_COLOR_MATERIAL)
     }
 }
