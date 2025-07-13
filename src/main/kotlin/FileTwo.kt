@@ -1,21 +1,22 @@
 import java.awt.Color
 import java.awt.Graphics
 import java.awt.Graphics2D
-import java.awt.SystemColor
+import java.awt.Point
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import javax.swing.JFrame
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
 import javax.swing.Timer
+import kotlin.Double
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlin.math.tan
 
-/**
- * Reprezentuje punkt lub wektor w przestrzeni 3D.
- */
 data class Vector3D(var x: Double, var y: Double, var z: Double) {
     operator fun plus(other: Vector3D) = Vector3D(x + other.x, y + other.y, z + other.z)
     operator fun minus(other: Vector3D) = Vector3D(x - other.x, y - other.y, z - other.z)
@@ -31,14 +32,8 @@ data class Vector3D(var x: Double, var y: Double, var z: Double) {
     fun normalized() = if (length() == 0.0) Vector3D(0.0, 0.0, 0.0) else this / length()
 }
 
-/**
- * Reprezentuje ścianę w przestrzeni 3D, zdefiniowaną przez listę wierzchołków i kolor.
- */
 data class Wall(val vertices: List<Vector3D>, val color: Color)
 
-/**
- * Implementuje podstawowe operacje na macierzach 4x4, używane do transformacji 3D.
- */
 class Matrix4x4(private val data: Array<DoubleArray>) {
     init {
         require(data.size == 4 && data.all { it.size == 4 }) { "Macierz musi być 4x4" }
@@ -96,9 +91,6 @@ class Matrix4x4(private val data: Array<DoubleArray>) {
         }
     }
 
-    /**
-     * Mnoży dwie macierze 4x4.
-     */
     operator fun times(other: Matrix4x4): Matrix4x4 {
         val result = Array(4) { DoubleArray(4) }
         for (i in 0 until 4) {
@@ -113,70 +105,55 @@ class Matrix4x4(private val data: Array<DoubleArray>) {
         return Matrix4x4(result)
     }
 
-    /**
-     * Transformuje wektor 3D za pomocą macierzy 4x4.
-     */
     fun transform(vector: Vector3D): Vector3D {
         val x = vector.x * data[0][0] + vector.y * data[0][1] + vector.z * data[0][2] + data[0][3]
         val y = vector.x * data[1][0] + vector.y * data[1][1] + vector.z * data[1][2] + data[1][3]
         val z = vector.x * data[2][0] + vector.y * data[2][1] + vector.z * data[2][2] + data[2][3]
         val w = vector.x * data[3][0] + vector.y * data[3][1] + vector.z * data[3][2] + data[3][3]
 
+        if (w == 0.0) {
+            return Vector3D(x, y, z)
+        }
         return Vector3D(x / w, y / w, z / w)
     }
 }
 
-/**
- * Klasa reprezentująca pojedynczą kostkę, składającą się ze ścian.
- */
 class Cube(val walls: List<Wall>) {
-    /**
-     * Tworzy kostkę o określonym rozmiarze i pozycji.
-     * @param size Rozmiar kostki (długość krawędzi).
-     * @param position Pozycja centralna kostki.
-     * @param colors Kolory dla każdej ściany kostki.
-     */
     companion object {
         fun create(size: Double, position: Vector3D, colors: List<Color>): Cube {
             val halfSize = size / 2.0
             val walls = mutableListOf<Wall>()
 
-            // Front
             walls.add(Wall(listOf(
                 Vector3D(-halfSize, -halfSize, halfSize) + position,
                 Vector3D(halfSize, -halfSize, halfSize) + position,
                 Vector3D(halfSize, halfSize, halfSize) + position,
                 Vector3D(-halfSize, halfSize, halfSize) + position
             ), colors[0]))
-            // Back
             walls.add(Wall(listOf(
                 Vector3D(-halfSize, -halfSize, -halfSize) + position,
                 Vector3D(-halfSize, halfSize, -halfSize) + position,
                 Vector3D(halfSize, halfSize, -halfSize) + position,
                 Vector3D(halfSize, -halfSize, -halfSize) + position
             ), colors[1]))
-            // Left
             walls.add(Wall(listOf(
                 Vector3D(-halfSize, -halfSize, -halfSize) + position,
                 Vector3D(-halfSize, -halfSize, halfSize) + position,
                 Vector3D(-halfSize, halfSize, halfSize) + position,
                 Vector3D(-halfSize, halfSize, -halfSize) + position
             ), colors[2]))
-            // Right
             walls.add(Wall(listOf(
                 Vector3D(halfSize, -halfSize, -halfSize) + position,
                 Vector3D(halfSize, halfSize, -halfSize) + position,
                 Vector3D(halfSize, halfSize, halfSize) + position,
                 Vector3D(halfSize, -halfSize, halfSize) + position
             ), colors[3]))
-            // Bottom
             walls.add(Wall(listOf(
                 Vector3D(-halfSize, -halfSize, -halfSize) + position,
                 Vector3D(halfSize, -halfSize, -halfSize) + position,
                 Vector3D(halfSize, -halfSize, halfSize) + position,
                 Vector3D(-halfSize, -halfSize, halfSize) + position
             ), colors[4]))
-            // Top
             walls.add(Wall(listOf(
                 Vector3D(-halfSize, halfSize, -halfSize) + position,
                 Vector3D(-halfSize, halfSize, halfSize) + position,
@@ -189,16 +166,20 @@ class Cube(val walls: List<Wall>) {
     }
 }
 
-/**
- * Komponent Swing do renderowania sceny 3D.
- */
 class Simple3DRenderer(private val gridMap: Array<Array<Array<Int>>>) : JPanel() {
 
     private val cubes = mutableListOf<Cube>()
     private var rotationAngleY = 0.5
     private var rotationAngleX = 0.5
+
+    private var cameraPosX = 0.0
+    private var cameraPosY = 0.0
+    private var cameraPosZ = -800.0
+
     private val cubeSize = 100.0
     private val spacing = 0.0
+
+    private lateinit var depthBuffer: Array<DoubleArray>
 
     init {
         addKeyListener(KeyboardListener())
@@ -207,12 +188,12 @@ class Simple3DRenderer(private val gridMap: Array<Array<Array<Int>>>) : JPanel()
         preferredSize = java.awt.Dimension(620, 400)
 
         val defaultColors = listOf(
-            Color.BLUE,      // Front
-            Color.GREEN,     // Back
-            Color.RED,       // Left
-            Color(250,150,0),// Right
-            Color.YELLOW,    // Bottom
-            Color.WHITE      // Top
+            Color.BLUE,
+            Color.GREEN,
+            Color.RED,
+            Color(250,150,0),
+            Color.YELLOW,
+            Color.WHITE
         )
 
         val gridWidth = gridMap.size * (cubeSize + spacing) - spacing
@@ -220,7 +201,7 @@ class Simple3DRenderer(private val gridMap: Array<Array<Array<Int>>>) : JPanel()
         val gridDepth = gridMap[0][0].size * (cubeSize + spacing) - spacing
 
         val startX = -gridWidth / 2.0 + cubeSize / 2.0
-        val startY = -gridHeight / 2.0 + cubeSize / 2.0
+        val startY = -gridHeight / 2.0 + cubeSize / 2.0 + 50.0
         val startZ = -gridDepth / 2.0 + cubeSize / 2.0
 
         for (x in gridMap.indices) {
@@ -243,17 +224,16 @@ class Simple3DRenderer(private val gridMap: Array<Array<Array<Int>>>) : JPanel()
 
     private inner class KeyboardListener : KeyAdapter() {
         override fun keyPressed(e: KeyEvent?) {
+            val moveSpeed = 20.0
             when (e?.keyCode) {
-                KeyEvent.VK_UP -> rotationAngleX -= 0.1
-                KeyEvent.VK_DOWN -> rotationAngleX += 0.1
-                KeyEvent.VK_LEFT -> rotationAngleY += 0.1
-                KeyEvent.VK_RIGHT -> rotationAngleY -= 0.1
-            }
-        }
-
-        override fun keyReleased(e: KeyEvent?) {
-            if (e?.keyCode == KeyEvent.VK_G) {
-                println("angleX")
+                KeyEvent.VK_UP -> rotationAngleX -= 0.05
+                KeyEvent.VK_DOWN -> rotationAngleX += 0.05
+                KeyEvent.VK_LEFT -> rotationAngleY += 0.05
+                KeyEvent.VK_RIGHT -> rotationAngleY -= 0.05
+                KeyEvent.VK_W -> cameraPosZ += moveSpeed
+                KeyEvent.VK_S -> cameraPosZ -= moveSpeed
+                KeyEvent.VK_A -> cameraPosX += moveSpeed
+                KeyEvent.VK_D -> cameraPosX -= moveSpeed
             }
         }
     }
@@ -261,61 +241,124 @@ class Simple3DRenderer(private val gridMap: Array<Array<Array<Int>>>) : JPanel()
     override fun paintComponent(g: Graphics) {
         super.paintComponent(g)
         val g2d = g as Graphics2D
-        val width = width
-        val height = height
+        val w = width
+        val h = height
+
+        depthBuffer = Array(w) { DoubleArray(h) { Double.MAX_VALUE } }
 
         val modelMatrix = Matrix4x4.rotationY(rotationAngleY) * Matrix4x4.rotationX(rotationAngleX)
-        val viewMatrix = Matrix4x4.translation(0.0, 0.0, -800.0)
-        val projectionMatrix = createPerspectiveProjectionMatrix(90.0, width.toDouble() / height.toDouble(), 1.0, 2000.0)
+        val viewMatrix = Matrix4x4.translation(cameraPosX, cameraPosY, cameraPosZ)
+        val projectionMatrix = createPerspectiveProjectionMatrix(90.0, w.toDouble() / h.toDouble(), 1.0, 2000.0)
+
+        val transformMatrix = projectionMatrix * viewMatrix * modelMatrix
 
         val allWalls = cubes.flatMap { it.walls }
 
-        val sortedWalls = allWalls.sortedByDescending { wall ->
-            wall.vertices.map { v -> (projectionMatrix * viewMatrix * modelMatrix).transform(v).z }.average()
+        for (wall in allWalls) {
+            val transformedVerticesNDC = wall.vertices.map { vertex ->
+                transformMatrix.transform(vertex)
+            }
+
+            if (transformedVerticesNDC.size >= 4) {
+                val t1 = listOf(transformedVerticesNDC[0], transformedVerticesNDC[1], transformedVerticesNDC[2])
+                val t2 = listOf(transformedVerticesNDC[0], transformedVerticesNDC[2], transformedVerticesNDC[3])
+
+                val isT1InFrustum = t1.any { it.z >= -1.0 && it.z <= 1.0 }
+                val isT2InFrustum = t2.any { it.z >= -1.0 && it.z <= 1.0 }
+
+                if (isT1InFrustum) rasterizeTriangle(g2d, t1, wall.color, w, h)
+                if (isT2InFrustum) rasterizeTriangle(g2d, t2, wall.color, w, h)
+            }
         }
+    }
 
-        for (wall in sortedWalls) {
-            val transformedVertices = wall.vertices.map { vertex ->
-                modelMatrix.transform(vertex)
-            }
+    data class ScreenVertex(val x: Int, val y: Int, val z: Double)
 
-            val v0 = transformedVertices[0]
-            val v1 = transformedVertices[1]
-            val v2 = transformedVertices[2]
-            val edge1 = (v1 - v0)
-            val edge2 = (v2 - v0)
-            val normal = edge1.cross(edge2).normalized()
+    private fun rasterizeTriangle(g2d: Graphics2D, ndcVertices: List<Vector3D>, color: Color, screenWidth: Int, screenHeight: Int) {
+        if (ndcVertices.size != 3) return
 
+        val v0 = ScreenVertex(
+            ((ndcVertices[0].x + 1.0) * screenWidth / 2.0).toInt(),
+            ((-ndcVertices[0].y + 1.0) * screenHeight / 2.0).toInt(),
+            ndcVertices[0].z
+        )
+        val v1 = ScreenVertex(
+            ((ndcVertices[1].x + 1.0) * screenWidth / 2.0).toInt(),
+            ((-ndcVertices[1].y + 1.0) * screenHeight / 2.0).toInt(),
+            ndcVertices[1].z
+        )
+        val v2 = ScreenVertex(
+            ((ndcVertices[2].x + 1.0) * screenWidth / 2.0).toInt(),
+            ((-ndcVertices[2].y + 1.0) * screenHeight / 2.0).toInt(),
+            ndcVertices[2].z
+        )
 
-            val cameraVector = Vector3D(0.0, 0.0, 1.0).normalized()
+        var minX = minOf(v0.x, v1.x, v2.x)
+        var maxX = maxOf(v0.x, v1.x, v2.x)
+        var minY = minOf(v0.y, v1.y, v2.y)
+        var maxY = maxOf(v0.y, v1.y, v2.y)
 
+        minX = max(0, minX)
+        maxX = min(screenWidth - 1, maxX)
+        minY = max(0, minY)
+        maxY = min(screenHeight - 1, maxY)
 
-            if (normal.dot(cameraVector) > 0) {
-                val finalTransformedVertices = wall.vertices.map { vertex ->
-                    projectionMatrix.transform(viewMatrix.transform(modelMatrix.transform(vertex)))
+        g2d.color = color
+
+        val A12 = (v1.y - v2.y).toDouble()
+        val B12 = (v2.x - v1.x).toDouble()
+        val C12 = (v1.x * v2.y - v2.x * v1.y).toDouble()
+
+        val A20 = (v2.y - v0.y).toDouble()
+        val B20 = (v0.x - v2.x).toDouble()
+        val C20 = (v2.x * v0.y - v0.x * v2.y).toDouble()
+
+        val A01 = (v0.y - v1.y).toDouble()
+        val B01 = (v1.x - v0.x).toDouble()
+        val C01 = (v0.x * v1.y - v1.x * v0.y).toDouble()
+
+        val totalArea = A12 * v0.x + B12 * v0.y + C12
+        if (totalArea == 0.0) return
+
+        var w0_initial = A12 * minX + B12 * minY + C12
+        var w1_initial = A20 * minX + B20 * minY + C20
+        var w2_initial = A01 * minX + B01 * minY + C01
+
+        for (py in minY..maxY) {
+            var w0 = w0_initial
+            var w1 = w1_initial
+            var w2 = w2_initial
+
+            for (px in minX..maxX) {
+                val epsilon = 0.00001
+                val isInside = (w0 >= -epsilon && w1 >= -epsilon && w2 >= -epsilon) ||
+                        (w0 <= epsilon && w1 <= epsilon && w2 <= epsilon)
+
+                if (isInside) {
+                    val alpha = w0 / totalArea
+                    val beta = w1 / totalArea
+                    val gamma = w2 / totalArea
+
+                    val interpolatedZ = alpha * v0.z + beta * v1.z + gamma * v2.z
+
+                    if (px >= 0 && px < screenWidth && py >= 0 && py < screenHeight && interpolatedZ < depthBuffer[px][py]) {
+                        g2d.fillRect(px, py, 1, 1)
+                        depthBuffer[px][py] = interpolatedZ
+                    }
                 }
-
-                val screenPoints = finalTransformedVertices.map { v ->
-                    java.awt.Point(
-                        (v.x * width / 2.0 + width / 2.0).toInt(),
-                        (-v.y * height / 2.0 + height / 2.0).toInt()
-                    )
-                }
-
-                g2d.color = wall.color
-                val xPoints = screenPoints.map { it.x }.toIntArray()
-                val yPoints = screenPoints.map { it.y }.toIntArray()
-                g2d.fillPolygon(xPoints, yPoints, screenPoints.size)
-
-                g2d.color = Color.BLACK
-                g2d.drawPolygon(xPoints, yPoints, screenPoints.size)
+                w0 += A12
+                w1 += A20
+                w2 += A01
             }
+            w0_initial += B12
+            w1_initial += B20
+            w2_initial += B01
         }
     }
 
     private fun createPerspectiveProjectionMatrix(fovDegrees: Double, aspectRatio: Double, near: Double, far: Double): Matrix4x4 {
         val fovRad = fovDegrees * PI / 180.0
-        val tanHalfFov = kotlin.math.tan(fovRad / 2.0)
+        val tanHalfFov = tan(fovRad / 2.0)
 
         val m00 = 1.0 / (aspectRatio * tanHalfFov)
         val m11 = 1.0 / tanHalfFov
@@ -333,9 +376,6 @@ class Simple3DRenderer(private val gridMap: Array<Array<Array<Int>>>) : JPanel()
     }
 }
 
-/**
- * Główna funkcja aplikacji, tworząca okno Swing i dodająca do niego renderer.
- */
 fun main() {
     val grid1 = arrayOf(
         intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
@@ -382,9 +422,9 @@ fun main() {
         intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1)
     )
 
-    val gridMap: Array<Array<Array<Int>>> = Array(9) { // X
-        Array(4) { // Y (poziomy)
-            Array(9) { 0 } // Z
+    val gridMap: Array<Array<Array<Int>>> = Array(9) {
+        Array(4) {
+            Array(9) { 0 }
         }
     }
 
@@ -406,7 +446,7 @@ fun main() {
     }
 
     SwingUtilities.invokeLater {
-        val frame = JFrame("Prosty Renderer 3D w Kotlin/Swing - Mapa Kostek")
+        val frame = JFrame("FileTwo.kt")
         frame.defaultCloseOperation = JFrame.EXIT_ON_CLOSE
         frame.add(Simple3DRenderer(gridMap))
         frame.pack()

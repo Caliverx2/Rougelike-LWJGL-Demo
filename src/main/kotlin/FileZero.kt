@@ -13,6 +13,8 @@ import javax.swing.Timer
 import kotlin.math.cos
 import kotlin.math.sin
 
+
+
 val grid1 = arrayOf(
     intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
     intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
@@ -134,7 +136,7 @@ class DrawingPanel : JPanel() {
 
 fun main() {
     SwingUtilities.invokeLater {
-        val frame = JFrame("FileZero")
+        val frame = JFrame("FileZero.kt")
         frame.defaultCloseOperation = JFrame.EXIT_ON_CLOSE
         val panel = DrawingPanel()
         panel.preferredSize = java.awt.Dimension(640, 400)
