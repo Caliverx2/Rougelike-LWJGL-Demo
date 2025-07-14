@@ -228,8 +228,8 @@ class Simple3DRenderer(private val gridMap: Array<Array<Array<Int>>>) : JPanel()
             when (e?.keyCode) {
                 KeyEvent.VK_UP -> rotationAngleX -= 0.05
                 KeyEvent.VK_DOWN -> rotationAngleX += 0.05
-                KeyEvent.VK_LEFT -> rotationAngleY += 0.05
-                KeyEvent.VK_RIGHT -> rotationAngleY -= 0.05
+                KeyEvent.VK_LEFT -> rotationAngleY -= 0.05
+                KeyEvent.VK_RIGHT -> rotationAngleY += 0.05
                 KeyEvent.VK_W -> cameraPosZ += moveSpeed
                 KeyEvent.VK_S -> cameraPosZ -= moveSpeed
                 KeyEvent.VK_A -> cameraPosX += moveSpeed
