@@ -13,12 +13,32 @@ import javax.swing.Timer
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.tan
+import java.awt.Toolkit
+import kotlin.math.sqrt
+import kotlin.math.abs
 
 data class Vector3d(val x: Double, val y: Double, val z: Double) {
-    operator fun plus(other: Vector3d) = (Vector3d(x + other.x, y + other.y, z + other.z))
-    operator fun minus(other: Vector3d) = (Vector3d(x - other.x, y - other.y, z - other.z))
-    operator fun times(other: Vector3d) = (Vector3d(x * other.x, y * other.y, z * other.z))
+    operator fun plus(other: Vector3d) = Vector3d(x + other.x, y + other.y, z + other.z)
+    operator fun minus(other: Vector3d) = Vector3d(x - other.x, y - other.y, z - other.z)
+    operator fun times(scalar: Double) = Vector3d(x * scalar, y * scalar, z * scalar)
+    operator fun div(scalar: Double) = Vector3d(x / scalar, y / scalar, z / scalar)
+
+    fun dot(other: Vector3d): Double = x * other.x + y * other.y + z * other.z
+    fun cross(other: Vector3d): Vector3d = Vector3d(
+        this.y * other.z - this.z * other.y,
+        this.z * other.x - this.x * other.z,
+        this.x * other.y - this.y * other.x
+    )
+    fun normalize(): Vector3d {
+        val length = length()
+        return if (length != 0.0) Vector3d(x / length, y / length, z / length) else Vector3d(0.0, 0.0, 0.0)
+    }
+    fun length(): Double = sqrt(x * x + y * y + z * z)
 }
+
+data class Vector4d(val x: Double, val y: Double, val z: Double, val w: Double)
+
+fun Double.isCloseToZero(epsilon: Double = 1e-9): Boolean = abs(this) < epsilon
 
 class Matrix4x4(private val data: Array<DoubleArray>) {
     init {
@@ -84,6 +104,31 @@ class Matrix4x4(private val data: Array<DoubleArray>) {
                 doubleArrayOf(0.0, 0.0, 0.0, 1.0)
             ))
         }
+
+        fun lookAt(eye: Vector3d, target: Vector3d, up: Vector3d): Matrix4x4 {
+            val zAxis = (eye - target).normalize()
+            val xAxis = up.cross(zAxis).normalize()
+            val yAxis = zAxis.cross(xAxis)
+
+            return Matrix4x4(arrayOf(
+                doubleArrayOf(xAxis.x, xAxis.y, xAxis.z, -xAxis.dot(eye)),
+                doubleArrayOf(yAxis.x, yAxis.y, yAxis.z, -yAxis.dot(eye)),
+                doubleArrayOf(zAxis.x, zAxis.y, zAxis.z, -zAxis.dot(eye)),
+                doubleArrayOf(0.0, 0.0, 0.0, 1.0)
+            ))
+        }
+
+        fun perspective(fovY: Double, aspectRatio: Double, near: Double, far: Double): Matrix4x4 {
+            val tanHalfFovY = tan(Math.toRadians(fovY / 2.0))
+            val f = 1.0 / tanHalfFovY
+
+            return Matrix4x4(arrayOf(
+                doubleArrayOf(f / aspectRatio, 0.0, 0.0, 0.0),
+                doubleArrayOf(0.0, f, 0.0, 0.0),
+                doubleArrayOf(0.0, 0.0, (far + near) / (near - far), (2.0 * far * near) / (near - far)),
+                doubleArrayOf(0.0, 0.0, -1.0, 0.0)
+            ))
+        }
     }
 
     operator fun times(other: Matrix4x4): Matrix4x4 {
@@ -100,13 +145,21 @@ class Matrix4x4(private val data: Array<DoubleArray>) {
         return Matrix4x4(result)
     }
 
+    fun transformHomogeneous(vector: Vector3d): Vector4d {
+        val x = vector.x * data[0][0] + vector.y * data[0][1] + vector.z * data[0][2] + data[0][3]
+        val y = vector.x * data[1][0] + vector.y * data[1][1] + vector.z * data[1][2] + data[1][3]
+        val z = vector.x * data[2][0] + vector.y * data[2][1] + vector.z * data[2][2] + data[2][3]
+        val w = vector.x * data[3][0] + vector.y * data[3][1] + vector.z * data[3][2] + data[3][3]
+        return Vector4d(x, y, z, w)
+    }
+
     fun transform(vector: Vector3d): Vector3d {
         val x = vector.x * data[0][0] + vector.y * data[0][1] + vector.z * data[0][2] + data[0][3]
         val y = vector.x * data[1][0] + vector.y * data[1][1] + vector.z * data[1][2] + data[1][3]
         val z = vector.x * data[2][0] + vector.y * data[2][1] + vector.z * data[2][2] + data[2][3]
         val w = vector.x * data[3][0] + vector.y * data[3][1] + vector.z * data[3][2] + data[3][3]
 
-        if (w == 0.0) {
+        if (w.isCloseToZero()) {
             return Vector3d(x, y, z)
         }
         return Vector3d(x / w, y / w, z / w)
@@ -117,21 +170,26 @@ class Cube(val x: Int, val y: Int, val z: Int, val color: Color) {
     fun getVertices(size: Double, position: Vector3d): List<Vector3d> {
         val halfSize = size / 2.0
         return listOf(
-            Vector3d(position.x - halfSize, position.y - halfSize, position.z + halfSize), // 0
-            Vector3d(position.x + halfSize, position.y - halfSize, position.z + halfSize), // 1
-            Vector3d(position.x + halfSize, position.y + halfSize, position.z + halfSize), // 2
-            Vector3d(position.x - halfSize, position.y + halfSize, position.z + halfSize), // 3
+            Vector3d(position.x - halfSize, position.y - halfSize, position.z + halfSize),
+            Vector3d(position.x + halfSize, position.y - halfSize, position.z + halfSize),
+            Vector3d(position.x + halfSize, position.y + halfSize, position.z + halfSize),
+            Vector3d(position.x - halfSize, position.y + halfSize, position.z + halfSize),
 
-            Vector3d(position.x - halfSize, position.y - halfSize, position.z - halfSize), // 4
-            Vector3d(position.x + halfSize, position.y - halfSize, position.z - halfSize), // 5
-            Vector3d(position.x + halfSize, position.y + halfSize, position.z - halfSize), // 6
-            Vector3d(position.x - halfSize, position.y + halfSize, position.z - halfSize)  // 7
+            Vector3d(position.x - halfSize, position.y - halfSize, position.z - halfSize),
+            Vector3d(position.x + halfSize, position.y - halfSize, position.z - halfSize),
+            Vector3d(position.x + halfSize, position.y + halfSize, position.z - halfSize),
+            Vector3d(position.x - halfSize, position.y + halfSize, position.z - halfSize)
         )
     }
 
-    fun getNormals() {
-
-    }
+    val faces = listOf(
+        listOf(0, 1, 2, 3),
+        listOf(4, 7, 6, 5),
+        listOf(3, 2, 6, 7),
+        listOf(0, 4, 5, 1),
+        listOf(1, 5, 6, 2),
+        listOf(4, 0, 3, 7)
+    )
 }
 
 class TransformedCube(
@@ -188,11 +246,11 @@ val grid3 = arrayOf(
 val grid4 = arrayOf(
     intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
     intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
-    intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
-    intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
-    intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
-    intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
-    intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
+    intArrayOf(1, 1, 0, 0, 0, 0, 0, 1, 1),
+    intArrayOf(1, 1, 0, 0, 0, 0, 0, 1, 1),
+    intArrayOf(1, 1, 0, 0, 0, 0, 0, 1, 1),
+    intArrayOf(1, 1, 0, 0, 0, 0, 0, 1, 1),
+    intArrayOf(1, 1, 0, 0, 0, 0, 0, 1, 1),
     intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
     intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1)
 )
@@ -205,12 +263,12 @@ var gridMap: Array<Array<Array<Int>>> = Array(9) {
 
 class DrawingPanel : JPanel() {
     private val cubes = mutableListOf<TransformedCube>()
-    private var rotationAngleY = 0.5
-    private var rotationAngleX = 0.5
 
-    private var cameraPosX = 0.0
-    private var cameraPosY = 0.0
-    private var cameraPosZ = -800.0
+    private var cameraPosition = Vector3d(0.0, 0.0, -800.0)
+    private var cameraYaw = 0.0
+    private var cameraPitch = 0.0
+    private val movementSpeed = 20.0
+    private val rotationSpeed = 0.05
 
     private val cubeSize = 100.0
     private val spacing = 0.0
@@ -257,7 +315,6 @@ class DrawingPanel : JPanel() {
         timer.start()
     }
 
-
     override fun paintComponent(g: Graphics) {
         super.paintComponent(g)
         val g2d = g as Graphics2D
@@ -267,54 +324,105 @@ class DrawingPanel : JPanel() {
 
         depthBuffer = Array(width) { DoubleArray(height) { Double.MAX_VALUE } }
 
-        val viewMatrix = Matrix4x4.translation(cameraPosX, cameraPosY, cameraPosZ) *
-                Matrix4x4.rotationX(rotationAngleX) *
-                Matrix4x4.rotationY(rotationAngleY)
+        val lookDirection = Vector3d(
+            cos(cameraPitch) * sin(cameraYaw),
+            sin(cameraPitch),
+            cos(cameraPitch) * cos(cameraYaw)
+        ).normalize()
 
+        val upVector = Vector3d(0.0, 1.0, 0.0)
+        val rightVector = lookDirection.cross(upVector).normalize()
+        val forwardVector = lookDirection
+
+        val viewMatrix = Matrix4x4.lookAt(cameraPosition, cameraPosition + lookDirection, upVector)
 
         val fov = 90.0
         val aspectRatio = width.toDouble() / height.toDouble()
         val near = 0.1
-        val far = 2000.0
+        val far = 5000.0
 
-        val tanHalfFov = tan(Math.toRadians(fov / 2))
+        val projectionMatrix = Matrix4x4.perspective(fov, aspectRatio, near, far)
 
-        val projectionMatrix = Matrix4x4(arrayOf(
-            doubleArrayOf(1.0 / (aspectRatio * tanHalfFov), 0.0, 0.0, 0.0),
-            doubleArrayOf(0.0, 1.0 / tanHalfFov, 0.0, 0.0),
-            doubleArrayOf(0.0, 0.0, -((far + near) / (far - near)), -((2 * far * near) / (far - near))),
-            doubleArrayOf(0.0, 0.0, -1.0, 0.0)
-        ))
-
-        val edges = listOf(
-            0 to 1, 1 to 2, 2 to 3, 3 to 0, // Przednia ściana
-            4 to 5, 5 to 6, 6 to 7, 7 to 4, // Tylna ściana
-            0 to 4, 1 to 5, 2 to 6, 3 to 7  // Krawędzie łączące ściany
-        )
+        val trianglesToRender = mutableListOf<Triple<Color, List<Vector3d>, Double>>()
 
         for (transformedCube in cubes) {
-            val transformedVertices = transformedCube.getTransformedVertices().map {
+            val modelViewVertices = transformedCube.getTransformedVertices().map {
                 viewMatrix.transform(it)
             }
 
-            val projectedVertices = transformedVertices.map { vertex ->
-                val projected = projectionMatrix.transform(vertex)
-                Vector3d(
-                    (projected.x + 1) * width / 2,
-                    (1 - projected.y) * height / 2,
-                    projected.z
-                )
-            }
+            for (faceIndices in transformedCube.cube.faces) {
+                val p0View = modelViewVertices[faceIndices[0]]
+                val p1View = modelViewVertices[faceIndices[1]]
+                val p2View = modelViewVertices[faceIndices[2]]
 
-            g2d.color = transformedCube.cube.color
-            for ((startIdx, endIdx) in edges) {
-                val p1 = projectedVertices[startIdx]
-                val p2 = projectedVertices[endIdx]
+                val normalView = (p1View - p0View).cross(p2View - p0View).normalize()
+                val cameraRayView = (Vector3d(0.0, 0.0, 0.0) - p0View).normalize()
 
-                if (p1.z < far && p1.z > near && p2.z < far && p2.z > near) {
-                    g2d.drawLine(p1.x.toInt(), p1.y.toInt(), p2.x.toInt(), p2.y.toInt())
+                if (normalView.dot(cameraRayView) > 0) {
+                    val projectedVerticesForFace = mutableListOf<Vector3d>()
+                    var anyVertexInFrustum = false
+
+                    for (index in faceIndices) {
+                        val vertexInView = modelViewVertices[index]
+                        val projectedHomogeneous = projectionMatrix.transformHomogeneous(vertexInView)
+
+                        if (projectedHomogeneous.w < 0 || projectedHomogeneous.w.isCloseToZero()) {
+                            projectedVerticesForFace.add(Vector3d(Double.NaN, Double.NaN, Double.NaN))
+                        } else {
+                            val xClip = projectedHomogeneous.x / projectedHomogeneous.w
+                            val yClip = projectedHomogeneous.y / projectedHomogeneous.w
+                            val zClip = projectedHomogeneous.z / projectedHomogeneous.w
+
+                            if (xClip >= -1.0 && xClip <= 1.0 && yClip >= -1.0 && yClip <= 1.0 && zClip >= -1.0 && zClip <= 1.0) {
+                                anyVertexInFrustum = true
+                            }
+
+                            projectedVerticesForFace.add(
+                                Vector3d(
+                                    (xClip + 1) * width / 2,
+                                    (1 - yClip) * height / 2,
+                                    zClip
+                                )
+                            )
+                        }
+                    }
+
+                    val allVerticesRejected = projectedVerticesForFace.all { it.x.isNaN() }
+                    if (!allVerticesRejected && anyVertexInFrustum) {
+                        val drawableVertices = projectedVerticesForFace.filter { !it.x.isNaN() }
+
+                        if (drawableVertices.size >= 3) {
+                            val avgZ = faceIndices.map { index ->
+                                val vertexInView = modelViewVertices[index]
+                                val projectedHomogeneous = projectionMatrix.transformHomogeneous(vertexInView)
+                                if (projectedHomogeneous.w.isCloseToZero()) Double.MAX_VALUE else projectedHomogeneous.z / projectedHomogeneous.w
+                            }.average()
+
+                            trianglesToRender.add(Triple(transformedCube.cube.color, listOf(drawableVertices[0], drawableVertices[1], drawableVertices[2]), avgZ))
+                            if (drawableVertices.size == 4) {
+                                trianglesToRender.add(Triple(transformedCube.cube.color, listOf(drawableVertices[0], drawableVertices[2], drawableVertices[3]), avgZ))
+                            }
+                        }
+                    }
                 }
             }
+        }
+
+        trianglesToRender.sortByDescending { it.third }
+
+        for ((color, triangleVertices, _) in trianglesToRender) {
+            val xPoints = IntArray(3)
+            val yPoints = IntArray(3)
+
+            for (i in 0 until 3) {
+                xPoints[i] = triangleVertices[i].x.toInt()
+                yPoints[i] = triangleVertices[i].y.toInt()
+            }
+
+            g2d.color = color
+            g2d.fillPolygon(xPoints, yPoints, 3)
+            g2d.color = Color(40, 40, 40)
+            g2d.drawPolygon(xPoints, yPoints, 3)
         }
 
         g2d.color = Color.WHITE
@@ -338,17 +446,27 @@ class DrawingPanel : JPanel() {
 
     private inner class KeyboardListener : KeyAdapter() {
         override fun keyPressed(e: KeyEvent?) {
+            val lookDirection = Vector3d(
+                cos(cameraPitch) * sin(cameraYaw),
+                sin(cameraPitch),
+                cos(cameraPitch) * cos(cameraYaw)
+            ).normalize()
+
+            val upVector = Vector3d(0.0, 1.0, 0.0)
+            val rightVector = lookDirection.cross(upVector).normalize()
+            val forwardVector = lookDirection
+
             when (e?.keyCode) {
-                KeyEvent.VK_UP -> cameraPosY += 10.0
-                KeyEvent.VK_DOWN -> cameraPosY -= 10.0
-                KeyEvent.VK_LEFT -> cameraPosX -= 10.0
-                KeyEvent.VK_RIGHT -> cameraPosX += 10.0
-                KeyEvent.VK_W -> cameraPosZ += 10.0
-                KeyEvent.VK_S -> cameraPosZ -= 10.0
-                KeyEvent.VK_A -> rotationAngleY -= 0.05
-                KeyEvent.VK_D -> rotationAngleY += 0.05
-                KeyEvent.VK_Q -> rotationAngleX -= 0.05
-                KeyEvent.VK_E -> rotationAngleX += 0.05
+                KeyEvent.VK_W -> cameraPosition += forwardVector * movementSpeed
+                KeyEvent.VK_S -> cameraPosition -= forwardVector * movementSpeed
+                KeyEvent.VK_D -> cameraPosition += rightVector * movementSpeed
+                KeyEvent.VK_A -> cameraPosition -= rightVector * movementSpeed
+                KeyEvent.VK_SPACE -> cameraPosition += Vector3d(0.0, movementSpeed, 0.0)
+                KeyEvent.VK_CONTROL -> cameraPosition -= Vector3d(0.0, movementSpeed, 0.0)
+                KeyEvent.VK_LEFT -> cameraYaw += rotationSpeed
+                KeyEvent.VK_RIGHT -> cameraYaw -= rotationSpeed
+                KeyEvent.VK_DOWN -> cameraPitch -= rotationSpeed
+                KeyEvent.VK_UP -> cameraPitch += rotationSpeed
             }
             repaint()
         }
@@ -365,5 +483,6 @@ fun main() {
         frame.pack()
         frame.setLocationRelativeTo(null)
         frame.isVisible = true
+        frame.iconImage = Toolkit.getDefaultToolkit().getImage(DrawingPanel::class.java.classLoader.getResource("textures/icon.jpeg"))
     }
 }
