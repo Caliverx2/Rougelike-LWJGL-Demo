@@ -1,8 +1,6 @@
-import org.lewapnoob.FileZero.DrawingPanel
 import java.awt.Color
 import java.awt.Graphics
 import java.awt.Graphics2D
-import java.awt.Point
 import java.awt.Toolkit
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
@@ -454,6 +452,6 @@ fun main() {
         frame.pack()
         frame.setLocationRelativeTo(null)
         frame.isVisible = true
-        frame.iconImage = Toolkit.getDefaultToolkit().getImage(DrawingPanel::class.java.classLoader.getResource("textures/icon.jpeg"))
+        frame.iconImage = Toolkit.getDefaultToolkit().getImage(Simple3DRenderer::class.java.classLoader.getResource("textures/icon.jpeg"))
     }
 }
