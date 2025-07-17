@@ -673,7 +673,7 @@ class DrawingPanel : JPanel() {
 
         var err = dx - dy
 
-        g2d.color = color
+        g2d.color = Color(80, 80, 80)
 
         val lineLengthSq = (x1 - x0).toDouble() * (x1 - x0) + (y1 - y0).toDouble() * (y1 - y0)
         val invLineLength = if (lineLengthSq == 0.0) 0.0 else 1.0 / sqrt(lineLengthSq)
