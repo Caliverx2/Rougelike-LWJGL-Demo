@@ -4,7 +4,7 @@ plugins {
     id("java")
 }
 
-group = "org.lewapnoob.opengl"
+group = "org.lewapnoob.FileZero"
 version = "1.0-SNAPSHOT"
 
 repositories {
@@ -16,13 +16,11 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-stdlib")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.1")
 
-    val lwjglVersion = "3.3.6" // Użyj najnowszej stabilnej wersji LWJGL
+    val lwjglVersion = "3.3.6"
     implementation("org.lwjgl", "lwjgl", lwjglVersion)
     implementation("org.lwjgl", "lwjgl-glfw", lwjglVersion)
     implementation("org.lwjgl", "lwjgl-opengl", lwjglVersion)
 
-    // Natywne biblioteki dla różnych systemów operacyjnych
-    // WAŻNE: Dodaj te, które są odpowiednie dla Twojego systemu i systemów docelowych
     runtimeOnly("org.lwjgl", "lwjgl", lwjglVersion, classifier = "natives-windows")   // Dla Windows
     runtimeOnly("org.lwjgl", "lwjgl-glfw", lwjglVersion, classifier = "natives-windows")
     runtimeOnly("org.lwjgl", "lwjgl-opengl", lwjglVersion, classifier = "natives-windows")
@@ -35,7 +33,7 @@ dependencies {
     runtimeOnly("org.lwjgl", "lwjgl-glfw", lwjglVersion, classifier = "natives-macos")
     runtimeOnly("org.lwjgl", "lwjgl-opengl", lwjglVersion, classifier = "natives-macos")
 
-    // Jeśli używasz Apple Silicon (M1/M2/M3), dodaj również te:
+    // Dla Apple Silicon (M1/M2/M3)
     runtimeOnly("org.lwjgl", "lwjgl", lwjglVersion, classifier = "natives-macos-arm64")
     runtimeOnly("org.lwjgl", "lwjgl-glfw", lwjglVersion, classifier = "natives-macos-arm64")
     runtimeOnly("org.lwjgl", "lwjgl-opengl", lwjglVersion, classifier = "natives-macos-arm64")
@@ -50,7 +48,7 @@ kotlin {
 
 tasks {
     shadowJar {
-        archiveBaseName.set("OpenGL_demo")
+        archiveBaseName.set("FileZero")
         archiveClassifier.set("")
         archiveVersion.set("")
     }
@@ -58,15 +56,15 @@ tasks {
 
 tasks.withType<Jar> {
     manifest {
-        attributes["Main-Class"] = "org.lewapnoob.opengl.MainKt"
+        attributes["Main-Class"] = "org.lewapnoob.FileZero.FileZeroKt"
     }
 }
 
 tasks.jar {
     manifest {
         attributes(
-            "Main-Class" to "org.lewapnoob.opengl.MainKt",
-            "Class-Path" to "org.lewapnoob.opengl.MainKt",
+            "Main-Class" to "org.lewapnoob.FileZero.FileZeroKt",
+            "Class-Path" to "org.lewapnoob.FileZero.FileZeroKt",
             "JVM-Options" to "-Xmx2048m -Xms1024m"
         )
     }
