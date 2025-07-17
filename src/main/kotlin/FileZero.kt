@@ -23,6 +23,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.awt.image.BufferedImage
+import javax.imageio.ImageIO
 
 data class Vector3d(val x: Double, val y: Double, val z: Double) {
     operator fun plus(other: Vector3d) = Vector3d(x + other.x, y + other.y, z + other.z)
@@ -170,7 +171,7 @@ class Matrix4x4(private val data: Array<DoubleArray>) {
     }
 }
 
-class Cube(val color: Color, val vertices: List<Vector3d>) {
+data class Cube(val color: Color, val vertices: List<Vector3d>, val textureCoords: List<Vector3d>? = null) {
     val faces = listOf(
         listOf(0, 1, 2, 3),
         listOf(4, 7, 6, 5),
@@ -179,7 +180,24 @@ class Cube(val color: Color, val vertices: List<Vector3d>) {
         listOf(1, 5, 6, 2),
         listOf(4, 0, 3, 7)
     )
+    val faceTextureCoords = listOf(
+        listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0)), //front
+        listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(1.0, 1.0, 0.0)), //back
+        listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0)), //top
+        listOf(Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(0.0, 1.0, 0.0)), //bottom
+        listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0)), //right
+        listOf(Vector3d(1.0, 1.0, 0.0), Vector3d(0.0, 1.0, 0.0), Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0)) //left
+    )
 }
+
+data class RenderableFace(
+    val screenVertices: List<Vector3d>,
+    val originalClipW: List<Double>,
+    val textureVertices: List<Vector3d>,
+    val color: Color,
+    val isEdge: Boolean,
+    val texture: BufferedImage? = null
+)
 
 class TransformedCube(
     val cube: Cube,
@@ -241,16 +259,11 @@ val GRID_4 = arrayOf(
 
 val GRID_MAP: Array<Array<Array<Int>>> = Array(9) { Array(9) { Array(9) { 0 } } }
 
-data class RenderableFace(
-    val screenVertices: List<Vector3d>,
-    val color: Color,
-    val isEdge: Boolean
-)
 
 class DrawingPanel : JPanel() {
     private val cubes = mutableListOf<TransformedCube>()
 
-    private var cameraPosition = Vector3d(0.0, 0.0, -800.0)
+    private var cameraPosition = Vector3d(0.0, 0.0, 0.0)
     private var cameraYaw = 0.0
     private var cameraPitch = 0.0
     private val movementSpeed = 20.0
@@ -259,8 +272,8 @@ class DrawingPanel : JPanel() {
     private val cubeSize = 100.0
     private val spacing = 0.0
 
-    private val virtualWidth = 1920/6 //320
-    private val virtualHeight = 1080/6 //180
+    private val virtualWidth = 1920/5
+    private val virtualHeight = 1080/5
     private lateinit var depthBuffer: Array<DoubleArray>
     private lateinit var backBuffer: BufferedImage
 
@@ -268,6 +281,8 @@ class DrawingPanel : JPanel() {
 
     private val executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
     private val renderQueue = ConcurrentLinkedQueue<RenderableFace>()
+
+    private val texture: BufferedImage = ImageIO.read(this::class.java.classLoader.getResource("textures/black_bricks.png"))
 
     init {
         addKeyListener(KeyboardListener())
@@ -279,7 +294,7 @@ class DrawingPanel : JPanel() {
         g2dBack.color = Color(40, 40, 40)
         g2dBack.fillRect(0, 0, virtualWidth, virtualHeight)
         g2dBack.dispose()
-
+        cameraPosition = Vector3d(0.0, 0.0, -800.0)
 
         val grids = listOf(GRID_1, GRID_2, GRID_3, GRID_4)
         for (x in 0..8) {
@@ -313,9 +328,9 @@ class DrawingPanel : JPanel() {
                 for (z in 0..8) {
                     if (GRID_MAP[x][y][z] == 1) {
                         val initialPos = Vector3d(
-                            (x - 4.0) * (cubeSize + spacing),
-                            (y - 4.0) * (cubeSize + spacing),
-                            (z - 4.0) * (cubeSize + spacing)
+                            (x - 4.5) * (cubeSize + spacing),
+                            (y - 4.5) * (cubeSize + spacing),
+                            (z - 4.5) * (cubeSize + spacing)
                         )
                         val translationMatrix = Matrix4x4.translation(initialPos.x, initialPos.y, initialPos.z)
                         cubes.add(TransformedCube(Cube(Color.LIGHT_GRAY, baseCubeVertices), transformMatrix = translationMatrix))
@@ -351,6 +366,31 @@ class DrawingPanel : JPanel() {
         if (pressedKeys.contains(KeyEvent.VK_RIGHT)) cameraYaw -= rotationSpeed*2
         if (pressedKeys.contains(KeyEvent.VK_DOWN) && (cameraPitch > -1)) cameraPitch -= rotationSpeed*2
         if (pressedKeys.contains(KeyEvent.VK_UP) && (cameraPitch < 1)) cameraPitch += rotationSpeed*2
+        if (pressedKeys.contains(KeyEvent.VK_G)) println(((cameraPosition.x.toInt())/100).toString() + " " + ((cameraPosition.y.toInt())/100).toString() + " " + ((cameraPosition.z.toInt())/100).toString())
+        if (pressedKeys.contains(KeyEvent.VK_R)) {
+            val baseCubeVertices = mutableListOf<Vector3d>()
+            val halfSize = cubeSize / 2.0
+            baseCubeVertices.addAll(
+                listOf(
+                    Vector3d(-halfSize, -halfSize, halfSize),
+                    Vector3d(halfSize, -halfSize, halfSize),
+                    Vector3d(halfSize, halfSize, halfSize),
+                    Vector3d(-halfSize, halfSize, halfSize),
+
+                    Vector3d(-halfSize, -halfSize, -halfSize),
+                    Vector3d(halfSize, -halfSize, -halfSize),
+                    Vector3d(halfSize, halfSize, -halfSize),
+                    Vector3d(-halfSize, halfSize, -halfSize)
+                )
+            )
+            val initialPos = Vector3d(
+                (((cameraPosition.x.toInt())/100)+0.5) * (cubeSize + spacing).toInt().toDouble(),
+                (((cameraPosition.y.toInt())/100)-0.5) * (cubeSize + spacing).toInt().toDouble(),
+                (((cameraPosition.z.toInt())/100)-0.5) * (cubeSize + spacing).toInt().toDouble()
+            )
+            val translationMatrix = Matrix4x4.translation(initialPos.x, initialPos.y, initialPos.z)
+            cubes.add(TransformedCube(Cube(Color.LIGHT_GRAY, baseCubeVertices), transformMatrix = translationMatrix))
+        }
     }
 
     private fun requestRender() {
@@ -400,7 +440,8 @@ class DrawingPanel : JPanel() {
                     combinedMatrix.transformHomogeneous(transformedCube.transformMatrix.transform(it))
                 }
 
-                for (faceIndices in transformedCube.cube.faces) {
+                for (faceIndex in transformedCube.cube.faces.indices) {
+                    val faceIndices = transformedCube.cube.faces[faceIndex]
                     val p0Homogeneous = transformedVerticesHomogeneous[faceIndices[0]]
                     val p1Homogeneous = transformedVerticesHomogeneous[faceIndices[1]]
                     val p2Homogeneous = transformedVerticesHomogeneous[faceIndices[2]]
@@ -416,14 +457,22 @@ class DrawingPanel : JPanel() {
 
                     if (normalView.dot(cameraRayView) > 0) {
                         val projectedVerticesForFace = mutableListOf<Vector3d>()
+                        val textureVerticesForFace = mutableListOf<Vector3d>()
+                        val originalClipWForFace = mutableListOf<Double>()
                         var anyVertexInFrustum = false
 
-                        for (index in faceIndices) {
+                        val faceTexCoords = transformedCube.cube.faceTextureCoords[faceIndex]
+
+                        for (i in faceIndices.indices) {
+                            val index = faceIndices[i]
                             val projectedHomogeneous = transformedVerticesHomogeneous[index]
+                            val originalTextureCoord = faceTexCoords[i]
 
                             val w = projectedHomogeneous.w
                             if (w.isCloseToZero() || w < near || w > far) {
                                 projectedVerticesForFace.add(Vector3d(Double.NaN, Double.NaN, Double.NaN))
+                                textureVerticesForFace.add(Vector3d(Double.NaN, Double.NaN, Double.NaN))
+                                originalClipWForFace.add(Double.NaN)
                             } else {
                                 val xClip = projectedHomogeneous.x / w
                                 val yClip = projectedHomogeneous.y / w
@@ -440,24 +489,36 @@ class DrawingPanel : JPanel() {
                                         zClip
                                     )
                                 )
+                                textureVerticesForFace.add(originalTextureCoord)
+                                originalClipWForFace.add(w)
                             }
                         }
 
                         val allVerticesRejected = projectedVerticesForFace.all { it.x.isNaN() }
                         if (!allVerticesRejected && anyVertexInFrustum) {
-                            val drawableVertices = projectedVerticesForFace.filter { !it.x.isNaN() }
+                            val drawableVertices = mutableListOf<Vector3d>()
+                            val drawableTextureCoords = mutableListOf<Vector3d>()
+                            val drawableOriginalClipW = mutableListOf<Double>()
+
+                            for (i in projectedVerticesForFace.indices) {
+                                if (!projectedVerticesForFace[i].x.isNaN()) {
+                                    drawableVertices.add(projectedVerticesForFace[i])
+                                    drawableTextureCoords.add(textureVerticesForFace[i])
+                                    drawableOriginalClipW.add(originalClipWForFace[i])
+                                }
+                            }
 
                             if (drawableVertices.size >= 3) {
-                                renderQueue.add(RenderableFace(listOf(drawableVertices[0], drawableVertices[1], drawableVertices[2]), transformedCube.cube.color, false))
+                                renderQueue.add(RenderableFace(listOf(drawableVertices[0], drawableVertices[1], drawableVertices[2]), listOf(drawableOriginalClipW[0], drawableOriginalClipW[1], drawableOriginalClipW[2]), listOf(drawableTextureCoords[0], drawableTextureCoords[1], drawableTextureCoords[2]), transformedCube.cube.color, false, texture))
                                 if (drawableVertices.size == 4) {
-                                    renderQueue.add(RenderableFace(listOf(drawableVertices[0], drawableVertices[2], drawableVertices[3]), transformedCube.cube.color, false))
+                                    renderQueue.add(RenderableFace(listOf(drawableVertices[0], drawableVertices[2], drawableVertices[3]), listOf(drawableOriginalClipW[0], drawableOriginalClipW[2], drawableOriginalClipW[3]), listOf(drawableTextureCoords[0], drawableTextureCoords[2], drawableTextureCoords[3]), transformedCube.cube.color, false, texture))
                                 }
 
                                 val edgeColor = Color(40, 40, 40)
                                 for (i in 0 until drawableVertices.size) {
                                     val p1 = drawableVertices[i]
                                     val p2 = drawableVertices[(i + 1) % drawableVertices.size]
-                                    renderQueue.add(RenderableFace(listOf(p1, p2), edgeColor, true))
+                                    renderQueue.add(RenderableFace(listOf(p1, p2), listOf(), listOf(), edgeColor, true, null))
                                 }
                             }
                         }
@@ -488,7 +549,7 @@ class DrawingPanel : JPanel() {
                         renderableFace.color, virtualWidth, virtualHeight)
                 }
             } else {
-                rasterizeTriangle(g2dBack, renderableFace.screenVertices, renderableFace.color, virtualWidth, virtualHeight)
+                rasterizeTexturedTriangle(g2dBack, renderableFace.screenVertices, renderableFace.originalClipW, renderableFace.textureVertices, renderableFace.texture, virtualWidth, virtualHeight)
             }
         }
         g2dBack.dispose()
@@ -507,77 +568,98 @@ class DrawingPanel : JPanel() {
         }
     }
 
-    data class ScreenVertex(val x: Int, val y: Int, val z: Double)
+    private fun rasterizeTexturedTriangle(g2d: Graphics2D, screenVertices: List<Vector3d>, originalClipW: List<Double>, textureVertices: List<Vector3d>, texture: BufferedImage?, screenWidth: Int, screenHeight: Int) {
+        if (screenVertices.size != 3 || textureVertices.size != 3 || originalClipW.size != 3 || texture == null) return
 
-    private fun rasterizeTriangle(g2d: Graphics2D, screenVertices: List<Vector3d>, color: Color, screenWidth: Int, screenHeight: Int) {
-        if (screenVertices.size != 3) return
+        val v0 = screenVertices[0]
+        val v1 = screenVertices[1]
+        val v2 = screenVertices[2]
 
-        val v0 = ScreenVertex(screenVertices[0].x.toInt(), screenVertices[0].y.toInt(), screenVertices[0].z)
-        val v1 = ScreenVertex(screenVertices[1].x.toInt(), screenVertices[1].y.toInt(), screenVertices[1].z)
-        val v2 = ScreenVertex(screenVertices[2].x.toInt(), screenVertices[2].y.toInt(), screenVertices[2].z)
+        val uv0 = textureVertices[0]
+        val uv1 = textureVertices[1]
+        val uv2 = textureVertices[2]
 
-        var minX = minOf(v0.x, v1.x, v2.x)
-        var maxX = maxOf(v0.x, v1.x, v2.x)
-        var minY = minOf(v0.y, v1.y, v2.y)
-        var maxY = maxOf(v0.y, v1.y, v2.y)
+        val w0 = originalClipW[0]
+        val w1 = originalClipW[1]
+        val w2 = originalClipW[2]
+
+        val u0_prime = uv0.x / w0
+        val v0_prime = uv0.y / w0
+        val z0_inv_prime = 1.0 / w0
+
+        val u1_prime = uv1.x / w1
+        val v1_prime = uv1.y / w1
+        val z1_inv_prime = 1.0 / w1
+
+        val u2_prime = uv2.x / w2
+        val v2_prime = uv2.y / w2
+        val z2_inv_prime = 1.0 / w2
+
+        var minX = minOf(v0.x.toInt(), v1.x.toInt(), v2.x.toInt())
+        var maxX = maxOf(v0.x.toInt(), v1.x.toInt(), v2.x.toInt())
+        var minY = minOf(v0.y.toInt(), v1.y.toInt(), v2.y.toInt())
+        var maxY = maxOf(v0.y.toInt(), v1.y.toInt(), v2.y.toInt())
 
         minX = max(0, minX)
         maxX = min(screenWidth - 1, maxX)
         minY = max(0, minY)
         maxY = min(screenHeight - 1, maxY)
 
-        g2d.color = color
+        val A12 = (v1.y - v2.y)
+        val B12 = (v2.x - v1.x)
+        val C12 = (v1.x * v2.y - v2.x * v1.y)
 
-        val a12 = (v1.y - v2.y).toDouble()
-        val b12 = (v2.x - v1.x).toDouble()
-        val c12 = (v1.x * v2.y - v2.x * v1.y).toDouble()
+        val A20 = (v2.y - v0.y)
+        val B20 = (v0.x - v2.x)
+        val C20 = (v2.x * v0.y - v0.x * v2.y)
 
-        val a20 = (v2.y - v0.y).toDouble()
-        val b20 = (v0.x - v2.x).toDouble()
-        val c20 = (v2.x * v0.y - v0.x * v2.y).toDouble()
+        val A01 = (v0.y - v1.y)
+        val B01 = (v1.x - v0.x)
+        val C01 = (v0.x * v1.y - v1.x * v0.y)
 
-        val a01 = (v0.y - v1.y).toDouble()
-        val b01 = (v1.x - v0.x).toDouble()
-        val c01 = (v0.x * v1.y - v1.x * v0.y).toDouble()
-
-        val totalArea = a12 * v0.x + b12 * v0.y + c12
+        val totalArea = A12 * v0.x + B12 * v0.y + C12
         if (totalArea.isCloseToZero()) return
 
         val invTotalArea = 1.0 / totalArea
 
-        var w0Row = a12 * minX + b12 * minY + c12
-        var w1Row = a20 * minX + b20 * minY + c20
-        var w2Row = a01 * minX + b01 * minY + c01
-
         for (py in minY..maxY) {
-            var w0 = w0Row
-            var w1 = w1Row
-            var w2 = w2Row
-
             for (px in minX..maxX) {
+                val barycentric_w0 = A12 * px + B12 * py + C12
+                val barycentric_w1 = A20 * px + B20 * py + C20
+                val barycentric_w2 = A01 * px + B01 * py + C01
+
                 val epsilon = 0.00001
-                val isInside = (w0 >= -epsilon && w1 >= -epsilon && w2 >= -epsilon) ||
-                        (w0 <= epsilon && w1 <= epsilon && w2 <= epsilon)
+                val isInside = (barycentric_w0 >= -epsilon && barycentric_w1 >= -epsilon && barycentric_w2 >= -epsilon) ||
+                        (barycentric_w0 <= epsilon && barycentric_w1 <= epsilon && barycentric_w2 <= epsilon)
 
                 if (isInside) {
-                    val alpha = w0 * invTotalArea
-                    val beta = w1 * invTotalArea
-                    val gamma = w2 * invTotalArea
+                    val alpha = barycentric_w0 * invTotalArea
+                    val beta = barycentric_w1 * invTotalArea
+                    val gamma = barycentric_w2 * invTotalArea
 
                     val interpolatedZ = alpha * v0.z + beta * v1.z + gamma * v2.z
 
                     if (px in 0 until screenWidth && py in 0 until screenHeight && interpolatedZ < depthBuffer[px][py]) {
+                        val interpolated_z_inv_prime = alpha * z0_inv_prime + beta * z1_inv_prime + gamma * z2_inv_prime
+
+                        if (interpolated_z_inv_prime.isCloseToZero()) continue
+
+                        val interpolated_u_prime = alpha * u0_prime + beta * u1_prime + gamma * u2_prime
+                        val interpolated_v_prime = alpha * v0_prime + beta * v1_prime + gamma * v2_prime
+
+                        val u = interpolated_u_prime / interpolated_z_inv_prime
+                        val v = interpolated_v_prime / interpolated_z_inv_prime
+
+                        val texX = (u * (texture.width - 1)).toInt().coerceIn(0, texture.width - 1)
+                        val texY = (v * (texture.height - 1)).toInt().coerceIn(0, texture.height - 1)
+
+                        val texColor = Color(texture.getRGB(texX, texY))
+                        g2d.color = texColor
                         g2d.fillRect(px, py, 1, 1)
                         depthBuffer[px][py] = interpolatedZ
                     }
                 }
-                w0 += a12
-                w1 += a20
-                w2 += a01
             }
-            w0Row += b12
-            w1Row += b20
-            w2Row += b01
         }
     }
 
