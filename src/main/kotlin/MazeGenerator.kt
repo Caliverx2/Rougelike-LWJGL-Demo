@@ -161,7 +161,6 @@ class MazePathfindingPanel : JPanel() {
         agentPathTimer?.start()
     }
 
-    // Algorytm Dijkstry
     private fun findPathDijkstra(start: Pair<Int, Int>, end: Pair<Int, Int>): List<Pair<Int, Int>>? {
         val nodes = Array(gridMap.size) { r ->
             Array(gridMap[0].size) { c ->
@@ -220,11 +219,9 @@ class MazePathfindingPanel : JPanel() {
                 val y = r * cellSize
 
                 if (gridMap[r][c]) {
-                    // wall
                     g2d.color = Color.DARK_GRAY
                     g2d.fillRect(x, y, cellSize, cellSize)
                 } else {
-                    // corridor
                     g2d.color = Color.lightGray
                     g2d.fillRect(x, y, cellSize, cellSize)
                 }
@@ -234,12 +231,11 @@ class MazePathfindingPanel : JPanel() {
         path?.let {
             for (i in 0 until agentPositionIndex.coerceAtMost(it.size)) {
                 val (r, c) = it[i]
-                g2d.color = Color(0, 150, 0, 150) // Półprzezroczysty zielony
+                g2d.color = Color(0, 150, 0, 150)
                 g2d.fillRect(c * cellSize, r * cellSize, cellSize, cellSize)
             }
         }
 
-        // draw path
         if (generating && currentLogicalCell != null) {
             val (r, c) = currentLogicalCell!!
             val gridR = r * 2 + 1
@@ -248,17 +244,16 @@ class MazePathfindingPanel : JPanel() {
             g2d.fillRect(gridC * cellSize, gridR * cellSize, cellSize, cellSize)
         }
 
-        // draw agent
         if (showAgent && path != null && agentPositionIndex > 0 && agentPositionIndex <= path!!.size) {
             val (agentR, agentC) = path!![agentPositionIndex - 1]
             g2d.color = Color.MAGENTA
             g2d.fillRect(agentC * cellSize, agentR * cellSize, cellSize, cellSize)
         }
 
-        g2d.color = Color.GREEN //start
+        g2d.color = Color.GREEN
         g2d.fillRect(1 * cellSize, 1 * cellSize, cellSize, cellSize)
 
-        g2d.color = Color.RED //meta
+        g2d.color = Color.RED
         g2d.fillRect((baseCols * 2 - 1) * cellSize, (baseRows * 2 - 1) * cellSize, cellSize, cellSize)
     }
 

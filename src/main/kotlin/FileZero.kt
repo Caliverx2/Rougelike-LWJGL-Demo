@@ -11,7 +11,7 @@ import kotlin.math.sqrt
 import kotlin.math.abs
 import java.awt.image.BufferedImage
 
-data class Vector3d(val x: Double, val y: Double, val z: Double) {
+data class Vector3d(var x: Double, var y: Double, var z: Double) {
     operator fun plus(other: Vector3d) = Vector3d(x + other.x, y + other.y, z + other.z)
     operator fun minus(other: Vector3d) = Vector3d(x - other.x, y - other.y, z - other.z)
     operator fun times(scalar: Double) = Vector3d(x * scalar, y * scalar, z * scalar)
@@ -195,6 +195,35 @@ class TransformedCube(
 
     fun applyTransform(matrix: Matrix4x4) {
         transformMatrix = matrix * transformMatrix
+    }
+}
+
+data class AABB(val min: Vector3d, val max: Vector3d) {
+    companion object {
+        fun fromCube(cubeVertices: List<Vector3d>): AABB {
+            var minX = Double.POSITIVE_INFINITY
+            var minY = Double.POSITIVE_INFINITY
+            var minZ = Double.POSITIVE_INFINITY
+            var maxX = Double.NEGATIVE_INFINITY
+            var maxY = Double.NEGATIVE_INFINITY
+            var maxZ = Double.NEGATIVE_INFINITY
+
+            for (v in cubeVertices) {
+                minX = minOf(minX, v.x)
+                minY = minOf(minY, v.y)
+                minZ = minOf(minZ, v.z)
+                maxX = maxOf(maxX, v.x)
+                maxY = maxOf(maxY, v.y)
+                maxZ = maxOf(maxZ, v.z)
+            }
+            return AABB(Vector3d(minX, minY, minZ), Vector3d(maxX, maxY, maxZ))
+        }
+    }
+
+    fun intersects(other: AABB): Boolean {
+        return (this.min.x <= other.max.x && this.max.x >= other.min.x) &&
+                (this.min.y <= other.max.y && this.max.y >= other.min.y) &&
+                (this.min.z <= other.max.z && this.max.z >= other.min.z)
     }
 }
 

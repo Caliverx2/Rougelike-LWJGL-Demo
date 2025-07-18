@@ -26,7 +26,7 @@ class DrawingPanel : JPanel() {
     private val cubes = mutableListOf<TransformedCube>()
 
     private var cameraPosition = Vector3d(0.0, 0.0, 0.0)
-    private var cameraYaw = 0.0
+    private var cameraYaw = 2.4
     private var cameraPitch = 0.0
     private val movementSpeed = 20.0
     private val rotationSpeed = 0.05
@@ -34,13 +34,17 @@ class DrawingPanel : JPanel() {
     private val cubeSize = 100.0
     private val spacing = 0.0
 
-    private val fogColor = Color(180, 180, 180)
-    private val fogStartDistance = 1.0
-    private val fogEndDistance = 3000.0
+    private val playerHeight = 45.0
+    private val playerWidth = 45.0
+    private val playerHalfWidth = playerWidth / 2.0
+
+    private val fogColor = Color(180, 180, 180, 180)
+    private val fogStartDistance = 150.0
+    private val fogEndDistance = 700.0
     private val fogDensity = 0.6
 
-    private val virtualWidth = 1920/5
-    private val virtualHeight = 1080/5
+    private val virtualWidth = 1920/4
+    private val virtualHeight = 1080/4
     private lateinit var depthBuffer: Array<DoubleArray>
     private lateinit var backBuffer: BufferedImage
 
@@ -61,7 +65,7 @@ class DrawingPanel : JPanel() {
         g2dBack.color = Color(40, 40, 40)
         g2dBack.fillRect(0, 0, virtualWidth, virtualHeight)
         g2dBack.dispose()
-        cameraPosition = Vector3d(0.0, 0.0, -800.0)
+        cameraPosition = Vector3d(-250.0, -325.0, 150.0)
 
         val grids = listOf(GRID_1, GRID_2, GRID_3, GRID_4)
         for (x in 0..8) {
@@ -123,17 +127,76 @@ class DrawingPanel : JPanel() {
         val rightVector = lookDirection.cross(upVector).normalize()
         val forwardVector = lookDirection
 
-        if (pressedKeys.contains(KeyEvent.VK_W)) cameraPosition += forwardVector * movementSpeed
-        if (pressedKeys.contains(KeyEvent.VK_S)) cameraPosition -= forwardVector * movementSpeed
-        if (pressedKeys.contains(KeyEvent.VK_D)) cameraPosition += rightVector * movementSpeed
-        if (pressedKeys.contains(KeyEvent.VK_A)) cameraPosition -= rightVector * movementSpeed
-        if (pressedKeys.contains(KeyEvent.VK_SPACE)) cameraPosition += Vector3d(0.0, movementSpeed, 0.0)
-        if (pressedKeys.contains(KeyEvent.VK_CONTROL)) cameraPosition -= Vector3d(0.0, movementSpeed, 0.0)
-        if (pressedKeys.contains(KeyEvent.VK_LEFT)) cameraYaw += rotationSpeed*2
-        if (pressedKeys.contains(KeyEvent.VK_RIGHT)) cameraYaw -= rotationSpeed*2
-        if (pressedKeys.contains(KeyEvent.VK_DOWN) && (cameraPitch > -1)) cameraPitch -= rotationSpeed*2
-        if (pressedKeys.contains(KeyEvent.VK_UP) && (cameraPitch < 1)) cameraPitch += rotationSpeed*2
-        if (pressedKeys.contains(KeyEvent.VK_G)) println(((cameraPosition.x.toInt())/100).toString() + " " + ((cameraPosition.y.toInt())/100).toString() + " " + ((cameraPosition.z.toInt())/100).toString())
+        var newCameraPosition = Vector3d(cameraPosition.x, cameraPosition.y, cameraPosition.z)
+
+        if (pressedKeys.contains(KeyEvent.VK_W)) newCameraPosition += forwardVector * movementSpeed
+        if (pressedKeys.contains(KeyEvent.VK_S)) newCameraPosition -= forwardVector * movementSpeed
+        if (pressedKeys.contains(KeyEvent.VK_D)) newCameraPosition += rightVector * movementSpeed
+        if (pressedKeys.contains(KeyEvent.VK_A)) newCameraPosition -= rightVector * movementSpeed
+        if (pressedKeys.contains(KeyEvent.VK_SPACE)) newCameraPosition += Vector3d(0.0, movementSpeed, 0.0)
+        if (pressedKeys.contains(KeyEvent.VK_CONTROL)) newCameraPosition -= Vector3d(0.0, movementSpeed, 0.0)
+
+        val oldCameraPosition = Vector3d(cameraPosition.x, cameraPosition.y, cameraPosition.z)
+
+        val playerMin = Vector3d(newCameraPosition.x - playerHalfWidth, newCameraPosition.y - playerHeight / 2, newCameraPosition.z - playerHalfWidth)
+        val playerMax = Vector3d(newCameraPosition.x + playerHalfWidth, newCameraPosition.y + playerHeight / 2, newCameraPosition.z + playerHalfWidth)
+        val playerAABB = AABB(playerMin, playerMax)
+
+        var collisionOccurred = false
+
+        for (transformedCube in cubes) {
+            val cubeAABB = AABB.fromCube(transformedCube.getTransformedVertices())
+
+            if (playerAABB.intersects(cubeAABB)) {
+                collisionOccurred = true
+                break
+            }
+        }
+
+        if (!collisionOccurred) {
+            cameraPosition = newCameraPosition
+        } else {
+            val testX = AABB(Vector3d(newCameraPosition.x - playerHalfWidth, oldCameraPosition.y - playerHeight / 2, oldCameraPosition.z - playerHalfWidth),
+                Vector3d(newCameraPosition.x + playerHalfWidth, oldCameraPosition.y + playerHeight / 2, oldCameraPosition.z + playerHalfWidth))
+            var collisionX = false
+            for (transformedCube in cubes) {
+                if (testX.intersects(AABB.fromCube(transformedCube.getTransformedVertices()))) {
+                    collisionX = true
+                    break
+                }
+            }
+            if (!collisionX) cameraPosition.x = newCameraPosition.x
+
+
+            val testY = AABB(Vector3d(oldCameraPosition.x - playerHalfWidth, newCameraPosition.y - playerHeight / 2, oldCameraPosition.z - playerHalfWidth),
+                Vector3d(oldCameraPosition.x + playerHalfWidth, newCameraPosition.y + playerHeight / 2, oldCameraPosition.z + playerHalfWidth))
+            var collisionY = false
+            for (transformedCube in cubes) {
+                if (testY.intersects(AABB.fromCube(transformedCube.getTransformedVertices()))) {
+                    collisionY = true
+                    break
+                }
+            }
+            if (!collisionY) cameraPosition.y = newCameraPosition.y
+
+
+            val testZ = AABB(Vector3d(oldCameraPosition.x - playerHalfWidth, oldCameraPosition.y - playerHeight / 2, newCameraPosition.z - playerHalfWidth),
+                Vector3d(oldCameraPosition.x + playerHalfWidth, oldCameraPosition.y + playerHeight / 2, newCameraPosition.z + playerHalfWidth))
+            var collisionZ = false
+            for (transformedCube in cubes) {
+                if (testZ.intersects(AABB.fromCube(transformedCube.getTransformedVertices()))) {
+                    collisionZ = true
+                    break
+                }
+            }
+            if (!collisionZ) cameraPosition.z = newCameraPosition.z
+        }
+
+        if (pressedKeys.contains(KeyEvent.VK_LEFT)) cameraYaw += rotationSpeed * 2
+        if (pressedKeys.contains(KeyEvent.VK_RIGHT)) cameraYaw -= rotationSpeed * 2
+        if (pressedKeys.contains(KeyEvent.VK_DOWN) && (cameraPitch > -1)) cameraPitch -= rotationSpeed * 2
+        if (pressedKeys.contains(KeyEvent.VK_UP) && (cameraPitch < 1)) cameraPitch += rotationSpeed * 2
+        if (pressedKeys.contains(KeyEvent.VK_G)) println("${((cameraPosition.x.toInt()) / 100)} ${((cameraPosition.y.toInt()) / 100)} ${((cameraPosition.z.toInt()) / 100)} Yaw: $cameraYaw Pitch: $cameraPitch")
         if (pressedKeys.contains(KeyEvent.VK_R)) {
             val baseCubeVertices = mutableListOf<Vector3d>()
             val halfSize = cubeSize / 2.0
@@ -151,13 +214,15 @@ class DrawingPanel : JPanel() {
                 )
             )
             val initialPos = Vector3d(
-                (((cameraPosition.x.toInt())/100)+0.5) * (cubeSize + spacing).toInt().toDouble(),
-                (((cameraPosition.y.toInt())/100)-0.5) * (cubeSize + spacing).toInt().toDouble(),
-                (((cameraPosition.z.toInt())/100)-0.5) * (cubeSize + spacing).toInt().toDouble()
+                (((cameraPosition.x.toInt()) / 100) + 0.5) * (cubeSize + spacing).toInt().toDouble(),
+                (((cameraPosition.y.toInt()) / 100) - 0.5) * (cubeSize + spacing).toInt().toDouble(),
+                (((cameraPosition.z.toInt()) / 100) - 0.5) * (cubeSize + spacing).toInt().toDouble()
             )
             val translationMatrix = Matrix4x4.translation(initialPos.x, initialPos.y, initialPos.z)
             cubes.add(TransformedCube(Cube(Color.LIGHT_GRAY, baseCubeVertices), transformMatrix = translationMatrix))
         }
+        if (cameraYaw > 6.0) cameraYaw = 0.0
+        if (cameraYaw < -6.0) cameraYaw = 0.0
     }
 
     private fun requestRender() {

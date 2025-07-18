@@ -4,9 +4,6 @@ plugins {
     id("java")
 }
 
-group = "org.lewapnoob.FileZero"
-version = "1.0-SNAPSHOT"
-
 repositories {
     mavenCentral()
 }
@@ -45,6 +42,9 @@ tasks.test {
 kotlin {
     jvmToolchain(21)
 }
+
+group = "org.lewapnoob.FileZero"
+version = "1.0-SNAPSHOT"
 
 tasks {
     shadowJar {
