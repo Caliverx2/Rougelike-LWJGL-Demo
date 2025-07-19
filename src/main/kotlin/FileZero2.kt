@@ -24,6 +24,7 @@ import kotlin.math.sqrt
 
 class DrawingPanel : JPanel() {
     private val cubes = mutableListOf<TransformedCube>()
+    private val lightSources = mutableListOf<LightSource>()
 
     private var cameraPosition = Vector3d(0.0, 0.0, 0.0)
     private var cameraYaw = 2.4
@@ -221,6 +222,15 @@ class DrawingPanel : JPanel() {
             val translationMatrix = Matrix4x4.translation(initialPos.x, initialPos.y, initialPos.z)
             cubes.add(TransformedCube(Cube(Color.LIGHT_GRAY, baseCubeVertices), transformMatrix = translationMatrix))
         }
+        if (pressedKeys.contains(KeyEvent.VK_O)) {
+            val lightRadius = 6.0 * cubeSize
+            val lightX = (cameraPosition.x / cubeSize).toInt() * cubeSize + cubeSize / 2
+            val lightY = (cameraPosition.y / cubeSize).toInt() * cubeSize + cubeSize / 2
+            val lightZ = (cameraPosition.z / cubeSize).toInt() * cubeSize + cubeSize / 2
+            lightSources.add(LightSource(Vector3d(lightX, lightY, lightZ), lightRadius, Color(180, 20, 20)))
+            pressedKeys.remove(KeyEvent.VK_O)
+        }
+
         if (cameraYaw > 6.0) cameraYaw = 0.0
         if (cameraYaw < -6.0) cameraYaw = 0.0
     }
@@ -272,6 +282,8 @@ class DrawingPanel : JPanel() {
                     combinedMatrix.transformHomogeneous(transformedCube.transformMatrix.transform(it))
                 }
 
+                val worldVertices = transformedCube.cube.vertices.map { transformedCube.transformMatrix.transform(it) }
+
                 for (faceIndex in transformedCube.cube.faces.indices) {
                     val faceIndices = transformedCube.cube.faces[faceIndex]
                     val p0Homogeneous = transformedVerticesHomogeneous[faceIndices[0]]
@@ -291,6 +303,7 @@ class DrawingPanel : JPanel() {
                         val projectedVerticesForFace = mutableListOf<Vector3d>()
                         val textureVerticesForFace = mutableListOf<Vector3d>()
                         val originalClipWForFace = mutableListOf<Double>()
+                        val worldVerticesForFace = mutableListOf<Vector3d>()
                         var anyVertexInFrustum = false
 
                         val faceTexCoords = transformedCube.cube.faceTextureCoords[faceIndex]
@@ -299,12 +312,14 @@ class DrawingPanel : JPanel() {
                             val index = faceIndices[i]
                             val projectedHomogeneous = transformedVerticesHomogeneous[index]
                             val originalTextureCoord = faceTexCoords[i]
+                            val originalWorldVertex = worldVertices[index]
 
                             val w = projectedHomogeneous.w
                             if (w.isCloseToZero() || w < near || w > far) {
                                 projectedVerticesForFace.add(Vector3d(Double.NaN, Double.NaN, Double.NaN))
                                 textureVerticesForFace.add(Vector3d(Double.NaN, Double.NaN, Double.NaN))
                                 originalClipWForFace.add(Double.NaN)
+                                worldVerticesForFace.add(Vector3d(Double.NaN, Double.NaN, Double.NaN))
                             } else {
                                 val xClip = projectedHomogeneous.x / w
                                 val yClip = projectedHomogeneous.y / w
@@ -323,6 +338,7 @@ class DrawingPanel : JPanel() {
                                 )
                                 textureVerticesForFace.add(originalTextureCoord)
                                 originalClipWForFace.add(w)
+                                worldVerticesForFace.add(originalWorldVertex)
                             }
                         }
 
@@ -331,26 +347,28 @@ class DrawingPanel : JPanel() {
                             val drawableVertices = mutableListOf<Vector3d>()
                             val drawableTextureCoords = mutableListOf<Vector3d>()
                             val drawableOriginalClipW = mutableListOf<Double>()
+                            val drawableWorldVertices = mutableListOf<Vector3d>()
 
                             for (i in projectedVerticesForFace.indices) {
                                 if (!projectedVerticesForFace[i].x.isNaN()) {
                                     drawableVertices.add(projectedVerticesForFace[i])
                                     drawableTextureCoords.add(textureVerticesForFace[i])
                                     drawableOriginalClipW.add(originalClipWForFace[i])
+                                    drawableWorldVertices.add(worldVerticesForFace[i])
                                 }
                             }
 
                             if (drawableVertices.size >= 3) {
-                                renderQueue.add(RenderableFace(listOf(drawableVertices[0], drawableVertices[1], drawableVertices[2]), listOf(drawableOriginalClipW[0], drawableOriginalClipW[1], drawableOriginalClipW[2]), listOf(drawableTextureCoords[0], drawableTextureCoords[1], drawableTextureCoords[2]), transformedCube.cube.color, false, texture))
+                                renderQueue.add(RenderableFace(listOf(drawableVertices[0], drawableVertices[1], drawableVertices[2]), listOf(drawableOriginalClipW[0], drawableOriginalClipW[1], drawableOriginalClipW[2]), listOf(drawableTextureCoords[0], drawableTextureCoords[1], drawableTextureCoords[2]), transformedCube.cube.color, false, texture, listOf(drawableWorldVertices[0], drawableWorldVertices[1], drawableWorldVertices[2])))
                                 if (drawableVertices.size == 4) {
-                                    renderQueue.add(RenderableFace(listOf(drawableVertices[0], drawableVertices[2], drawableVertices[3]), listOf(drawableOriginalClipW[0], drawableOriginalClipW[2], drawableOriginalClipW[3]), listOf(drawableTextureCoords[0], drawableTextureCoords[2], drawableTextureCoords[3]), transformedCube.cube.color, false, texture))
+                                    renderQueue.add(RenderableFace(listOf(drawableVertices[0], drawableVertices[2], drawableVertices[3]), listOf(drawableOriginalClipW[0], drawableOriginalClipW[2], drawableOriginalClipW[3]), listOf(drawableTextureCoords[0], drawableTextureCoords[2], drawableTextureCoords[3]), transformedCube.cube.color, false, texture, listOf(drawableWorldVertices[0], drawableWorldVertices[2], drawableWorldVertices[3])))
                                 }
 
                                 val edgeColor = Color(40, 40, 40)
                                 for (i in 0 until drawableVertices.size) {
                                     val p1 = drawableVertices[i]
                                     val p2 = drawableVertices[(i + 1) % drawableVertices.size]
-                                    renderQueue.add(RenderableFace(listOf(p1, p2), listOf(), listOf(), edgeColor, true, null))
+                                    renderQueue.add(RenderableFace(listOf(p1, p2), listOf(), listOf(), edgeColor, true, null, listOf()))
                                 }
                             }
                         }
@@ -381,7 +399,7 @@ class DrawingPanel : JPanel() {
                         renderableFace.color, virtualWidth, virtualHeight)
                 }
             } else {
-                rasterizeTexturedTriangle(g2dBack, renderableFace.screenVertices, renderableFace.originalClipW, renderableFace.textureVertices, renderableFace.texture, virtualWidth, virtualHeight)
+                rasterizeTexturedTriangle(g2dBack, renderableFace.screenVertices, renderableFace.originalClipW, renderableFace.textureVertices, renderableFace.texture, renderableFace.worldVertices, virtualWidth, virtualHeight)
             }
         }
         g2dBack.dispose()
@@ -400,8 +418,46 @@ class DrawingPanel : JPanel() {
         }
     }
 
-    private fun rasterizeTexturedTriangle(g2d: Graphics2D, screenVertices: List<Vector3d>, originalClipW: List<Double>, textureVertices: List<Vector3d>, texture: BufferedImage?, screenWidth: Int, screenHeight: Int) {
-        if (screenVertices.size != 3 || textureVertices.size != 3 || originalClipW.size != 3 || texture == null) return
+    private fun projectWorldToScreen(worldPos: Vector3d, cameraPos: Vector3d, yaw: Double, pitch: Double, screenWidth: Int, screenHeight: Int): Vector3d? {
+        val lookDirection = Vector3d(
+            cos(pitch) * sin(yaw),
+            sin(pitch),
+            cos(pitch) * cos(yaw)
+        ).normalize()
+        val upVector = Vector3d(0.0, 1.0, 0.0)
+
+        val viewMatrix = Matrix4x4.lookAt(cameraPos, cameraPos + lookDirection, upVector)
+        val fov = 90.0
+        val aspectRatio = screenWidth.toDouble() / screenHeight.toDouble()
+        val near = 0.1
+        val far = 5000.0
+        val projectionMatrix = Matrix4x4.perspective(fov, aspectRatio, near, far)
+        val combinedMatrix = projectionMatrix * viewMatrix
+
+        val projectedHomogeneous = combinedMatrix.transformHomogeneous(worldPos)
+
+        val w = projectedHomogeneous.w
+        if (w.isCloseToZero() || w < near || w > far) {
+            return null
+        }
+
+        val xClip = projectedHomogeneous.x / w
+        val yClip = projectedHomogeneous.y / w
+        val zClip = projectedHomogeneous.z / w
+
+        if (xClip >= -1.0 && xClip <= 1.0 && yClip >= -1.0 && yClip <= 1.0 && zClip >= -1.0 && zClip <= 1.0) {
+            return Vector3d(
+                (xClip + 1) * screenWidth / 2.0,
+                (1 - yClip) * screenHeight / 2.0,
+                zClip
+            )
+        }
+        return null
+    }
+
+
+    private fun rasterizeTexturedTriangle(g2d: Graphics2D, screenVertices: List<Vector3d>, originalClipW: List<Double>, textureVertices: List<Vector3d>, texture: BufferedImage?, worldVertices: List<Vector3d>, screenWidth: Int, screenHeight: Int) {
+        if (screenVertices.size != 3 || textureVertices.size != 3 || originalClipW.size != 3 || worldVertices.size != 3 || texture == null) return
 
         val v0 = screenVertices[0]
         val v1 = screenVertices[1]
@@ -414,6 +470,10 @@ class DrawingPanel : JPanel() {
         val w0 = originalClipW[0]
         val w1 = originalClipW[1]
         val w2 = originalClipW[2]
+
+        val world0 = worldVertices[0]
+        val world1 = worldVertices[1]
+        val world2 = worldVertices[2]
 
         val u0_prime = uv0.x / w0
         val v0_prime = uv0.y / w0
@@ -486,13 +546,18 @@ class DrawingPanel : JPanel() {
                         val texY = (v * (texture.height - 1)).toInt().coerceIn(0, texture.height - 1)
 
                         var finalPixelColor = Color(texture.getRGB(texX, texY))
-                        val distance = 1.0 / interpolated_z_inv_prime
 
+                        val interpolatedWorldX = alpha * world0.x + beta * world1.x + gamma * world2.x
+                        val interpolatedWorldY = alpha * world0.y + beta * world1.y + gamma * world2.y
+                        val interpolatedWorldZ = alpha * world0.z + beta * world1.z + gamma * world2.z
+                        val pixelWorldPos = Vector3d(interpolatedWorldX, interpolatedWorldY, interpolatedWorldZ)
+
+                        finalPixelColor = calculateLightInfluence(finalPixelColor, pixelWorldPos)
+
+                        val distance = 1.0 / interpolated_z_inv_prime
                         var linearFogFactor = (distance - fogStartDistance) / (fogEndDistance - fogStartDistance)
                         linearFogFactor = linearFogFactor.coerceIn(0.0, 1.0)
-
-                        val fogFactor = linearFogFactor * fogDensity
-                            .coerceIn(0.0, 1.0)
+                        val fogFactor = linearFogFactor * fogDensity.coerceIn(0.0, 1.0)
 
                         val r = ((finalPixelColor.red * (1 - fogFactor) + fogColor.red * fogFactor)).toInt().coerceIn(0, 255)
                         val g = ((finalPixelColor.green * (1 - fogFactor) + fogColor.green * fogFactor)).toInt().coerceIn(0, 255)
@@ -508,6 +573,83 @@ class DrawingPanel : JPanel() {
             }
         }
     }
+
+    private fun calculateLightInfluence(baseColor: Color, pixelWorldPos: Vector3d): Color {
+        var finalR = baseColor.red.toDouble()
+        var finalG = baseColor.green.toDouble()
+        var finalB = baseColor.blue.toDouble()
+
+        val ambientIntensity = 0.5
+        finalR *= ambientIntensity
+        finalG *= ambientIntensity
+        finalB *= ambientIntensity
+
+
+        for (light in lightSources) {
+            val lightToPixel = light.position - pixelWorldPos
+            val distanceToLight = lightToPixel.length()
+
+            if (distanceToLight < light.radius) {
+                if (!isOccludedByGrid(pixelWorldPos, light.position)) {
+                    val attenuation = 1.0 - (distanceToLight / light.radius)
+                    val lightIntensity = 2.5 * attenuation
+
+                    finalR += (baseColor.red / 255.0) * (light.color.red / 255.0) * lightIntensity * 255.0
+                    finalG += (baseColor.green / 255.0) * (light.color.green / 255.0) * lightIntensity * 255.0
+                    finalB += (baseColor.blue / 255.0) * (light.color.blue / 255.0) * lightIntensity * 255.0
+                }
+            }
+        }
+
+        return Color(
+            finalR.toInt().coerceIn(0, 255),
+            finalG.toInt().coerceIn(0, 255),
+            finalB.toInt().coerceIn(0, 255)
+        )
+    }
+
+    private fun isOccludedByGrid(start: Vector3d, end: Vector3d): Boolean {
+        var currentX = ((start.x + cubeSize / 2) / cubeSize).toInt() + 4
+        var currentY = ((start.y + cubeSize / 2) / cubeSize).toInt() + 4
+        var currentZ = ((start.z + cubeSize / 2) / cubeSize).toInt() + 4
+
+        val targetX = ((end.x + cubeSize / 2) / cubeSize).toInt() + 4
+        val targetY = ((end.y + cubeSize / 2) / cubeSize).toInt() + 4
+        val targetZ = ((end.z + cubeSize / 2) / cubeSize).toInt() + 4
+
+        val dx = (targetX - currentX).toDouble()
+        val dy = (targetY - currentY).toDouble()
+        val dz = (targetZ - currentZ).toDouble()
+
+        val steps = maxOf(abs(dx), abs(dy), abs(dz)).toInt()
+        if (steps == 0) return false
+
+        for (i in 1..steps) {
+            val t = i.toDouble() / steps.toDouble()
+            val interpolatedX = currentX + (dx * t)
+            val interpolatedY = currentY + (dy * t)
+            val interpolatedZ = currentZ + (dz * t)
+
+            val gridX = interpolatedX.toInt().coerceIn(0, 8)
+            val gridY = interpolatedY.toInt().coerceIn(0, 8)
+            val gridZ = interpolatedZ.toInt().coerceIn(0, 8)
+
+            if (GRID_MAP[gridX][gridY][gridZ] == 1) {
+                val blockWorldMin = Vector3d((gridX - 4.5) * (cubeSize + spacing), (gridY - 4.5) * (cubeSize + spacing), (gridZ - 4.5) * (cubeSize + spacing))
+                val blockWorldMax = Vector3d(blockWorldMin.x + cubeSize, blockWorldMin.y + cubeSize, blockWorldMin.z + cubeSize)
+                val blockCenter = Vector3d(blockWorldMin.x + cubeSize / 2, blockWorldMin.y + cubeSize / 2, blockWorldMin.z + cubeSize / 2)
+
+                val distStartToBlock = (blockCenter - start).length()
+                val distStartToEnd = (end - start).length()
+
+                if (distStartToBlock < distStartToEnd - 10) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
 
     private fun drawLineZBuffered(g2d: Graphics2D, x0: Int, y0: Int, z0: Double, x1: Int, y1: Int, z1: Double, color: Color, screenWidth: Int, screenHeight: Int) {
         var currX0 = x0
