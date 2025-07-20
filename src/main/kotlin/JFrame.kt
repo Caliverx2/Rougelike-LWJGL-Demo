@@ -55,8 +55,8 @@ class DemoDisplay : JPanel() {
         var dx = cos(angle)
         var dy = sin(angle)
 
-        var dist = 0.0
-        var step = 0.05
+        var dist = 0.1
+        var step = 0.01
 
         while (dist < max_depth) {
             var postionx = p1.positionX + dx * dist
@@ -64,9 +64,9 @@ class DemoDisplay : JPanel() {
             var cx = floor(postionx).toInt()
             var cy = floor(postiony).toInt()
 
-            if (cx < 0 || cx >= grid[0].size || cy < 0 || cy >= grid.size) break
+            if (cx < 0 || cx >= grid.size || cy < 0 || cy >= grid.size) break
 
-            if (grid[cy.toInt()][cx.toInt()] == 1) {
+            if (grid[cy][cx] == 1) {
                 return dist
             }
 

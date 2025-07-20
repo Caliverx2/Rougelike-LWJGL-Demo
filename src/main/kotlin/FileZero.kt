@@ -183,7 +183,8 @@ data class RenderableFace(
     val color: Color,
     val isEdge: Boolean,
     val texture: BufferedImage? = null,
-    val worldVertices: List<Vector3d> = listOf()
+    val worldVertices: List<Vector3d> = listOf(),
+    var illuminatedColor: Color? = null // New property for storing the illuminated color
 )
 
 class TransformedCube(
@@ -275,7 +276,7 @@ val GRID_4 = arrayOf(
 
 val GRID_MAP: Array<Array<Array<Int>>> = Array(9) { Array(9) { Array(9) { 0 } } }
 
-data class LightSource(var position: Vector3d, val radius: Double, val color: Color)
+data class LightSource(val position: Vector3d, val radius: Double = 5.0, val color: Color = Color(255, 20, 20), val intensity: Double = 1.0)
 
 fun main() {
     SwingUtilities.invokeLater {
