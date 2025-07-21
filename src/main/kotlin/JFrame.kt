@@ -52,17 +52,17 @@ class DemoDisplay : JPanel() {
     }
 
     fun castRay(angle : Double): Double {
-        var dx = cos(angle)
-        var dy = sin(angle)
+        val dx = cos(angle)
+        val dy = sin(angle)
 
         var dist = 0.1
-        var step = 0.01
+        val step = 0.01
 
         while (dist < max_depth) {
-            var postionx = p1.positionX + dx * dist
-            var postiony = p1.positionY + dy * dist
-            var cx = floor(postionx).toInt()
-            var cy = floor(postiony).toInt()
+            val postionx = p1.positionX + dx * dist
+            val postiony = p1.positionY + dy * dist
+            val cx = floor(postionx).toInt()
+            val cy = floor(postiony).toInt()
 
             if (cx < 0 || cx >= grid.size || cy < 0 || cy >= grid.size) break
 
@@ -100,21 +100,21 @@ class DemoDisplay : JPanel() {
 
             val x_start = x_start_f.toInt()
             val x_end = x_end_f.toInt()
-            var columnScreenX = x_start
+            val columnScreenX = x_start
             var columnWidth = x_end - x_start
 
             if (columnWidth <= 0) {
                 columnWidth = 1
             }
 
-            var angle = p1.dir - (fov / 2) + (i.toDouble() / (num_rays - 1).toDouble()) * fov
-            var dist = castRay(angle)
-            var brightness = max(0.0,(255 - dist * 40)).toInt()
-            var shade = Color(brightness, brightness ,brightness)
+            val angle = p1.dir - (fov / 2) + (i.toDouble() / (num_rays - 1).toDouble()) * fov
+            val dist = castRay(angle)
+            val brightness = max(0.0,(255 - dist * 40)).toInt()
+            val shade = Color(brightness, brightness ,brightness)
 
-            var correctedDist = dist * cos(angle - p1.dir)
-            var colHeight = floor(sh / (correctedDist + 0.1))
-            var y = (sh - colHeight) / 2
+            val correctedDist = dist * cos(angle - p1.dir)
+            val colHeight = floor(sh / (correctedDist + 0.1))
+            val y = (sh - colHeight) / 2
 
             g2d.color = shade
             g2d.fillRect(columnScreenX, y.toInt(), columnWidth, colHeight.toInt())

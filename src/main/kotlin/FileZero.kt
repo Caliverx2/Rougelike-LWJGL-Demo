@@ -10,6 +10,7 @@ import java.awt.Toolkit
 import kotlin.math.sqrt
 import kotlin.math.abs
 import java.awt.image.BufferedImage
+import javax.imageio.ImageIO
 
 data class Vector3d(var x: Double, var y: Double, var z: Double) {
     operator fun plus(other: Vector3d) = Vector3d(x + other.x, y + other.y, z + other.z)
@@ -189,7 +190,9 @@ data class RenderableFace(
 
 class TransformedCube(
     val cube: Cube,
-    var transformMatrix: Matrix4x4 = Matrix4x4.identity()
+    var transformMatrix: Matrix4x4 = Matrix4x4.identity(),
+    var collision: Boolean = true,
+    val texture: BufferedImage = ImageIO.read(DrawingPanel::class.java.classLoader.getResource("textures/black_bricks.png"))
 ) {
     fun getTransformedVertices(): List<Vector3d> {
         return cube.vertices.map { transformMatrix.transform(it) }
@@ -241,7 +244,7 @@ val GRID_1 = arrayOf(
     intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1)
 )
 val GRID_2 = arrayOf(
-    intArrayOf(1, 1, 0, 1, 1, 1, 0, 1, 1),
+    intArrayOf(1, 1, 0, 1, 2, 1, 0, 1, 1),
     intArrayOf(1, 0, 0, 0, 0, 0, 0, 0, 1),
     intArrayOf(0, 0, 0, 0, 0, 0, 0, 0, 0),
     intArrayOf(1, 0, 0, 0, 0, 0, 0, 0, 1),
@@ -249,7 +252,7 @@ val GRID_2 = arrayOf(
     intArrayOf(1, 0, 0, 0, 0, 0, 0, 0, 1),
     intArrayOf(0, 0, 0, 0, 0, 0, 0, 0, 0),
     intArrayOf(1, 0, 0, 0, 0, 0, 0, 0, 1),
-    intArrayOf(1, 1, 0, 1, 1, 1, 0, 1, 1)
+    intArrayOf(1, 1, 0, 1, 3, 1, 0, 1, 1)
 )
 val GRID_3 = arrayOf(
     intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
@@ -264,17 +267,17 @@ val GRID_3 = arrayOf(
 )
 val GRID_4 = arrayOf(
     intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
-    intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
-    intArrayOf(1, 1, 0, 0, 0, 0, 0, 1, 1),
-    intArrayOf(1, 1, 0, 0, 0, 0, 0, 1, 1),
-    intArrayOf(1, 1, 0, 0, 0, 0, 0, 1, 1),
-    intArrayOf(1, 1, 0, 0, 0, 0, 0, 1, 1),
-    intArrayOf(1, 1, 0, 0, 0, 0, 0, 1, 1),
-    intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
+    intArrayOf(1, 2, 2, 2, 2, 2, 2, 2, 1),
+    intArrayOf(1, 2, 0, 0, 0, 0, 0, 2, 1),
+    intArrayOf(1, 2, 0, 0, 0, 0, 0, 2, 1),
+    intArrayOf(1, 2, 0, 0, 3, 0, 0, 2, 1),
+    intArrayOf(1, 2, 0, 0, 0, 0, 0, 2, 1),
+    intArrayOf(1, 2, 0, 0, 0, 0, 0, 2, 1),
+    intArrayOf(1, 2, 2, 2, 2, 2, 2, 2, 1),
     intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1)
 )
 
-val GRID_MAP: Array<Array<Array<Int>>> = Array(9) { Array(9) { Array(9) { 0 } } }
+val GRID_MAP: Array<Array<Array<Int>>> = Array(18) { Array(18) { Array(18) { 0 } } }
 
 data class LightSource(val position: Vector3d, val radius: Double = 5.0, val color: Color = Color(255, 20, 20), val intensity: Double = 1.0)
 
