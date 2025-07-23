@@ -185,7 +185,7 @@ data class RenderableFace(
     val isEdge: Boolean,
     val texture: BufferedImage? = null,
     val worldVertices: List<Vector3d> = listOf(),
-    var illuminatedColor: Color? = null // New property for storing the illuminated color
+    var illuminatedColor: Color? = null
 )
 
 class TransformedCube(

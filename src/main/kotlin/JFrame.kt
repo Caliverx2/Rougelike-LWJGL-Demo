@@ -86,8 +86,6 @@ class DemoDisplay : JPanel() {
         super.paintComponent(g)
         val g2d = g as Graphics2D
 
-        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-
         clear(g2d)
 
         val sw = width
@@ -171,34 +169,3 @@ fun main() {
         frame.isVisible = true
     }
 }
-
-
-/*
-
-fun main() {
-    SwingUtilities.invokeLater {
-        val frame = JFrame("JFrame.kt")
-        frame.defaultCloseOperation = JFrame.EXIT_ON_CLOSE
-        frame.isResizable = false
-        frame.add(DemoDisplay())
-        frame.pack()
-        frame.setLocationRelativeTo(null)
-        frame.isVisible = true
-    }
-}
-
-class DemoDisplay() : JPanel() {
-
-    init {
-        preferredSize = Dimension(1920 / 2, 1080 / 2)
-        setBackground(Color.DARK_GRAY)
-        isFocusable = true
-    }
-
-    override fun paintComponent(g: Graphics?) {
-        super.paintComponent(g)
-        val g2d = g as Graphics2D
-    }
-}
-
-*/
