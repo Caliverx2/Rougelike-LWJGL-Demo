@@ -126,9 +126,12 @@ class DemoDisplay : JPanel() {
         for (x in 0..grid.size-1) {
             for (y in 0..grid.size-1) {
                 g2d.color = Color(100, 100, 100)
-                if (grid[x][y] == 1) g2d.fillOval(sizeOval*x, sizeOval*y,sizeOval, sizeOval)
+                if (grid[x][y] == 1) g2d.fillOval(sizeOval*y, sizeOval*x,sizeOval, sizeOval)
             }
         }
+
+        g2d.color = Color(188, 40, 40)
+        g2d.fillOval((sizeOval*p1.positionX).toInt(), (sizeOval*p1.positionY).toInt(),sizeOval/2, sizeOval/2)
     }
 
     private fun clear(g: Graphics2D) {
