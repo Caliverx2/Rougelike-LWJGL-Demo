@@ -21,7 +21,7 @@ import kotlin.math.sin
 class DemoDisplay : JPanel() {
     val fov = Math.toRadians(90.0)
     val num_rays = 90
-    val max_depth = 150.0
+    val max_depth = 15.0
     val p1 = player()
 
     init {
@@ -122,7 +122,7 @@ class DemoDisplay : JPanel() {
         g2d.font = Font("Arial", Font.BOLD, 20)
         g2d.drawString("${LocalTime.now().hour}:${LocalTime.now().minute}", 1920/2 - 100, 30)
 
-        val sizeOval = 15
+        val sizeOval = 17
         for (x in 0..grid.size-1) {
             for (y in 0..grid.size-1) {
                 g2d.color = Color(100, 100, 100)
@@ -131,7 +131,7 @@ class DemoDisplay : JPanel() {
         }
 
         g2d.color = Color(188, 40, 40)
-        g2d.fillOval((sizeOval*p1.positionX).toInt(), (sizeOval*p1.positionY).toInt(),sizeOval/2, sizeOval/2)
+        g2d.fillOval((sizeOval*p1.positionX).toInt(), (sizeOval*p1.positionY).toInt(),sizeOval*3/4, sizeOval*3/4)
     }
 
     private fun clear(g: Graphics2D) {

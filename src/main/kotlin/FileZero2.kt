@@ -116,7 +116,7 @@ class DrawingPanel : JPanel() {
                             (z - 4.5) * (cubeSize + spacing)
                         )
                         val translationMatrix = Matrix4x4.translation(initialPos.x, initialPos.y, initialPos.z)
-                        cubes.add(TransformedCube(Cube(Color(255, 255, 255), baseCubeVertices), transformMatrix = translationMatrix))
+                        cubes.add(TransformedCube(Cube(Color(255, 255, 255), baseCubeVertices, null, initialPos.x, initialPos.y, initialPos. z), transformMatrix = translationMatrix))
                     }
                     if (GRID_MAP[x][y][z] == 2) {
                         val initialPos = Vector3d(
@@ -125,7 +125,7 @@ class DrawingPanel : JPanel() {
                             (z - 4.5) * (cubeSize + spacing)
                         )
                         val translationMatrix = Matrix4x4.translation(initialPos.x, initialPos.y, initialPos.z)
-                        cubes.add(TransformedCube(Cube(Color(255, 0, 0), baseCubeVertices), transformMatrix = translationMatrix))
+                        cubes.add(TransformedCube(Cube(Color(255, 0, 0), baseCubeVertices, null, initialPos.x, initialPos.y, initialPos. z), transformMatrix = translationMatrix))
                     }
                     if (GRID_MAP[x][y][z] == 3) {
                         val initialPos = Vector3d(
@@ -134,7 +134,7 @@ class DrawingPanel : JPanel() {
                             (z - 4.5) * (cubeSize + spacing)
                         )
                         val translationMatrix = Matrix4x4.translation(initialPos.x, initialPos.y, initialPos.z)
-                        cubes.add(TransformedCube(Cube(Color(188, 188, 188), baseCubeVertices), transformMatrix = translationMatrix, collision = false, texture = ImageIO.read(DrawingPanel::class.java.classLoader.getResource("textures/bricks.jpg"))))
+                        cubes.add(TransformedCube(Cube(Color(188, 188, 188), baseCubeVertices, null, initialPos.x, initialPos.y, initialPos. z), transformMatrix = translationMatrix, collision = false, texture = ImageIO.read(DrawingPanel::class.java.classLoader.getResource("textures/bricks.jpg"))))
                     }
                 }
             }
@@ -261,7 +261,7 @@ class DrawingPanel : JPanel() {
                 (((cameraPosition.z.toInt()) / 100) - 0.5) * (cubeSize + spacing).toInt().toDouble()
             )
             val translationMatrix = Matrix4x4.translation(initialPos.x, initialPos.y, initialPos.z)
-            cubes.add(TransformedCube(Cube(Color.LIGHT_GRAY, baseCubeVertices), transformMatrix = translationMatrix))
+            cubes.add(TransformedCube(Cube(Color.LIGHT_GRAY, baseCubeVertices, null, initialPos.x, initialPos.y, initialPos. z), transformMatrix = translationMatrix))
         }
         if (pressedKeys.contains(KeyEvent.VK_O)) {
             val lightRadius = 5.0 * cubeSize
@@ -303,6 +303,28 @@ class DrawingPanel : JPanel() {
                 for (zLevel in 0 until 4) {
                     if (GRID_MAP[x][zLevel][y] == 1) {
                         g2d.drawOval(x * 10, y * 10 + zLevel * 90 + zLevel * 10, 10, 10)
+                    }
+                }
+            }
+        }
+
+        for (x in 0..8) {
+            for (y in 0..8) {
+                for (zLevel in 0 until 4) {
+                    if (GRID_MAP[x][zLevel][y] == 3) {
+
+                        if ((((cameraPosition.x+500)/100).toInt() == x) and
+                            (((cameraPosition.y+500)/100).toInt() == zLevel) and
+                            (((cameraPosition.z+500)/100).toInt() == y)) {
+
+                            val blockx = (x - 4.5) * (cubeSize + spacing)
+                            val blocky = (zLevel - 4.5) * (cubeSize + spacing)
+                            val blockz = (y - 4.5) * (cubeSize + spacing)
+
+                            GRID_MAP[x][zLevel][y] = 0
+                            println(cubes.find { it.cube.x == blockx && it.cube.y == blocky && it.cube.z == blockz })
+                            cubes.removeAt(cubes.indexOf(cubes.find { it.cube.x == blockx && it.cube.y == blocky && it.cube.z == blockz }))
+                        }
                     }
                 }
             }
@@ -849,3 +871,5 @@ class DrawingPanel : JPanel() {
         }
     }
 }
+
+private fun MutableList<TransformedCube>.removeAt(index: TransformedCube?) {}

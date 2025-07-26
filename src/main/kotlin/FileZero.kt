@@ -158,7 +158,7 @@ class Matrix4x4(private val data: Array<DoubleArray>) {
     }
 }
 
-data class Cube(val color: Color, val vertices: List<Vector3d>, val textureCoords: List<Vector3d>? = null) {
+data class Cube(val color: Color, val vertices: List<Vector3d>, val textureCoords: List<Vector3d>? = null, val x: Double, val y: Double, val z: Double) {
     val faces = listOf(
         listOf(0, 1, 2, 3),
         listOf(4, 7, 6, 5),
