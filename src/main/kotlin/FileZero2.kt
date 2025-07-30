@@ -24,6 +24,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 class DrawingPanel : JPanel() {
+    private var lastUpdateTime = System.nanoTime()
     private val isRendering = java.util.concurrent.atomic.AtomicBoolean(false)
     private val cubes = mutableListOf<TransformedCube>()
     private val lightSources = mutableListOf<LightSource>()
@@ -31,8 +32,6 @@ class DrawingPanel : JPanel() {
     private var cameraPosition = Vector3d(0.0, 0.0, 0.0)
     private var cameraYaw = 2.4
     private var cameraPitch = 0.0
-    private var movementSpeed = 20.0
-    private val rotationSpeed = 0.05
 
     private var debugFly = false
     private var debugNoclip = false
@@ -144,12 +143,16 @@ class DrawingPanel : JPanel() {
         }
 
         Timer(16) {
-            updateCameraPosition()
+            val currentTime = System.nanoTime()
+            val deltaTime = (currentTime - lastUpdateTime) / 1_000_000_000.0
+            lastUpdateTime = currentTime
+
+            updateCameraPosition(deltaTime)
             requestRender()
         }.start()
     }
 
-    private fun updateCameraPosition() {
+    private fun updateCameraPosition(deltaTime: Double) {
         var lookDirection = Vector3d(
             cos(cameraPitch) * sin(cameraYaw),
             0.0,
@@ -170,14 +173,15 @@ class DrawingPanel : JPanel() {
 
         var newCameraPosition = Vector3d(cameraPosition.x, cameraPosition.y, cameraPosition.z)
 
-        movementSpeed = 20.0
-        if (pressedKeys.contains(KeyEvent.VK_SHIFT)) movementSpeed = 30.0
-        if (pressedKeys.contains(KeyEvent.VK_W)) newCameraPosition += forwardVector * movementSpeed
-        if (pressedKeys.contains(KeyEvent.VK_S)) newCameraPosition -= forwardVector * movementSpeed
-        if (pressedKeys.contains(KeyEvent.VK_D)) newCameraPosition += rightVector * movementSpeed
-        if (pressedKeys.contains(KeyEvent.VK_A)) newCameraPosition -= rightVector * movementSpeed
-        if (pressedKeys.contains(KeyEvent.VK_SPACE) and debugFly) newCameraPosition += Vector3d(0.0, movementSpeed, 0.0)
-        if (pressedKeys.contains(KeyEvent.VK_CONTROL) and debugFly) newCameraPosition -= Vector3d(0.0, movementSpeed, 0.0)
+        var currentMovementSpeed = 350.0
+        if (pressedKeys.contains(KeyEvent.VK_SHIFT)) currentMovementSpeed = 550.0
+
+        if (pressedKeys.contains(KeyEvent.VK_W)) newCameraPosition += forwardVector * currentMovementSpeed * deltaTime
+        if (pressedKeys.contains(KeyEvent.VK_S)) newCameraPosition -= forwardVector * currentMovementSpeed * deltaTime
+        if (pressedKeys.contains(KeyEvent.VK_D)) newCameraPosition += rightVector * currentMovementSpeed * deltaTime
+        if (pressedKeys.contains(KeyEvent.VK_A)) newCameraPosition -= rightVector * currentMovementSpeed * deltaTime
+        if (pressedKeys.contains(KeyEvent.VK_SPACE) && debugFly) newCameraPosition += Vector3d(0.0, currentMovementSpeed, 0.0) * deltaTime
+        if (pressedKeys.contains(KeyEvent.VK_CONTROL) && debugFly) newCameraPosition -= Vector3d(0.0, currentMovementSpeed, 0.0) * deltaTime
 
         val oldCameraPosition = Vector3d(cameraPosition.x, cameraPosition.y, cameraPosition.z)
 
@@ -237,11 +241,13 @@ class DrawingPanel : JPanel() {
             if (!collisionZ) cameraPosition.z = newCameraPosition.z
         }
 
-        if (pressedKeys.contains(KeyEvent.VK_LEFT)) cameraYaw += rotationSpeed * 2
-        if (pressedKeys.contains(KeyEvent.VK_RIGHT)) cameraYaw -= rotationSpeed * 2
-        if (pressedKeys.contains(KeyEvent.VK_DOWN) && (cameraPitch > -1.3)) cameraPitch -= rotationSpeed * 2
-        if (pressedKeys.contains(KeyEvent.VK_UP) && (cameraPitch < 1.3)) cameraPitch += rotationSpeed * 2
-        if (pressedKeys.contains(KeyEvent.VK_G)) println("X:${((cameraPosition.x+500)/100).toInt()} Y:${((cameraPosition.y+500)/100).toInt()} Z:${((cameraPosition.z+500)/100).toInt()} YAW:${((cameraYaw*10).toInt()/10.0)} PITCH:${((cameraPitch*10).toInt()/10.0)} SPEED:$movementSpeed")
+        val currentRotationSpeed = 4.0
+        if (pressedKeys.contains(KeyEvent.VK_LEFT)) cameraYaw += currentRotationSpeed * deltaTime
+        if (pressedKeys.contains(KeyEvent.VK_RIGHT)) cameraYaw -= currentRotationSpeed * deltaTime
+        if (pressedKeys.contains(KeyEvent.VK_DOWN) && (cameraPitch > -1.3)) cameraPitch -= currentRotationSpeed * deltaTime
+        if (pressedKeys.contains(KeyEvent.VK_UP) && (cameraPitch < 1.3)) cameraPitch += currentRotationSpeed * deltaTime
+
+        if (pressedKeys.contains(KeyEvent.VK_G)) println("X:${((cameraPosition.x+500)/100).toInt()} Y:${((cameraPosition.y+500)/100).toInt()} Z:${((cameraPosition.z+500)/100).toInt()} YAW:${((cameraYaw*10).toInt()/10.0)} PITCH:${((cameraPitch*10).toInt()/10.0)} SPEED:$currentMovementSpeed")
         if (pressedKeys.contains(KeyEvent.VK_R)) {
             val baseCubeVertices = mutableListOf<Vector3d>()
             val halfSize = cubeSize / 2.0
