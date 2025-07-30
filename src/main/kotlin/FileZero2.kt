@@ -24,6 +24,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 class DrawingPanel : JPanel() {
+    private val isRendering = java.util.concurrent.atomic.AtomicBoolean(false)
     private val cubes = mutableListOf<TransformedCube>()
     private val lightSources = mutableListOf<LightSource>()
 
@@ -281,7 +282,6 @@ class DrawingPanel : JPanel() {
     override fun paintComponent(g: Graphics) {
         super.paintComponent(g)
         val g2dBack = backBuffer.graphics as Graphics2D
-        g2dBack.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
 
         while (renderQueue.isNotEmpty()) {
             val renderableFace = renderQueue.poll()
@@ -331,7 +331,10 @@ class DrawingPanel : JPanel() {
                 }
             }
         }
+
+        isRendering.set(false)
     }
+
 
     private fun calculateIlluminatedFaces(
         cubes: List<TransformedCube>,
@@ -404,7 +407,14 @@ class DrawingPanel : JPanel() {
     }
 
     private fun requestRender() {
-        if (virtualWidth <= 0 || virtualHeight <= 0) return
+        if (isRendering.getAndSet(true)) {
+            return
+        }
+
+        if (virtualWidth <= 0 || virtualHeight <= 0) {
+            isRendering.set(false)
+            return
+        }
 
         if (depthBuffer.size != virtualWidth || depthBuffer[0].size != virtualHeight) {
             depthBuffer = Array(virtualWidth) { DoubleArray(virtualHeight) { Double.MAX_VALUE } }
