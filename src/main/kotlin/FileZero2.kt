@@ -58,6 +58,8 @@ class DrawingPanel : JPanel() {
 
     private val pressedKeys = Collections.synchronizedSet(mutableSetOf<Int>())
 
+    private data class SubFace(val worldVertices: List<Vector3d>)
+
     private val executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
     private val renderQueue = ConcurrentLinkedQueue<RenderableFace>()
 
@@ -265,10 +267,10 @@ class DrawingPanel : JPanel() {
         }
         if (pressedKeys.contains(KeyEvent.VK_O)) {
             val lightRadius = 5.0 * cubeSize
-            val lightX = (cameraPosition.x / cubeSize).toInt() * cubeSize + cubeSize / 2
-            val lightY = (cameraPosition.y / cubeSize).toInt() * cubeSize + cubeSize / 2
-            val lightZ = (cameraPosition.z / cubeSize).toInt() * cubeSize + cubeSize / 2
-            lightSources.add(LightSource(Vector3d(lightX, lightY-cubeSize/2, lightZ), lightRadius, Color(188, 0, 0, 180)))
+            val lightX = cameraPosition.x
+            val lightY = cameraPosition.y
+            val lightZ = cameraPosition.z
+            lightSources.add(LightSource(Vector3d(lightX, lightY, lightZ), lightRadius, Color(188, 0, 0, 180)))
             pressedKeys.remove(KeyEvent.VK_O)
         }
 
@@ -333,100 +335,72 @@ class DrawingPanel : JPanel() {
 
     private fun calculateIlluminatedFaces(
         cubes: List<TransformedCube>,
-        lightSources: List<LightSource>,
-        cameraPosition: Vector3d,
-        viewMatrix: Matrix4x4,
-        projectionMatrix: Matrix4x4
-    ): Map<RenderableFace, Color> {
-        val illuminatedFaceColors = ConcurrentHashMap<RenderableFace, Color>()
+        lightSources: List<LightSource>
+    ): Map<SubFace, Color> {
+        val illuminatedSubFaceColors = ConcurrentHashMap<SubFace, Color>()
 
         val allFacesWithWorldVertices = cubes.flatMap { transformedCube ->
             val worldVertices = transformedCube.cube.vertices.map { transformedCube.transformMatrix.transform(it) }
-            transformedCube.cube.faces.mapIndexed { faceIndex, faceIndices ->
+            transformedCube.cube.faces.map { faceIndices ->
                 val faceWorldVertices = faceIndices.map { worldVertices[it] }
-                Triple(transformedCube, faceIndex, faceWorldVertices)
+                Pair(transformedCube, faceWorldVertices)
             }
         }
 
         val lightTasks = lightSources.map { light ->
             executor.submit {
-                for ((transformedCube, faceIndex, faceWorldVertices) in allFacesWithWorldVertices) {
-                    if (faceWorldVertices.size < 3) continue
+                for ((transformedCube, faceWorldVertices) in allFacesWithWorldVertices) {
+                    if (faceWorldVertices.size != 4) continue
 
-                    val faceNormal = (faceWorldVertices[1] - faceWorldVertices[0]).cross(faceWorldVertices[2] - faceWorldVertices[0]).normalize()
+                    val v0 = faceWorldVertices[0]
+                    val v1 = faceWorldVertices[1]
+                    val v2 = faceWorldVertices[2]
+                    val v3 = faceWorldVertices[3]
+                    val center = (v0 + v1 + v2 + v3) / 4.0
 
-                    val samplingPoints = mutableListOf<Vector3d>()
-                    samplingPoints.add(faceWorldVertices.reduce { acc, vec -> acc + vec } / faceWorldVertices.size.toDouble())
+                    val subTriangles = listOf(
+                        listOf(v0, v1, center),
+                        listOf(v1, v2, center),
+                        listOf(v2, v3, center),
+                        listOf(v3, v0, center)
+                    )
 
-                    if (faceWorldVertices.size == 4) {
-                        samplingPoints.add(faceWorldVertices[0])
-                        samplingPoints.add(faceWorldVertices[1])
-                        samplingPoints.add(faceWorldVertices[2])
-                        samplingPoints.add(faceWorldVertices[3])
-                        samplingPoints.add((faceWorldVertices[0] + faceWorldVertices[1]) / 2.0)
-                        samplingPoints.add((faceWorldVertices[1] + faceWorldVertices[2]) / 2.0)
-                        samplingPoints.add((faceWorldVertices[2] + faceWorldVertices[3]) / 2.0)
-                        samplingPoints.add((faceWorldVertices[3] + faceWorldVertices[0]) / 2.0)
-                    }
+                    for (subTriangleVertices in subTriangles) {
+                        val subFace = SubFace(subTriangleVertices)
+                        val subFaceCenter = (subTriangleVertices[0] + subTriangleVertices[1] + subTriangleVertices[2]) / 3.0
+                        val subFaceNormal = (subTriangleVertices[1] - subTriangleVertices[0]).cross(subTriangleVertices[2] - subTriangleVertices[0]).normalize()
 
-                    var totalLightInfluence = 0.0
-                    var hitCount = 0
-
-                    for (point in samplingPoints) {
-                        val lightToFaceVector = point - light.position
+                        val lightToFaceVector = subFaceCenter - light.position
                         val distanceToFace = lightToFaceVector.length()
 
-                        if (distanceToFace > light.radius) {
-                            continue
-                        }
+                        if (distanceToFace > light.radius) continue
 
                         val lightDirection = lightToFaceVector.normalize()
+                        val dotProduct = subFaceNormal.dot(lightDirection)
 
-                        val dotProduct = faceNormal.dot(lightDirection)
-                        if (dotProduct > 0.0) {
-                            continue
-                        }
-
-                        if (!isOccludedByGrid(light.position, point)) {
+                        if (dotProduct <= 0.0 && !isOccludedByGrid(light.position, subFaceCenter)) {
                             val attenuation = 1.0 - (distanceToFace / light.radius).coerceIn(0.0, 1.0)
-                            totalLightInfluence += light.intensity * attenuation
-                            hitCount++
+                            val lightInfluence = light.intensity * attenuation
+
+                            val baseColor = transformedCube.cube.color
+                            val dynamicLightR = (baseColor.red * (light.color.red / 255.0) * lightInfluence * maxLightContribution)
+                            val dynamicLightG = (baseColor.green * (light.color.green / 255.0) * lightInfluence * maxLightContribution)
+                            val dynamicLightB = (baseColor.blue * (light.color.blue / 255.0) * lightInfluence * maxLightContribution)
+
+                            val currentIlluminatedColor = illuminatedSubFaceColors.getOrDefault(subFace, Color(0, 0, 0))
+                            val combinedR = (currentIlluminatedColor.red + dynamicLightR).coerceIn(0.0, 255.0).toInt()
+                            val combinedG = (currentIlluminatedColor.green + dynamicLightG).coerceIn(0.0, 255.0).toInt()
+                            val combinedB = (currentIlluminatedColor.blue + dynamicLightB).coerceIn(0.0, 255.0).toInt()
+
+                            illuminatedSubFaceColors[subFace] = Color(combinedR, combinedG, combinedB)
                         }
-                    }
-
-                    if (hitCount > 0) {
-                        val averageLightInfluence = totalLightInfluence / hitCount
-
-                        val baseColor = transformedCube.cube.color
-
-                        val dynamicLightR = (baseColor.red * (light.color.red / 255.0) * averageLightInfluence * maxLightContribution)
-                        val dynamicLightG = (baseColor.green * (light.color.green / 255.0) * averageLightInfluence * maxLightContribution)
-                        val dynamicLightB = (baseColor.blue * (light.color.blue / 255.0) * averageLightInfluence * maxLightContribution)
-
-                        val dummyRenderableFace = RenderableFace(
-                            screenVertices = listOf(),
-                            originalClipW = listOf(),
-                            textureVertices = listOf(),
-                            color = transformedCube.cube.color,
-                            isEdge = false,
-                            texture = null,
-                            worldVertices = faceWorldVertices
-                        )
-
-                        val currentIlluminatedColor = illuminatedFaceColors.getOrDefault(dummyRenderableFace, Color(0,0,0))
-
-                        val combinedR = (currentIlluminatedColor.red + dynamicLightR).coerceIn(0.0, 255.0).toInt()
-                        val combinedG = (currentIlluminatedColor.green + dynamicLightG).coerceIn(0.0, 255.0).toInt()
-                        val combinedB = (currentIlluminatedColor.blue + dynamicLightB).coerceIn(0.0, 255.0).toInt()
-
-                        illuminatedFaceColors[dummyRenderableFace] = Color(combinedR, combinedG, combinedB)
                     }
                 }
             }
         }
 
         lightTasks.forEach { it.get() }
-        return illuminatedFaceColors
+        return illuminatedSubFaceColors
     }
 
     private fun requestRender() {
@@ -465,7 +439,7 @@ class DrawingPanel : JPanel() {
 
         val projectionMatrix = Matrix4x4.perspective(fov, aspectRatio, near, far)
         val combinedMatrix = projectionMatrix * viewMatrix
-        val illuminatedFacesMap = calculateIlluminatedFaces(cubes, lightSources, cameraPosition, viewMatrix, projectionMatrix)
+        val illuminatedFacesMap = calculateIlluminatedFaces(cubes, lightSources)
         val tasks = mutableListOf<Future<*>>()
 
         for (transformedCube in cubes) {
@@ -492,164 +466,98 @@ class DrawingPanel : JPanel() {
                     val cameraRayView = (Vector3d(0.0, 0.0, 0.0) - p0View).normalize()
 
                     if (normalView.dot(cameraRayView) > 0) {
-                        val projectedVerticesForFace = mutableListOf<Vector3d>()
-                        val textureVerticesForFace = mutableListOf<Vector3d>()
-                        val originalClipWForFace = mutableListOf<Double>()
-                        val worldVerticesForFace = mutableListOf<Vector3d>()
-                        var anyVertexInFrustum = false
+                        val originalFaceWorldVertices = faceIndices.map { worldVertices[it] }
+                        if (originalFaceWorldVertices.size != 4) continue
+
+                        val v0_world = originalFaceWorldVertices[0]
+                        val v1_world = originalFaceWorldVertices[1]
+                        val v2_world = originalFaceWorldVertices[2]
+                        val v3_world = originalFaceWorldVertices[3]
+                        val center_world = (v0_world + v1_world + v2_world + v3_world) / 4.0
+
+                        val subTrianglesWorld = listOf(
+                            listOf(v0_world, v1_world, center_world),
+                            listOf(v1_world, v2_world, center_world),
+                            listOf(v2_world, v3_world, center_world),
+                            listOf(v3_world, v0_world, center_world)
+                        )
 
                         val faceTexCoords = transformedCube.cube.faceTextureCoords[faceIndex]
+                        val uv0 = faceTexCoords[0]
+                        val uv1 = faceTexCoords[1]
+                        val uv2 = faceTexCoords[2]
+                        val uv3 = faceTexCoords[3]
+                        val uv_center = (uv0 + uv1 + uv2 + uv3) / 4.0
 
-                        for (i in faceIndices.indices) {
-                            val index = faceIndices[i]
-                            val projectedHomogeneous = transformedVerticesHomogeneous[index]
-                            val originalTextureCoord = faceTexCoords[i]
-                            val originalWorldVertex = worldVertices[index]
+                        val subTrianglesUVs = listOf(
+                            listOf(uv0, uv1, uv_center),
+                            listOf(uv1, uv2, uv_center),
+                            listOf(uv2, uv3, uv_center),
+                            listOf(uv3, uv0, uv_center)
+                        )
 
-                            val w = projectedHomogeneous.w
-                            if (w.isCloseToZero() || w < near || w > far) {
-                                projectedVerticesForFace.add(Vector3d(Double.NaN, Double.NaN, Double.NaN))
-                                textureVerticesForFace.add(Vector3d(Double.NaN, Double.NaN, Double.NaN))
-                                originalClipWForFace.add(Double.NaN)
-                                worldVerticesForFace.add(Vector3d(Double.NaN, Double.NaN, Double.NaN))
-                            } else {
+                        for (i in subTrianglesWorld.indices) {
+                            val subTriangleWorld = subTrianglesWorld[i]
+                            val subTriangleUV = subTrianglesUVs[i]
+
+                            val projectedVertices = mutableListOf<Vector3d>()
+                            val originalClipW = mutableListOf<Double>()
+
+                            var allVerticesOutOfFrustum = true
+                            for (vertex in subTriangleWorld) {
+                                val projectedHomogeneous = combinedMatrix.transformHomogeneous(vertex)
+                                val w = projectedHomogeneous.w
+
+                                if (w.isCloseToZero() || w < near || w > far) {
+                                    continue
+                                }
+
                                 val xClip = projectedHomogeneous.x / w
                                 val yClip = projectedHomogeneous.y / w
                                 val zClip = projectedHomogeneous.z / w
 
                                 if (xClip >= -1.0 && xClip <= 1.0 && yClip >= -1.0 && yClip <= 1.0 && zClip >= -1.0 && zClip <= 1.0) {
-                                    anyVertexInFrustum = true
+                                    allVerticesOutOfFrustum = false
                                 }
 
-                                projectedVerticesForFace.add(
-                                    Vector3d(
-                                        (xClip + 1) * virtualWidth / 2.0,
-                                        (1 - yClip) * virtualHeight / 2.0,
-                                        zClip
-                                    )
-                                )
-                                textureVerticesForFace.add(originalTextureCoord)
-                                originalClipWForFace.add(w)
-                                worldVerticesForFace.add(originalWorldVertex)
-                            }
-                        }
-
-                        val allVerticesRejected = projectedVerticesForFace.all { it.x.isNaN() }
-                        if (!allVerticesRejected && anyVertexInFrustum) {
-                            val drawableVertices = mutableListOf<Vector3d>()
-                            val drawableTextureCoords = mutableListOf<Vector3d>()
-                            val drawableOriginalClipW = mutableListOf<Double>()
-                            val drawableWorldVertices = mutableListOf<Vector3d>()
-
-                            for (i in projectedVerticesForFace.indices) {
-                                if (!projectedVerticesForFace[i].x.isNaN()) {
-                                    drawableVertices.add(projectedVerticesForFace[i])
-                                    drawableTextureCoords.add(textureVerticesForFace[i])
-                                    drawableOriginalClipW.add(originalClipWForFace[i])
-                                    drawableWorldVertices.add(worldVerticesForFace[i])
-                                }
+                                projectedVertices.add(Vector3d((xClip + 1) * virtualWidth / 2.0, (1 - yClip) * virtualHeight / 2.0, zClip))
+                                originalClipW.add(w)
                             }
 
-                            if (drawableVertices.size >= 3) {
-                                val originalFaceWorldVerticesForIdentification = faceIndices.map { transformedCube.transformMatrix.transform(transformedCube.cube.vertices[it]) }
+                            if (projectedVertices.size == 3 && !allVerticesOutOfFrustum) {
+                                val subFaceIdentifier = SubFace(subTriangleWorld)
+                                val dynamicLightColor = illuminatedFacesMap[subFaceIdentifier]
 
-                                val faceIdentifier = RenderableFace(
-                                    screenVertices = listOf(),
-                                    originalClipW = listOf(),
-                                    textureVertices = listOf(),
-                                    color = transformedCube.cube.color,
-                                    isEdge = false,
-                                    texture = null,
-                                    worldVertices = originalFaceWorldVerticesForIdentification
-                                )
-                                val dynamicLightColor = illuminatedFacesMap[faceIdentifier]
-
-                                var finalCalculatedColor: Color
-                                if (dynamicLightColor != null) {
-                                    val finalR =
-                                        (dynamicLightColor.red + transformedCube.cube.color.red * ambientIntensity).toInt()
-                                            .coerceIn(0, 255)
-                                    val finalG =
-                                        (dynamicLightColor.green + transformedCube.cube.color.green * ambientIntensity).toInt()
-                                            .coerceIn(0, 255)
-                                    val finalB =
-                                        (dynamicLightColor.blue + transformedCube.cube.color.blue * ambientIntensity).toInt()
-                                            .coerceIn(0, 255)
-                                    finalCalculatedColor = Color(finalR, finalG, finalB)
+                                val finalCalculatedColor = if (dynamicLightColor != null) {
+                                    val finalR = (dynamicLightColor.red + transformedCube.cube.color.red * ambientIntensity).toInt().coerceIn(0, 255)
+                                    val finalG = (dynamicLightColor.green + transformedCube.cube.color.green * ambientIntensity).toInt().coerceIn(0, 255)
+                                    val finalB = (dynamicLightColor.blue + transformedCube.cube.color.blue * ambientIntensity).toInt().coerceIn(0, 255)
+                                    Color(finalR, finalG, finalB)
                                 } else {
-                                    val ambientR =
-                                        (transformedCube.cube.color.red * ambientIntensity).toInt().coerceIn(0, 255)
-                                    val ambientG =
-                                        (transformedCube.cube.color.green * ambientIntensity).toInt().coerceIn(0, 255)
-                                    val ambientB =
-                                        (transformedCube.cube.color.blue * ambientIntensity).toInt().coerceIn(0, 255)
-                                    finalCalculatedColor = Color(ambientR, ambientG, ambientB)
+                                    val ambientR = (transformedCube.cube.color.red * ambientIntensity).toInt().coerceIn(0, 255)
+                                    val ambientG = (transformedCube.cube.color.green * ambientIntensity).toInt().coerceIn(0, 255)
+                                    val ambientB = (transformedCube.cube.color.blue * ambientIntensity).toInt().coerceIn(0, 255)
+                                    Color(ambientR, ambientG, ambientB)
                                 }
 
                                 renderQueue.add(
                                     RenderableFace(
-                                        listOf(drawableVertices[0], drawableVertices[1], drawableVertices[2]),
-                                        listOf(
-                                            drawableOriginalClipW[0],
-                                            drawableOriginalClipW[1],
-                                            drawableOriginalClipW[2]
-                                        ),
-                                        listOf(
-                                            drawableTextureCoords[0],
-                                            drawableTextureCoords[1],
-                                            drawableTextureCoords[2]
-                                        ),
+                                        projectedVertices,
+                                        originalClipW,
+                                        subTriangleUV,
                                         transformedCube.cube.color,
                                         false,
                                         transformedCube.texture,
-                                        listOf(
-                                            drawableWorldVertices[0],
-                                            drawableWorldVertices[1],
-                                            drawableWorldVertices[2]
-                                        ),
+                                        subTriangleWorld,
                                         finalCalculatedColor
                                     )
                                 )
-                                if (drawableVertices.size == 4) {
-                                    renderQueue.add(
-                                        RenderableFace(
-                                            listOf(drawableVertices[0], drawableVertices[2], drawableVertices[3]),
-                                            listOf(
-                                                drawableOriginalClipW[0],
-                                                drawableOriginalClipW[2],
-                                                drawableOriginalClipW[3]
-                                            ),
-                                            listOf(
-                                                drawableTextureCoords[0],
-                                                drawableTextureCoords[2],
-                                                drawableTextureCoords[3]
-                                            ),
-                                            transformedCube.cube.color,
-                                            false,
-                                            transformedCube.texture,
-                                            listOf(
-                                                drawableWorldVertices[0],
-                                                drawableWorldVertices[2],
-                                                drawableWorldVertices[3]
-                                            ),
-                                            finalCalculatedColor
-                                        )
-                                    )
-                                }
-
-                                val edgeColor = Color(40, 40, 40)
-                                for (i in 0 until drawableVertices.size) {
-                                    val p1 = drawableVertices[i]
-                                    val p2 = drawableVertices[(i + 1) % drawableVertices.size]
-                                    renderQueue.add(RenderableFace(listOf(p1, p2), listOf(), listOf(), edgeColor, true, null, listOf()))
-                                }
                             }
                         }
                     }
                 }
             })
         }
-
         SwingUtilities.invokeLater {
             for (task in tasks) {
                 task.get()
@@ -865,11 +773,11 @@ class DrawingPanel : JPanel() {
         }
 
         override fun keyReleased(e: KeyEvent?) {
-            if (pressedKeys.contains(KeyEvent.VK_9)) debugFly = !debugFly
-            if (pressedKeys.contains(KeyEvent.VK_8)) debugNoclip = !debugNoclip
+            if (pressedKeys.contains(KeyEvent.VK_9)) {debugFly = !debugFly
+                println("debugFly: $debugNoclip")}
+            if (pressedKeys.contains(KeyEvent.VK_8)) {debugNoclip = !debugNoclip
+                println("debugNoclip: $debugNoclip")}
             e?.keyCode?.let { pressedKeys.remove(it) }
         }
     }
 }
-
-private fun MutableList<TransformedCube>.removeAt(index: TransformedCube?) {}
