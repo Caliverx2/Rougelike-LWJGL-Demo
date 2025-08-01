@@ -413,11 +413,6 @@ class DrawingPanel : JPanel() {
         return illuminatedSubFaceColors
     }
 
-    /**
-     * Przycina trójkąt względem bliskiej płaszczyzny kamery (near plane).
-     * Zwraca listę nowych trójkątów (od 0 do 2), które wynikają z przycięcia.
-     * Każdy element listy to para: lista 3 wierzchołków i lista 3 odpowiadających im współrzędnych UV.
-     */
     private fun clipTriangleAgainstNearPlane(
         worldVertices: List<Vector3d>,
         uvs: List<Vector3d>,

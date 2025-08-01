@@ -2,6 +2,7 @@ plugins {
     kotlin("jvm") version "2.1.20"
     id("com.github.johnrengelman.shadow") version "8.1.1"
     id("java")
+    id("org.openjfx.javafxplugin") version "0.1.0"
 }
 
 repositories {
@@ -12,28 +13,6 @@ dependencies {
     testImplementation(kotlin("test"))
     implementation("org.jetbrains.kotlin:kotlin-stdlib")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.1")
-
-    val lwjglVersion = "3.3.6"
-    implementation("org.lwjgl", "lwjgl", lwjglVersion)
-    implementation("org.lwjgl", "lwjgl-glfw", lwjglVersion)
-    implementation("org.lwjgl", "lwjgl-opengl", lwjglVersion)
-
-    runtimeOnly("org.lwjgl", "lwjgl", lwjglVersion, classifier = "natives-windows")   // Dla Windows
-    runtimeOnly("org.lwjgl", "lwjgl-glfw", lwjglVersion, classifier = "natives-windows")
-    runtimeOnly("org.lwjgl", "lwjgl-opengl", lwjglVersion, classifier = "natives-windows")
-
-    runtimeOnly("org.lwjgl", "lwjgl", lwjglVersion, classifier = "natives-linux")     // Dla Linux
-    runtimeOnly("org.lwjgl", "lwjgl-glfw", lwjglVersion, classifier = "natives-linux")
-    runtimeOnly("org.lwjgl", "lwjgl-opengl", lwjglVersion, classifier = "natives-linux")
-
-    runtimeOnly("org.lwjgl", "lwjgl", lwjglVersion, classifier = "natives-macos")     // Dla macOS
-    runtimeOnly("org.lwjgl", "lwjgl-glfw", lwjglVersion, classifier = "natives-macos")
-    runtimeOnly("org.lwjgl", "lwjgl-opengl", lwjglVersion, classifier = "natives-macos")
-
-    // Dla Apple Silicon (M1/M2/M3)
-    runtimeOnly("org.lwjgl", "lwjgl", lwjglVersion, classifier = "natives-macos-arm64")
-    runtimeOnly("org.lwjgl", "lwjgl-glfw", lwjglVersion, classifier = "natives-macos-arm64")
-    runtimeOnly("org.lwjgl", "lwjgl-opengl", lwjglVersion, classifier = "natives-macos-arm64")
 }
 
 tasks.test {
@@ -41,6 +20,11 @@ tasks.test {
 }
 kotlin {
     jvmToolchain(21)
+}
+
+javafx {
+    version = "21.0.3"
+    modules = listOf("javafx.controls", "javafx.graphics", "javafx.swing")
 }
 
 group = "org.lewapnoob.FileZero"
