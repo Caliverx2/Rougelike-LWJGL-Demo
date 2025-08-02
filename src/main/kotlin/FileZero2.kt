@@ -854,9 +854,11 @@ class DrawingPanel : JPanel() {
         }
 
         override fun keyReleased(e: KeyEvent?) {
-            if (pressedKeys.contains(KeyEvent.VK_9)) {debugFly = !debugFly
-                println("debugFly: $debugNoclip")}
-            if (pressedKeys.contains(KeyEvent.VK_8)) {debugNoclip = !debugNoclip
+            if (pressedKeys.contains(KeyEvent.VK_9)) {
+                debugFly = !debugFly
+                println("debugFly: $debugFly")}
+            if (pressedKeys.contains(KeyEvent.VK_8)) {
+                debugNoclip = !debugNoclip
                 println("debugNoclip: $debugNoclip")}
             e?.keyCode?.let { pressedKeys.remove(it) }
         }

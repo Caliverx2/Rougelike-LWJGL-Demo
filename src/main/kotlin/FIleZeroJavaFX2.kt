@@ -8,6 +8,7 @@ import javafx.scene.image.WritableImage
 import javafx.scene.input.KeyCode
 import javafx.scene.layout.StackPane
 import javafx.scene.paint.Color
+import javafx.scene.image.PixelFormat
 import javafx.scene.shape.ArcType
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
@@ -36,7 +37,7 @@ class DrawingPanel : StackPane() {
     private val playerWidth = 45.0
     private val playerHalfWidth = playerWidth / 2.0
 
-    private val fogColor = Color.rgb(180, 180, 180, 180 / 255.0)
+    private val fogColor = Color.rgb(180, 180, 180)
     private val fogStartDistance = 150.0
     private val fogEndDistance = 700.0
     private val fogDensity = 0.6
@@ -46,28 +47,29 @@ class DrawingPanel : StackPane() {
 
     private val virtualWidth = 1920 / 4
     private val virtualHeight = 1080 / 4
-    private lateinit var depthBuffer: Array<DoubleArray>
+
+    private lateinit var depthBuffer: DoubleArray
+    private lateinit var pixelBuffer: IntArray
+    private var bgColorInt: Int
     private lateinit var backBuffer: WritableImage
     private val imageView = ImageView()
     private val overlayCanvas = Canvas(virtualWidth.toDouble(), virtualHeight.toDouble())
 
     val pressedKeys = Collections.synchronizedSet(mutableSetOf<KeyCode>())
 
-    private data class SubFace(val worldVertices: List<Vector3d>)
+    private data class FaceIdentifier(val cube: TransformedCube, val faceIndex: Int)
 
     private val executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
     private val renderQueue = ConcurrentLinkedQueue<RenderableFace>()
 
     init {
-        depthBuffer = Array(virtualWidth) { DoubleArray(virtualHeight) { Double.MAX_VALUE } }
+        depthBuffer = DoubleArray(virtualWidth * virtualHeight) { Double.MAX_VALUE }
+        pixelBuffer = IntArray(virtualWidth * virtualHeight)
         backBuffer = WritableImage(virtualWidth, virtualHeight)
-        val pixelWriter = backBuffer.pixelWriter
+
         val bgColor = Color.rgb(40, 40, 40)
-        for (y in 0 until virtualHeight) {
-            for (x in 0 until virtualWidth) {
-                pixelWriter.setColor(x, y, bgColor)
-            }
-        }
+        bgColorInt = colorToInt(bgColor)
+
         imageView.image = backBuffer
         imageView.fitWidthProperty().bind(this.widthProperty())
         imageView.fitHeightProperty().bind(this.heightProperty())
@@ -264,7 +266,7 @@ class DrawingPanel : StackPane() {
         }
         if (pressedKeys.contains(KeyCode.O)) {
             val lightRadius = 5.0 * cubeSize
-            lightSources.add(LightSource(Vector3d(cameraPosition.x, cameraPosition.y, cameraPosition.z), lightRadius, Color.rgb(188, 0, 0, 180 / 255.0)))
+            lightSources.add(LightSource(Vector3d(cameraPosition.x, cameraPosition.y + cubeSize/3, cameraPosition.z), lightRadius, Color.rgb(188, 0, 0, 180 / 255.0)))
             pressedKeys.remove(KeyCode.O)
         }
 
@@ -313,61 +315,60 @@ class DrawingPanel : StackPane() {
         }
     }
 
-    private fun calculateIlluminatedFaces(cubes: List<TransformedCube>, lightSources: List<LightSource>): Map<SubFace, Color> {
-        val illuminatedSubFaceColors = ConcurrentHashMap<SubFace, Color>()
-        val allFacesWithWorldVertices = cubes.flatMap { transformedCube ->
-            val worldVertices = transformedCube.cube.vertices.map { transformedCube.transformMatrix.transform(it) }
-            transformedCube.cube.faces.map { faceIndices ->
-                val faceWorldVertices = faceIndices.map { worldVertices[it] }
-                Pair(transformedCube, faceWorldVertices)
+    private fun calculateIlluminatedFaces(cubes: List<TransformedCube>, lightSources: List<LightSource>): Map<FaceIdentifier, Color> {
+        if (lightSources.isEmpty()) return emptyMap()
+
+        val illuminatedFaceColors = ConcurrentHashMap<FaceIdentifier, Color>()
+
+        val allFaces = cubes.flatMap { transformedCube ->
+            (0 until transformedCube.cube.faces.size).map { faceIndex ->
+                val worldVertices = transformedCube.cube.faces[faceIndex].map { vertexIndex ->
+                    transformedCube.transformMatrix.transform(transformedCube.cube.vertices[vertexIndex])
+                }
+                Triple(FaceIdentifier(transformedCube, faceIndex), worldVertices, transformedCube)
             }
         }
 
-        val lightTasks = lightSources.map { light ->
+        val tasks = allFaces.map { (faceId, faceWorldVertices, transformedCube) ->
             executor.submit {
-                for ((transformedCube, faceWorldVertices) in allFacesWithWorldVertices) {
-                    if (faceWorldVertices.size != 4) continue
+                val v0 = faceWorldVertices[0]; val v1 = faceWorldVertices[1]; val v2 = faceWorldVertices[2]
+                val faceCenter = (v0 + v1 + faceWorldVertices[3]) / 4.0
+                val faceNormal = (v1 - v0).cross(v2 - v0).normalize()
 
-                    val v0 = faceWorldVertices[0]; val v1 = faceWorldVertices[1]; val v2 = faceWorldVertices[2]; val v3 = faceWorldVertices[3]
-                    val center = (v0 + v1 + v2 + v3) / 4.0
+                var combinedR = 0.0
+                var combinedG = 0.0
+                var combinedB = 0.0
 
-                    val subTriangles = listOf(listOf(v0, v1, center), listOf(v1, v2, center), listOf(v2, v3, center), listOf(v3, v0, center))
+                for (light in lightSources) {
+                    val lightToFaceVector = faceCenter - light.position
+                    val distanceToFace = lightToFaceVector.length()
 
-                    for (subTriangleVertices in subTriangles) {
-                        val subFace = SubFace(subTriangleVertices)
-                        val subFaceCenter = (subTriangleVertices[0] + subTriangleVertices[1] + subTriangleVertices[2]) / 3.0
-                        val subFaceNormal = (subTriangleVertices[1] - subTriangleVertices[0]).cross(subTriangleVertices[2] - subTriangleVertices[0]).normalize()
-                        val lightToFaceVector = subFaceCenter - light.position
-                        val distanceToFace = lightToFaceVector.length()
+                    if (distanceToFace > light.radius) continue
 
-                        if (distanceToFace > light.radius) continue
+                    val lightDirection = lightToFaceVector.normalize()
+                    if (faceNormal.dot(lightDirection) < 0.0 && !isOccludedByGrid(light.position, faceCenter)) {
+                        val attenuation = 1.0 - (distanceToFace / light.radius).coerceIn(0.0, 1.0)
+                        val lightInfluence = light.intensity * attenuation
 
-                        val lightDirection = lightToFaceVector.normalize()
-                        val dotProduct = subFaceNormal.dot(lightDirection)
-
-                        if (dotProduct <= 0.0 && !isOccludedByGrid(light.position, subFaceCenter)) {
-                            val attenuation = 1.0 - (distanceToFace / light.radius).coerceIn(0.0, 1.0)
-                            val lightInfluence = light.intensity * attenuation
-
-                            val baseColor = transformedCube.cube.color
-                            val dynamicLightR = (baseColor.red * light.color.red * lightInfluence * maxLightContribution)
-                            val dynamicLightG = (baseColor.green * light.color.green * lightInfluence * maxLightContribution)
-                            val dynamicLightB = (baseColor.blue * light.color.blue * lightInfluence * maxLightContribution)
-
-                            val currentIlluminatedColor = illuminatedSubFaceColors.getOrDefault(subFace, Color.BLACK)
-                            val combinedR = currentIlluminatedColor.red + dynamicLightR
-                            val combinedG = currentIlluminatedColor.green + dynamicLightG
-                            val combinedB = currentIlluminatedColor.blue + dynamicLightB
-
-                            illuminatedSubFaceColors[subFace] = Color(combinedR, combinedG, combinedB, 1.0).saturate()
-                        }
+                        val baseColor = transformedCube.cube.color
+                        combinedR += (baseColor.red * light.color.red * lightInfluence * maxLightContribution)
+                        combinedG += (baseColor.green * light.color.green * lightInfluence * maxLightContribution)
+                        combinedB += (baseColor.blue * light.color.blue * lightInfluence * maxLightContribution)
                     }
+                }
+
+                if (combinedR > 0.0 || combinedG > 0.0 || combinedB > 0.0) {
+                    val finalR = combinedR.coerceIn(0.0, 1.0)
+                    val finalG = combinedG.coerceIn(0.0, 1.0)
+                    val finalB = combinedB.coerceIn(0.0, 1.0)
+                    illuminatedFaceColors[faceId] = Color(finalR, finalG, finalB, 1.0)
                 }
             }
         }
-        lightTasks.forEach { it.get() }
-        return illuminatedSubFaceColors
+        tasks.forEach { it.get() }
+        return illuminatedFaceColors
     }
+
 
     private fun clipTriangleAgainstNearPlane(worldVertices: List<Vector3d>, uvs: List<Vector3d>, viewMatrix: Matrix4x4, nearPlane: Double): List<Pair<List<Vector3d>, List<Vector3d>>> {
         val viewVertices = worldVertices.map { viewMatrix.transform(it) }
@@ -414,21 +415,20 @@ class DrawingPanel : StackPane() {
 
     private fun requestRender() {
         if (isRendering.getAndSet(true)) return
-        if (virtualWidth <= 0 || virtualHeight <= 0) { isRendering.set(false); return }
+        if (virtualWidth <= 0 || virtualHeight <= 0) {
+            isRendering.set(false)
+            return
+        }
 
-        if (depthBuffer.size != virtualWidth || depthBuffer[0].size != virtualHeight) {
-            depthBuffer = Array(virtualWidth) { DoubleArray(virtualHeight) { Double.MAX_VALUE } }
+        if (depthBuffer.size != virtualWidth * virtualHeight) {
+            depthBuffer = DoubleArray(virtualWidth * virtualHeight) { Double.MAX_VALUE }
+            pixelBuffer = IntArray(virtualWidth * virtualHeight)
             backBuffer = WritableImage(virtualWidth, virtualHeight)
+            imageView.image = backBuffer
         }
-        for (x in 0 until virtualWidth) { for (y in 0 until virtualHeight) { depthBuffer[x][y] = Double.MAX_VALUE } }
 
-        val pixelWriter = backBuffer.pixelWriter
-        val bgColor = Color.rgb(40, 40, 40)
-        for (y in 0 until virtualHeight) {
-            for (x in 0 until virtualWidth) {
-                pixelWriter.setColor(x, y, bgColor)
-            }
-        }
+        pixelBuffer.fill(bgColorInt)
+        depthBuffer.fill(Double.MAX_VALUE)
 
         renderQueue.clear()
 
@@ -450,20 +450,33 @@ class DrawingPanel : StackPane() {
                     val cameraRayView = (Vector3d(0.0, 0.0, 0.0) - p0View).normalize()
 
                     if (normalView.dot(cameraRayView) > 0) {
-                        val originalFaceWorldVertices = faceIndices.map { worldVertices[it] }
-                        if (originalFaceWorldVertices.size != 4) continue
-                        val v0_world = originalFaceWorldVertices[0]; val v1_world = originalFaceWorldVertices[1]; val v2_world = originalFaceWorldVertices[2]; val v3_world = originalFaceWorldVertices[3]
-                        val center_world = (v0_world + v1_world + v2_world + v3_world) / 4.0
-                        val subTrianglesWorld = listOf(listOf(v0_world, v1_world, center_world), listOf(v1_world, v2_world, center_world), listOf(v2_world, v3_world, center_world), listOf(v3_world, v0_world, center_world))
+                        val faceWorldVertices = faceIndices.map { worldVertices[it] }
                         val faceTexCoords = transformedCube.cube.faceTextureCoords[faceIndex]
-                        val uv0 = faceTexCoords[0]; val uv1 = faceTexCoords[1]; val uv2 = faceTexCoords[2]; val uv3 = faceTexCoords[3]
-                        val uv_center = (uv0 + uv1 + uv2 + uv3) / 4.0
-                        val subTrianglesUVs = listOf(listOf(uv0, uv1, uv_center), listOf(uv1, uv2, uv_center), listOf(uv2, uv3, uv_center), listOf(uv3, uv0, uv_center))
 
-                        for (i in subTrianglesWorld.indices) {
-                            val subTriangleWorldVertices = subTrianglesWorld[i]
-                            val subTriangleUVsAsVec3 = subTrianglesUVs[i].map { Vector3d(it.x, it.y, 0.0) }
-                            val clippedTriangles = clipTriangleAgainstNearPlane(subTriangleWorldVertices, subTriangleUVsAsVec3, viewMatrix, 0.1)
+                        val triangle1_world = listOf(faceWorldVertices[0], faceWorldVertices[1], faceWorldVertices[2])
+                        val triangle2_world = listOf(faceWorldVertices[0], faceWorldVertices[2], faceWorldVertices[3])
+                        val triangle1_uv = listOf(faceTexCoords[0], faceTexCoords[1], faceTexCoords[2]).map { Vector3d(it.x, it.y, 0.0) }
+                        val triangle2_uv = listOf(faceTexCoords[0], faceTexCoords[2], faceTexCoords[3]).map { Vector3d(it.x, it.y, 0.0) }
+
+                        val faceId = FaceIdentifier(transformedCube, faceIndex)
+                        val dynamicLightColor = illuminatedFacesMap[faceId]
+                        val finalCalculatedColor = if (dynamicLightColor != null) {
+                            val finalR = (dynamicLightColor.red + transformedCube.cube.color.red * ambientIntensity).coerceIn(0.0, 1.0)
+                            val finalG = (dynamicLightColor.green + transformedCube.cube.color.green * ambientIntensity).coerceIn(0.0, 1.0)
+                            val finalB = (dynamicLightColor.blue + transformedCube.cube.color.blue * ambientIntensity).coerceIn(0.0, 1.0)
+
+                            Color(finalR, finalG, finalB, 1.0)
+                        } else {
+                            Color(transformedCube.cube.color.red * ambientIntensity, transformedCube.cube.color.green * ambientIntensity, transformedCube.cube.color.blue * ambientIntensity, 1.0).saturate()
+                        }
+
+                        val trianglesToProcess = listOf(
+                            Pair(triangle1_world, triangle1_uv),
+                            Pair(triangle2_world, triangle2_uv)
+                        )
+
+                        for ((triangleWorld, triangleUv) in trianglesToProcess) {
+                            val clippedTriangles = clipTriangleAgainstNearPlane(triangleWorld, triangleUv, viewMatrix, 0.1)
 
                             for ((clippedWorldVertices, clippedUVs) in clippedTriangles) {
                                 val projectedVertices = mutableListOf<Vector3d>()
@@ -475,16 +488,6 @@ class DrawingPanel : StackPane() {
                                     originalClipW.add(w)
                                 }
                                 if (projectedVertices.size == 3) {
-                                    val subFaceIdentifier = SubFace(clippedWorldVertices)
-                                    val dynamicLightColor = illuminatedFacesMap[subFaceIdentifier]
-                                    val finalCalculatedColor = if (dynamicLightColor != null) {
-                                        val finalR = dynamicLightColor.red + transformedCube.cube.color.red * ambientIntensity
-                                        val finalG = dynamicLightColor.green + transformedCube.cube.color.green * ambientIntensity
-                                        val finalB = dynamicLightColor.blue + transformedCube.cube.color.blue * ambientIntensity
-                                        Color(finalR, finalG, finalB, 1.0).saturate()
-                                    } else {
-                                        Color(transformedCube.cube.color.red * ambientIntensity, transformedCube.cube.color.green * ambientIntensity, transformedCube.cube.color.blue * ambientIntensity, 1.0).saturate()
-                                    }
                                     renderQueue.add(RenderableFace(projectedVertices, originalClipW, clippedUVs, transformedCube.cube.color, false, transformedCube.texture, clippedWorldVertices, finalCalculatedColor))
                                 }
                             }
@@ -498,23 +501,17 @@ class DrawingPanel : StackPane() {
 
         while (renderQueue.isNotEmpty()) {
             val renderableFace = renderQueue.poll()
-            if (renderableFace.isEdge) {
-                if (renderableFace.screenVertices.size == 2) {
-                    drawLineZBuffered(pixelWriter, renderableFace.screenVertices[0].x.toInt(), renderableFace.screenVertices[0].y.toInt(), renderableFace.screenVertices[0].z,
-                        renderableFace.screenVertices[1].x.toInt(), renderableFace.screenVertices[1].y.toInt(), renderableFace.screenVertices[1].z,
-                        renderableFace.color, virtualWidth, virtualHeight)
-                }
-            } else {
-                rasterizeTexturedTriangle(pixelWriter, renderableFace, virtualWidth, virtualHeight)
-            }
+            rasterizeTexturedTriangle(pixelBuffer, renderableFace, virtualWidth, virtualHeight)
         }
+
+        backBuffer.pixelWriter.setPixels(0, 0, virtualWidth, virtualHeight, PixelFormat.getIntArgbInstance(), pixelBuffer, 0, virtualWidth)
 
         imageView.image = backBuffer
         drawOverlay()
         isRendering.set(false)
     }
 
-    private fun rasterizeTexturedTriangle(pixelWriter: PixelWriter, renderableFace: RenderableFace, screenWidth: Int, screenHeight: Int) {
+    private fun rasterizeTexturedTriangle(pixelBuffer: IntArray, renderableFace: RenderableFace, screenWidth: Int, screenHeight: Int) {
         val (screenVertices, originalClipW, textureVertices, _, _, texture, _, illuminatedColor) = renderableFace
         if (screenVertices.size != 3 || textureVertices.size != 3 || originalClipW.size != 3 || texture == null) return
 
@@ -522,68 +519,76 @@ class DrawingPanel : StackPane() {
         val uv0 = textureVertices[0]; val uv1 = textureVertices[1]; val uv2 = textureVertices[2]
         val w0 = originalClipW[0]; val w1 = originalClipW[1]; val w2 = originalClipW[2]
         val texReader = texture.pixelReader
+        val texWidth = texture.width.toInt(); val texHeight = texture.height.toInt()
 
         val minX = max(0, minOf(v0.x.toInt(), v1.x.toInt(), v2.x.toInt()))
         val maxX = min(screenWidth - 1, maxOf(v0.x.toInt(), v1.x.toInt(), v2.x.toInt()))
         val minY = max(0, minOf(v0.y.toInt(), v1.y.toInt(), v2.y.toInt()))
         val maxY = min(screenHeight - 1, maxOf(v0.y.toInt(), v1.y.toInt(), v2.y.toInt()))
 
-        val A12 = v1.y - v2.y; val B12 = v2.x - v1.x; val C12 = v1.x * v2.y - v2.x * v1.y
-        val A20 = v2.y - v0.y; val B20 = v0.x - v2.x; val C20 = v2.x * v0.y - v0.x * v2.y
-        val A01 = v0.y - v1.y; val B01 = v1.x - v0.x; val C01 = v0.x * v1.y - v1.x * v0.y
+        val A12 = v1.y - v2.y; val B12 = v2.x - v1.x
+        val A20 = v2.y - v0.y; val B20 = v0.x - v2.x
+        val A01 = v0.y - v1.y; val B01 = v1.x - v0.x
+        val C12_base = v1.x * v2.y - v2.x * v1.y
+        val C20_base = v2.x * v0.y - v0.x * v2.y
+        val C01_base = v0.x * v1.y - v1.x * v0.y
 
-        val totalArea = A12 * v0.x + B12 * v0.y + C12
-        if (totalArea.isCloseToZero()) return
+        val totalArea = A12 * v0.x + B12 * v0.y + C12_base
+        if (abs(totalArea) < 1e-5) return
         val invTotalArea = 1.0 / totalArea
 
         val u0_prime = uv0.x / w0; val v0_prime = uv0.y / w0; val z0_inv_prime = 1.0 / w0
         val u1_prime = uv1.x / w1; val v1_prime = uv1.y / w1; val z1_inv_prime = 1.0 / w1
         val u2_prime = uv2.x / w2; val v2_prime = uv2.y / w2; val z2_inv_prime = 1.0 / w2
 
+        val finalIllumination = illuminatedColor ?: renderableFace.color
+        val illR = finalIllumination.red; val illG = finalIllumination.green; val illB = finalIllumination.blue
+
+        val fogR = fogColor.red; val fogG = fogColor.green; val fogB = fogColor.blue
+
         for (py in minY..maxY) {
+            val rowOffset = py * screenWidth
             for (px in minX..maxX) {
-                val barycentric_w0 = A12 * px + B12 * py + C12
-                val barycentric_w1 = A20 * px + B20 * py + C20
-                val barycentric_w2 = A01 * px + B01 * py + C01
+                val barycentric_w0 = A12 * px + B12 * py + C12_base
+                val barycentric_w1 = A20 * px + B20 * py + C20_base
+                val barycentric_w2 = A01 * px + B01 * py + C01_base
 
-                val epsilon = 0.01
-                val isInside = (barycentric_w0 >= -epsilon && barycentric_w1 >= -epsilon && barycentric_w2 >= -epsilon) ||
-                        (barycentric_w0 <= epsilon && barycentric_w1 <= epsilon && barycentric_w2 <= epsilon)
-
-                if (isInside) {
+                if ((barycentric_w0 >= 0 && barycentric_w1 >= 0 && barycentric_w2 >= 0) || (barycentric_w0 <= 0 && barycentric_w1 <= 0 && barycentric_w2 <= 0)) {
                     val alpha = barycentric_w0 * invTotalArea
                     val beta = barycentric_w1 * invTotalArea
-                    val gamma = barycentric_w2 * invTotalArea
+                    val gamma = 1.0 - alpha - beta
+
+                    val pixelIndex = px + rowOffset
+                    val interpolated_z_inv_prime = alpha * z0_inv_prime + beta * z1_inv_prime + gamma * z2_inv_prime
                     val interpolatedZ = alpha * v0.z + beta * v1.z + gamma * v2.z
 
-                    if (px in 0 until screenWidth && py in 0 until screenHeight && interpolatedZ < depthBuffer[px][py]) {
-                        val interpolated_z_inv_prime = alpha * z0_inv_prime + beta * z1_inv_prime + gamma * z2_inv_prime
-                        if (interpolated_z_inv_prime.isCloseToZero()) continue
+                    if (interpolatedZ < depthBuffer[pixelIndex]) {
+                        if (interpolated_z_inv_prime < 1e-6) continue
 
-                        val u = (alpha * u0_prime + beta * u1_prime + gamma * u2_prime) / interpolated_z_inv_prime
-                        val v = (alpha * v0_prime + beta * v1_prime + gamma * v2_prime) / interpolated_z_inv_prime
-                        val texX = (u * (texture.width - 1)).toInt().coerceIn(0, texture.width.toInt() - 1)
-                        val texY = (v * (texture.height - 1)).toInt().coerceIn(0, texture.height.toInt() - 1)
+                        val inv_z_prime = 1.0 / interpolated_z_inv_prime
+                        val u = (alpha * u0_prime + beta * u1_prime + gamma * u2_prime) * inv_z_prime
+                        val v = (alpha * v0_prime + beta * v1_prime + gamma * v2_prime) * inv_z_prime
+                        val texX = (u * (texWidth - 1)).toInt().coerceIn(0, texWidth - 1)
+                        val texY = (v * (texHeight - 1)).toInt().coerceIn(0, texHeight - 1)
 
-                        val finalFaceIlluminationColor = illuminatedColor ?: renderableFace.color
                         val texColor = texReader.getColor(texX, texY)
 
-                        val litR = texColor.red * finalFaceIlluminationColor.red
-                        val litG = texColor.green * finalFaceIlluminationColor.green
-                        val litB = texColor.blue * finalFaceIlluminationColor.blue
-                        var finalPixelColor = Color(litR, litG, litB, 1.0).saturate()
+                        val litR = texColor.red * illR
+                        val litG = texColor.green * illG
+                        val litB = texColor.blue * illB
 
-                        val distance = 1.0 / interpolated_z_inv_prime
-                        var linearFogFactor = ((distance - fogStartDistance) / (fogEndDistance - fogStartDistance)).coerceIn(0.0, 1.0)
-                        val fogFactor = linearFogFactor * fogDensity.coerceIn(0.0, 1.0)
+                        val distance = inv_z_prime
+                        val fogFactor = ((distance - fogStartDistance) / (fogEndDistance - fogStartDistance)).coerceIn(0.0, 1.0) * fogDensity
 
-                        val r = finalPixelColor.red * (1 - fogFactor) + fogColor.red * fogFactor
-                        val g = finalPixelColor.green * (1 - fogFactor) + fogColor.green * fogFactor
-                        val b = finalPixelColor.blue * (1 - fogFactor) + fogColor.blue * fogFactor
-                        finalPixelColor = Color(r,g,b,1.0).saturate()
+                        val r = litR * (1 - fogFactor) + fogR * fogFactor
+                        val g = litG * (1 - fogFactor) + fogG * fogFactor
+                        val b = litB * (1 - fogFactor) + fogB * fogFactor
 
-                        pixelWriter.setColor(px, py, finalPixelColor)
-                        depthBuffer[px][py] = interpolatedZ
+                        pixelBuffer[pixelIndex] = (0xFF shl 24) or
+                                ((r * 255).toInt().coerceIn(0, 255) shl 16) or
+                                ((g * 255).toInt().coerceIn(0, 255) shl 8) or
+                                ((b * 255).toInt().coerceIn(0, 255))
+                        depthBuffer[pixelIndex] = interpolatedZ
                     }
                 }
             }
@@ -619,28 +624,10 @@ class DrawingPanel : StackPane() {
         return false
     }
 
-    private fun drawLineZBuffered(pixelWriter: PixelWriter, x0: Int, y0: Int, z0: Double, x1: Int, y1: Int, z1: Double, color: Color, screenWidth: Int, screenHeight: Int) {
-        var currX0 = x0; var currY0 = y0
-        val dx = abs(x1 - currX0); val dy = abs(y1 - currY0)
-        val sx = if (currX0 < x1) 1 else -1; val sy = if (currY0 < y1) 1 else -1
-        var err = dx - dy
-        val lineColor = Color.rgb(40,40,40)
-
-        val lineLengthSq = (x1 - x0).toDouble().pow(2) + (y1 - y0).toDouble().pow(2)
-        val invLineLength = if (lineLengthSq == 0.0) 0.0 else 1.0 / sqrt(lineLengthSq)
-
-        while (true) {
-            val t = sqrt((currX0 - x0).toDouble().pow(2) + (currY0 - y0).toDouble().pow(2)) * invLineLength
-            val interpolatedZ = z0 + t * (z1 - z0)
-
-            if (currX0 in 0 until screenWidth && currY0 in 0 until screenHeight && interpolatedZ < depthBuffer[currX0][currY0]) {
-                pixelWriter.setColor(currX0, currY0, lineColor)
-                depthBuffer[currX0][currY0] = interpolatedZ
-            }
-            if (currX0 == x1 && currY0 == y1) break
-            val e2 = 2 * err
-            if (e2 > -dy) { err -= dy; currX0 += sx }
-            if (e2 < dx) { err += dx; currY0 += sy }
-        }
+    private fun colorToInt(c: Color): Int {
+        val r = (c.red * 255).toInt() and 0xFF
+        val g = (c.green * 255).toInt() and 0xFF
+        val b = (c.blue * 255).toInt() and 0xFF
+        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
     }
 }
