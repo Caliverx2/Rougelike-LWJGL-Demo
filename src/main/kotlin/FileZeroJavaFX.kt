@@ -5,14 +5,11 @@ import javafx.scene.Scene
 import javafx.scene.image.Image
 import javafx.scene.paint.Color
 import javafx.stage.Stage
-import java.awt.image.BufferedImage
-import javax.imageio.ImageIO
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.math.tan
-import javafx.embed.swing.SwingFXUtils
 
 data class Vector3d(var x: Double, var y: Double, var z: Double) {
     operator fun plus(other: Vector3d) = Vector3d(x + other.x, y + other.y, z + other.z)
@@ -283,7 +280,6 @@ val GRID_MAP: Array<Array<Array<Int>>> = Array(18) { Array(18) { Array(18) { 0 }
 
 data class LightSource(val position: Vector3d, val radius: Double = 5.0, val color: Color = Color.rgb(255, 20, 20), val intensity: Double = 1.0)
 
-
 class MainApp : Application() {
     override fun start(primaryStage: Stage) {
         primaryStage.title = "FileZero.kt"
@@ -306,10 +302,4 @@ class MainApp : Application() {
 
 fun main(args: Array<String>) {
     Application.launch(MainApp::class.java, *args)
-}
-
-fun loadImage(path: String): Image {
-    val stream = DrawingPanel::class.java.classLoader.getResourceAsStream(path)
-    val bufferedImage = ImageIO.read(stream)
-    return SwingFXUtils.toFXImage(bufferedImage, null)
 }

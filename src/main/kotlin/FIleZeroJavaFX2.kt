@@ -1,27 +1,28 @@
 package org.lewapnoob.FileZero2
 
 import javafx.animation.AnimationTimer
+import javafx.embed.swing.SwingFXUtils
 import javafx.scene.canvas.Canvas
+import javafx.scene.image.Image
 import javafx.scene.image.ImageView
-import javafx.scene.image.PixelWriter
 import javafx.scene.image.WritableImage
 import javafx.scene.input.KeyCode
 import javafx.scene.layout.StackPane
 import javafx.scene.paint.Color
 import javafx.scene.image.PixelFormat
-import javafx.scene.shape.ArcType
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import javax.imageio.ImageIO
 import kotlin.math.*
 
 class DrawingPanel : StackPane() {
     private var lastUpdateTime = System.nanoTime()
     private val isRendering = java.util.concurrent.atomic.AtomicBoolean(false)
     private val cubes = mutableListOf<TransformedCube>()
-    private val lightSources = mutableListOf<LightSource>()
+    private var lightSources = mutableListOf<LightSource>()
 
     private var cameraPosition = Vector3d(0.0, 0.0, 0.0)
     private var cameraYaw = 2.4
@@ -246,6 +247,7 @@ class DrawingPanel : StackPane() {
 
         if (pressedKeys.contains(KeyCode.G)) println("X:${((cameraPosition.x+500)/100).toInt()} Y:${((cameraPosition.y+500)/100).toInt()} Z:${((cameraPosition.z+500)/100).toInt()} YAW:${((cameraYaw*10).toInt()/10.0)} PITCH:${((cameraPitch*10).toInt()/10.0)} SPEED:$currentMovementSpeed")
         if (pressedKeys.contains(KeyCode.R)) {
+            lightSources = mutableListOf<LightSource>()
             val baseCubeVertices = mutableListOf<Vector3d>()
             val halfSize = cubeSize / 2.0
             baseCubeVertices.addAll(
@@ -266,7 +268,7 @@ class DrawingPanel : StackPane() {
         }
         if (pressedKeys.contains(KeyCode.O)) {
             val lightRadius = 5.0 * cubeSize
-            lightSources.add(LightSource(Vector3d(cameraPosition.x, cameraPosition.y + cubeSize/3, cameraPosition.z), lightRadius, Color.rgb(188, 0, 0, 180 / 255.0)))
+            lightSources.add(LightSource(Vector3d((((cameraPosition.x)/100).toInt())*100.0+50, (((cameraPosition.y)/100).toInt())*100.0+50, (((cameraPosition.z)/100).toInt())*100.0+50), lightRadius, Color.rgb(188, 0, 0, 180 / 255.0)))
             pressedKeys.remove(KeyCode.O)
         }
 
@@ -277,12 +279,12 @@ class DrawingPanel : StackPane() {
     private fun drawOverlay() {
         val gc = overlayCanvas.graphicsContext2D
         gc.clearRect(0.0, 0.0, overlayCanvas.width, overlayCanvas.height)
-        gc.fill = Color.WHITE
+        gc.stroke = Color.WHITE
         for (x in 0..8) {
             for (y in 0..8) {
                 for (zLevel in 0 until 4) {
                     if (GRID_MAP[x][zLevel][y] == 1) {
-                        gc.fillOval(x * 10.0, y * 10.0 + zLevel * 90 + zLevel * 10, 10.0, 10.0)
+                        gc.strokeOval(x * 10.0, y * 10.0 + zLevel * 90 + zLevel * 10, 10.0, 10.0)
                     }
                 }
             }
@@ -368,7 +370,6 @@ class DrawingPanel : StackPane() {
         tasks.forEach { it.get() }
         return illuminatedFaceColors
     }
-
 
     private fun clipTriangleAgainstNearPlane(worldVertices: List<Vector3d>, uvs: List<Vector3d>, viewMatrix: Matrix4x4, nearPlane: Double): List<Pair<List<Vector3d>, List<Vector3d>>> {
         val viewVertices = worldVertices.map { viewMatrix.transform(it) }
@@ -629,5 +630,11 @@ class DrawingPanel : StackPane() {
         val g = (c.green * 255).toInt() and 0xFF
         val b = (c.blue * 255).toInt() and 0xFF
         return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
+    private fun loadImage(path: String): Image {
+        val stream = DrawingPanel::class.java.classLoader.getResourceAsStream(path)
+        val bufferedImage = ImageIO.read(stream)
+        return SwingFXUtils.toFXImage(bufferedImage, null)
     }
 }
