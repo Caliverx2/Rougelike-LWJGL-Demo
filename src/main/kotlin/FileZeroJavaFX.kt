@@ -1,6 +1,7 @@
 package org.lewapnoob.FileZero2
 
 import javafx.application.Application
+import javafx.geometry.Pos
 import javafx.scene.Scene
 import javafx.scene.image.Image
 import javafx.scene.paint.Color
@@ -157,25 +158,6 @@ class Matrix4x4(private val data: Array<DoubleArray>) {
     }
 }
 
-data class Cube(val color: Color, val vertices: List<Vector3d>, val textureCoords: List<Vector3d>? = null, val x: Double, val y: Double, val z: Double) {
-    val faces = listOf(
-        listOf(0, 1, 2, 3),
-        listOf(4, 7, 6, 5),
-        listOf(3, 2, 6, 7),
-        listOf(0, 4, 5, 1),
-        listOf(1, 5, 6, 2),
-        listOf(4, 0, 3, 7)
-    )
-    val faceTextureCoords = listOf(
-        listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0)), //front
-        listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(1.0, 1.0, 0.0)), //back
-        listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0)), //top
-        listOf(Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(0.0, 1.0, 0.0)), //bottom
-        listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0)), //right
-        listOf(Vector3d(1.0, 1.0, 0.0), Vector3d(0.0, 1.0, 0.0), Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0)) //left
-    )
-}
-
 data class RenderableFace(
     val screenVertices: List<Vector3d>,
     val originalClipW: List<Double>,
@@ -187,15 +169,22 @@ data class RenderableFace(
     var illuminatedColor: Color? = null
 )
 
-class TransformedCube(
-    val cube: Cube,
+data class Mesh(
+    val vertices: List<Vector3d>,
+    val faces: List<List<Int>>,
+    val faceUVs: List<List<Vector3d>>,
+    val color: Color
+)
+
+class PlacedMesh(
+    val mesh: Mesh,
     var transformMatrix: Matrix4x4 = Matrix4x4.identity(),
+    val texture: Image? = null,
     var collision: Boolean = true,
-    val texture: Image
+    var collisionPos: Vector3d = Vector3d(0.0,0.0,0.0)
 ) {
-    fun getTransformedVertices(): List<Vector3d> {
-        return cube.vertices.map { transformMatrix.transform(it) }
-    }
+    fun getTransformedVertices(): List<Vector3d> =
+        mesh.vertices.map { transformMatrix.transform(it) }
 
     fun applyTransform(matrix: Matrix4x4) {
         transformMatrix = matrix * transformMatrix

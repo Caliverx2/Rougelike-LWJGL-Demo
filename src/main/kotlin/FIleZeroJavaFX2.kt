@@ -21,7 +21,7 @@ import kotlin.math.*
 class DrawingPanel : StackPane() {
     private var lastUpdateTime = System.nanoTime()
     private val isRendering = java.util.concurrent.atomic.AtomicBoolean(false)
-    private val cubes = mutableListOf<TransformedCube>()
+    private val meshes = mutableListOf<PlacedMesh>()
     private var lightSources = mutableListOf<LightSource>()
 
     private var cameraPosition = Vector3d(0.0, 0.0, 0.0)
@@ -57,8 +57,6 @@ class DrawingPanel : StackPane() {
     private val overlayCanvas = Canvas(virtualWidth.toDouble(), virtualHeight.toDouble())
 
     val pressedKeys = Collections.synchronizedSet(mutableSetOf<KeyCode>())
-
-    private data class FaceIdentifier(val cube: TransformedCube, val faceIndex: Int)
 
     private val executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
     private val renderQueue = ConcurrentLinkedQueue<RenderableFace>()
@@ -96,34 +94,118 @@ class DrawingPanel : StackPane() {
             }
         }
 
-        val baseCubeVertices = mutableListOf<Vector3d>()
-        val halfSize = cubeSize / 2.0
-        baseCubeVertices.addAll(
-            listOf(
-                Vector3d(-halfSize, -halfSize, halfSize), Vector3d(halfSize, -halfSize, halfSize),
-                Vector3d(halfSize, halfSize, halfSize), Vector3d(-halfSize, halfSize, halfSize),
-                Vector3d(-halfSize, -halfSize, -halfSize), Vector3d(halfSize, -halfSize, -halfSize),
-                Vector3d(halfSize, halfSize, -halfSize), Vector3d(-halfSize, halfSize, -halfSize)
+        // Def Mesh cube
+        fun createCubeMesh(size: Double, color: Color): Mesh {
+            val hs = size / 2.0
+            val vertices = listOf(
+                Vector3d(-hs, -hs, hs), Vector3d(hs, -hs, hs),
+                Vector3d(hs, hs, hs), Vector3d(-hs, hs, hs),
+                Vector3d(-hs, -hs, -hs), Vector3d(hs, -hs, -hs),
+                Vector3d(hs, hs, -hs), Vector3d(-hs, hs, -hs)
             )
-        )
+            val faces = listOf(
+                listOf(0, 1, 2, 3),
+                listOf(4, 7, 6, 5),
+                listOf(3, 2, 6, 7),
+                listOf(0, 4, 5, 1),
+                listOf(1, 5, 6, 2),
+                listOf(4, 0, 3, 7)
+            )
+            val uvs = listOf(
+                listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0)),
+                listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(1.0, 1.0, 0.0)),
+                listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0)),
+                listOf(Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(0.0, 1.0, 0.0)),
+                listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0)),
+                listOf(Vector3d(1.0, 1.0, 0.0), Vector3d(0.0, 1.0, 0.0), Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0))
+            )
+            return Mesh(vertices, faces, uvs, color)
+        }
 
-        val blackBricksTexture = loadImage("textures/black_bricks.png")
-        val bricksTexture = loadImage("textures/bricks.jpg")
+        val cubeMeshWhite = createCubeMesh(cubeSize, Color.WHITE)
+        val cubeMeshRed = createCubeMesh(cubeSize, Color.RED)
+        val cubeMeshGray = createCubeMesh(cubeSize, Color.rgb(188, 188, 188))
+
+        val texBlackBricks = loadImage("textures/black_bricks.png")
+        val texBricks = loadImage("textures/bricks.jpg")
+
+        //
+        fun createPyramidMesh(size: Double, height: Double, color: Color): Mesh {
+            val hs = size / 2.0
+            val vertices = listOf(
+                Vector3d(-hs, 0.0, hs),   // 0 front-left
+                Vector3d(hs, 0.0, hs),    // 1 front-right
+                Vector3d(hs, 0.0, -hs),   // 2 back-right
+                Vector3d(-hs, 0.0, -hs),  // 3 back-left
+                Vector3d(0.0, height, 0.0) // 4 top
+            )
+            val faces = listOf(
+                listOf(0, 3, 2, 1), // podstawa
+                listOf(0, 1, 4),    // ściana frontowa
+                listOf(1, 2, 4),    // prawa
+                listOf(2, 3, 4),    // tył
+                listOf(3, 0, 4)     // lewa
+            )
+            val uvs = listOf(
+                listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0)),
+                listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0)),
+                listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0)),
+                listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0)),
+                listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))
+            )
+            return Mesh(vertices, faces, uvs, color)
+        }
+
+        fun createInvertedPyramidMesh(size: Double, height: Double, color: Color): Mesh {
+            val hs = size / 2.0
+            val vertices = listOf(
+                Vector3d(-hs, 0.0, hs),    // 0 front-left (góra)
+                Vector3d(hs, 0.0, hs),     // 1 front-right (góra)
+                Vector3d(hs, 0.0, -hs),    // 2 back-right (góra)
+                Vector3d(-hs, 0.0, -hs),   // 3 back-left (góra)
+                Vector3d(0.0, -height, 0.0) // 4 dół (szpic)
+            )
+            val faces = listOf(
+                listOf(0, 1, 2, 3), // podstawa
+                listOf(0, 4, 1),    // front
+                listOf(1, 4, 2),    // prawa
+                listOf(2, 4, 3),    // tył
+                listOf(3, 4, 0)     // lewa
+            )
+            val uvs = listOf(
+                listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0)),
+                listOf(Vector3d(0.0,0.0,0.0), Vector3d(0.5,1.0,0.0), Vector3d(1.0,0.0,0.0)),
+                listOf(Vector3d(0.0,0.0,0.0), Vector3d(0.5,1.0,0.0), Vector3d(1.0,0.0,0.0)),
+                listOf(Vector3d(0.0,0.0,0.0), Vector3d(0.5,1.0,0.0), Vector3d(1.0,0.0,0.0)),
+                listOf(Vector3d(0.0,0.0,0.0), Vector3d(0.5,1.0,0.0), Vector3d(1.0,0.0,0.0))
+            )
+            return Mesh(vertices, faces, uvs, color)
+        }
+
+        val pyramidMesh = createPyramidMesh(cubeSize, cubeSize, Color.GOLD)
+        val invertedPyramidMesh = createInvertedPyramidMesh(cubeSize, cubeSize, Color.DEEPSKYBLUE)
+
+        val pos1 = Vector3d(2.5 * cubeSize, 0.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(pyramidMesh, Matrix4x4.translation(pos1.x, pos1.y, pos1.z), texture = texBricks))
+
+        val pos2 = Vector3d(0.5 * cubeSize, 0.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(invertedPyramidMesh, Matrix4x4.translation(pos2.x, pos2.y, pos2.z), texture = texBlackBricks))
+        //
 
         for (x in 0..8) {
             for (y in 0..8) {
                 for (z in 0..8) {
-                    val initialPos = Vector3d(
-                        (x - 4.5) * (cubeSize + spacing),
-                        (y - 4.5) * (cubeSize + spacing),
-                        (z - 4.5) * (cubeSize + spacing)
+                    val pos = Vector3d(
+                        (x - 4.5) * cubeSize,
+                        (y - 4.5) * cubeSize,
+                        (z - 4.5) * cubeSize
                     )
-                    val translationMatrix = Matrix4x4.translation(initialPos.x, initialPos.y, initialPos.z)
-
+                    val mat = Matrix4x4.translation(pos.x, pos.y, pos.z)
                     when (GRID_MAP[x][y][z]) {
-                        1 -> cubes.add(TransformedCube(Cube(Color.WHITE, baseCubeVertices, null, initialPos.x, initialPos.y, initialPos.z), transformMatrix = translationMatrix, texture = blackBricksTexture))
-                        2 -> cubes.add(TransformedCube(Cube(Color.RED, baseCubeVertices, null, initialPos.x, initialPos.y, initialPos.z), transformMatrix = translationMatrix, texture = blackBricksTexture))
-                        3 -> cubes.add(TransformedCube(Cube(Color.rgb(188, 188, 188), baseCubeVertices, null, initialPos.x, initialPos.y, initialPos.z), transformMatrix = translationMatrix, collision = false, texture = bricksTexture))
+                        1 -> meshes.add(PlacedMesh(cubeMeshWhite, mat, texBlackBricks, collisionPos = pos))
+                        2 -> meshes.add(PlacedMesh(cubeMeshRed, mat, texBlackBricks, collisionPos = pos))
+                        3 -> {meshes.add(PlacedMesh(cubeMeshGray, mat, texBricks, collision=false, collisionPos = pos))
+                        println("${pos.x} ${pos.y} ${pos.z}")}
                     }
                 }
             }
@@ -192,9 +274,9 @@ class DrawingPanel : StackPane() {
 
         var collisionOccurred = false
 
-        for (transformedCube in cubes) {
-            val cubeAABB = AABB.fromCube(transformedCube.getTransformedVertices())
-            if (playerAABB.intersects(cubeAABB) && transformedCube.collision) {
+        for (mesh in meshes) {
+            val meshAABB = AABB.fromCube(mesh.getTransformedVertices())
+            if (playerAABB.intersects(meshAABB) && mesh.collision) {
                 collisionOccurred = true
                 break
             }
@@ -203,35 +285,39 @@ class DrawingPanel : StackPane() {
         if (!collisionOccurred || debugNoclip) {
             cameraPosition = newCameraPosition
         } else {
-            val testX = AABB(Vector3d(newCameraPosition.x - playerHalfWidth, oldCameraPosition.y - playerHeight / 2, oldCameraPosition.z - playerHalfWidth),
-                Vector3d(newCameraPosition.x + playerHalfWidth, oldCameraPosition.y + playerHeight / 2, oldCameraPosition.z + playerHalfWidth))
+            val testX = AABB(
+                Vector3d(newCameraPosition.x - playerHalfWidth, oldCameraPosition.y - playerHeight / 2, oldCameraPosition.z - playerHalfWidth),
+                Vector3d(newCameraPosition.x + playerHalfWidth, oldCameraPosition.y + playerHeight / 2, oldCameraPosition.z + playerHalfWidth)
+            )
             var collisionX = false
-            for (transformedCube in cubes) {
-                if (testX.intersects(AABB.fromCube(transformedCube.getTransformedVertices())) && transformedCube.collision) {
+            for (mesh in meshes) {
+                if (testX.intersects(AABB.fromCube(mesh.getTransformedVertices())) && mesh.collision) {
                     collisionX = true
                     break
                 }
             }
             if (!collisionX) cameraPosition.x = newCameraPosition.x
 
-
-            val testY = AABB(Vector3d(oldCameraPosition.x - playerHalfWidth, newCameraPosition.y - playerHeight / 2, oldCameraPosition.z - playerHalfWidth),
-                Vector3d(oldCameraPosition.x + playerHalfWidth, newCameraPosition.y + playerHeight / 2, oldCameraPosition.z + playerHalfWidth))
+            val testY = AABB(
+                Vector3d(oldCameraPosition.x - playerHalfWidth, newCameraPosition.y - playerHeight / 2, oldCameraPosition.z - playerHalfWidth),
+                Vector3d(oldCameraPosition.x + playerHalfWidth, newCameraPosition.y + playerHeight / 2, oldCameraPosition.z + playerHalfWidth)
+            )
             var collisionY = false
-            for (transformedCube in cubes) {
-                if (testY.intersects(AABB.fromCube(transformedCube.getTransformedVertices())) && transformedCube.collision) {
+            for (mesh in meshes) {
+                if (testY.intersects(AABB.fromCube(mesh.getTransformedVertices())) && mesh.collision) {
                     collisionY = true
                     break
                 }
             }
             if (!collisionY) cameraPosition.y = newCameraPosition.y
 
-
-            val testZ = AABB(Vector3d(oldCameraPosition.x - playerHalfWidth, oldCameraPosition.y - playerHeight / 2, newCameraPosition.z - playerHalfWidth),
-                Vector3d(oldCameraPosition.x + playerHalfWidth, oldCameraPosition.y + playerHeight / 2, newCameraPosition.z + playerHalfWidth))
+            val testZ = AABB(
+                Vector3d(oldCameraPosition.x - playerHalfWidth, oldCameraPosition.y - playerHeight / 2, newCameraPosition.z - playerHalfWidth),
+                Vector3d(oldCameraPosition.x + playerHalfWidth, oldCameraPosition.y + playerHeight / 2, newCameraPosition.z + playerHalfWidth)
+            )
             var collisionZ = false
-            for (transformedCube in cubes) {
-                if (testZ.intersects(AABB.fromCube(transformedCube.getTransformedVertices())) && transformedCube.collision) {
+            for (mesh in meshes) {
+                if (testZ.intersects(AABB.fromCube(mesh.getTransformedVertices())) && mesh.collision) {
                     collisionZ = true
                     break
                 }
@@ -247,24 +333,19 @@ class DrawingPanel : StackPane() {
 
         if (pressedKeys.contains(KeyCode.G)) println("X:${((cameraPosition.x+500)/100).toInt()} Y:${((cameraPosition.y+500)/100).toInt()} Z:${((cameraPosition.z+500)/100).toInt()} YAW:${((cameraYaw*10).toInt()/10.0)} PITCH:${((cameraPitch*10).toInt()/10.0)} SPEED:$currentMovementSpeed")
         if (pressedKeys.contains(KeyCode.R)) {
-            lightSources = mutableListOf<LightSource>()
-            val baseCubeVertices = mutableListOf<Vector3d>()
-            val halfSize = cubeSize / 2.0
-            baseCubeVertices.addAll(
-                listOf(
-                    Vector3d(-halfSize, -halfSize, halfSize), Vector3d(halfSize, -halfSize, halfSize),
-                    Vector3d(halfSize, halfSize, halfSize), Vector3d(-halfSize, halfSize, halfSize),
-                    Vector3d(-halfSize, -halfSize, -halfSize), Vector3d(halfSize, -halfSize, -halfSize),
-                    Vector3d(halfSize, halfSize, -halfSize), Vector3d(-halfSize, halfSize, -halfSize)
-                )
+            val cubeMeshGray = Mesh(
+                vertices = meshes[5].mesh.vertices,
+                faces = meshes[5].mesh.faces,
+                faceUVs = meshes[5].mesh.faceUVs,
+                color = Color.LIGHTGRAY
             )
             val initialPos = Vector3d(
-                (((cameraPosition.x.toInt()) / 100) + 0.5) * (cubeSize + spacing),
-                (((cameraPosition.y.toInt()) / 100) - 0.5) * (cubeSize + spacing),
-                (((cameraPosition.z.toInt()) / 100) - 0.5) * (cubeSize + spacing)
+                (((cameraPosition.x.toInt()) / 100) + 0.5) * cubeSize,
+                (((cameraPosition.y.toInt()) / 100) - 0.5) * cubeSize,
+                (((cameraPosition.z.toInt()) / 100) - 0.5) * cubeSize
             )
             val translationMatrix = Matrix4x4.translation(initialPos.x, initialPos.y, initialPos.z)
-            cubes.add(TransformedCube(Cube(Color.LIGHTGRAY, baseCubeVertices, null, initialPos.x, initialPos.y, initialPos.z), transformMatrix = translationMatrix, texture = loadImage("textures/black_bricks.png")))
+            meshes.add(PlacedMesh(cubeMeshGray, transformMatrix = translationMatrix, texture = loadImage("textures/black_bricks.png")))
         }
         if (pressedKeys.contains(KeyCode.O)) {
             val lightRadius = 5.0 * cubeSize
@@ -300,15 +381,17 @@ class DrawingPanel : StackPane() {
                             (((cameraPosition.y + 500) / 100).toInt() == zLevel) &&
                             (((cameraPosition.z + 500) / 100).toInt() == y)) {
 
-                            val blockx = (x - 4.5) * (cubeSize + spacing)
-                            val blocky = (zLevel - 4.5) * (cubeSize + spacing)
-                            val blockz = (y - 4.5) * (cubeSize + spacing)
+                            val pos = Vector3d(
+                                (x - 4.5) * cubeSize,
+                                (zLevel - 4.5) * cubeSize,
+                                (y - 4.5) * cubeSize
+                            )
 
-                            GRID_MAP[x][zLevel][y] = 0
-                            val cubeToRemove = cubes.find { abs(it.cube.x - blockx) < 1 && abs(it.cube.y - blocky) < 1 && abs(it.cube.z - blockz) < 1 }
-                            if (cubeToRemove != null) {
-                                println("$cubeToRemove X:${((cameraPosition.x+500)/100).toInt()} Y:${((cameraPosition.y+500)/100).toInt()} Z:${((cameraPosition.z+500)/100).toInt()}")
-                                cubes.remove(cubeToRemove)
+                            val meshToRemove = meshes.find { it.collisionPos == pos }
+                            if (meshToRemove != null) {
+                                println("$meshToRemove X:${((cameraPosition.x+500)/100).toInt()} Y:${((cameraPosition.y+500)/100).toInt()} Z:${((cameraPosition.z+500)/100).toInt()}")
+                                meshes.remove(meshToRemove)
+                                GRID_MAP[x][zLevel][y] = 0
                             }
                         }
                     }
@@ -317,58 +400,45 @@ class DrawingPanel : StackPane() {
         }
     }
 
-    private fun calculateIlluminatedFaces(cubes: List<TransformedCube>, lightSources: List<LightSource>): Map<FaceIdentifier, Color> {
-        if (lightSources.isEmpty()) return emptyMap()
-
-        val illuminatedFaceColors = ConcurrentHashMap<FaceIdentifier, Color>()
-
-        val allFaces = cubes.flatMap { transformedCube ->
-            (0 until transformedCube.cube.faces.size).map { faceIndex ->
-                val worldVertices = transformedCube.cube.faces[faceIndex].map { vertexIndex ->
-                    transformedCube.transformMatrix.transform(transformedCube.cube.vertices[vertexIndex])
+    private fun calculateIlluminatedFaces(meshes: List<PlacedMesh>, lights: List<LightSource>): Map<Pair<PlacedMesh, Int>, Color> {
+        if (lights.isEmpty()) return emptyMap()
+        val illuminated = ConcurrentHashMap<Pair<PlacedMesh, Int>, Color>()
+        val allFaces = meshes.flatMap { obj ->
+            (0 until obj.mesh.faces.size).map { idx ->
+                val worldVerts = obj.mesh.faces[idx].map { vi ->
+                    obj.transformMatrix.transform(obj.mesh.vertices[vi])
                 }
-                Triple(FaceIdentifier(transformedCube, faceIndex), worldVertices, transformedCube)
+                Triple(Pair(obj, idx), worldVerts, obj)
             }
         }
-
-        val tasks = allFaces.map { (faceId, faceWorldVertices, transformedCube) ->
+        val tasks = allFaces.map { (id, wverts, meshObj) ->
             executor.submit {
-                val v0 = faceWorldVertices[0]; val v1 = faceWorldVertices[1]; val v2 = faceWorldVertices[2]
-                val faceCenter = (v0 + v1 + faceWorldVertices[3]) / 4.0
-                val faceNormal = (v1 - v0).cross(v2 - v0).normalize()
-
-                var combinedR = 0.0
-                var combinedG = 0.0
-                var combinedB = 0.0
-
-                for (light in lightSources) {
-                    val lightToFaceVector = faceCenter - light.position
-                    val distanceToFace = lightToFaceVector.length()
-
-                    if (distanceToFace > light.radius) continue
-
-                    val lightDirection = lightToFaceVector.normalize()
-                    if (faceNormal.dot(lightDirection) < 0.0 && !isOccludedByGrid(light.position, faceCenter)) {
-                        val attenuation = 1.0 - (distanceToFace / light.radius).coerceIn(0.0, 1.0)
-                        val lightInfluence = light.intensity * attenuation
-
-                        val baseColor = transformedCube.cube.color
-                        combinedR += (baseColor.red * light.color.red * lightInfluence * maxLightContribution)
-                        combinedG += (baseColor.green * light.color.green * lightInfluence * maxLightContribution)
-                        combinedB += (baseColor.blue * light.color.blue * lightInfluence * maxLightContribution)
+                val v0 = wverts[0]
+                val v1 = wverts[1]
+                val v2 = wverts[2]
+                val faceCenter = (v0+v1+wverts[2]) / 4.0
+                val faceNormal = (v1-v0).cross(v2-v0).normalize()
+                var r=0.0; var g=0.0; var b=0.0
+                for (light in lights) {
+                    val toFace = faceCenter - light.position
+                    val dist = toFace.length()
+                    if (dist > light.radius) continue
+                    val dir = toFace.normalize()
+                    if (faceNormal.dot(dir) < 0.0 && !isOccludedByGrid(light.position, faceCenter)) {
+                        val att = 1.0 - (dist / light.radius).coerceIn(0.0,1.0)
+                        val inf = light.intensity * att
+                        r += meshObj.mesh.color.red * light.color.red * inf
+                        g += meshObj.mesh.color.green * light.color.green * inf
+                        b += meshObj.mesh.color.blue * light.color.blue * inf
                     }
                 }
-
-                if (combinedR > 0.0 || combinedG > 0.0 || combinedB > 0.0) {
-                    val finalR = combinedR.coerceIn(0.0, 1.0)
-                    val finalG = combinedG.coerceIn(0.0, 1.0)
-                    val finalB = combinedB.coerceIn(0.0, 1.0)
-                    illuminatedFaceColors[faceId] = Color(finalR, finalG, finalB, 1.0)
+                if (r>0||g>0||b>0) {
+                    illuminated[id] = Color(r.coerceIn(0.0,1.0), g.coerceIn(0.0,1.0), b.coerceIn(0.0,1.0), 1.0)
                 }
             }
         }
         tasks.forEach { it.get() }
-        return illuminatedFaceColors
+        return illuminated
     }
 
     private fun clipTriangleAgainstNearPlane(worldVertices: List<Vector3d>, uvs: List<Vector3d>, viewMatrix: Matrix4x4, nearPlane: Double): List<Pair<List<Vector3d>, List<Vector3d>>> {
@@ -430,7 +500,6 @@ class DrawingPanel : StackPane() {
 
         pixelBuffer.fill(bgColorInt)
         depthBuffer.fill(Double.MAX_VALUE)
-
         renderQueue.clear()
 
         val lookDirection = Vector3d(cos(cameraPitch) * sin(cameraYaw), sin(cameraPitch), cos(cameraPitch) * cos(cameraYaw)).normalize()
@@ -438,58 +507,63 @@ class DrawingPanel : StackPane() {
         val viewMatrix = Matrix4x4.lookAt(cameraPosition, cameraPosition + lookDirection, upVector)
         val projectionMatrix = Matrix4x4.perspective(90.0, virtualWidth.toDouble() / virtualHeight.toDouble(), 0.1, 1200.0)
         val combinedMatrix = projectionMatrix * viewMatrix
-        val illuminatedFacesMap = calculateIlluminatedFaces(cubes, lightSources)
+
+        val illuminatedFacesMap = calculateIlluminatedFaces(meshes, lightSources)
         val tasks = mutableListOf<Future<*>>()
 
-        for (transformedCube in cubes) {
+        for (mesh in meshes) {
             tasks.add(executor.submit {
-                val worldVertices = transformedCube.cube.vertices.map { transformedCube.transformMatrix.transform(it) }
-                for (faceIndex in transformedCube.cube.faces.indices) {
-                    val faceIndices = transformedCube.cube.faces[faceIndex]
-                    val p0View = viewMatrix.transform(worldVertices[faceIndices[0]]); val p1View = viewMatrix.transform(worldVertices[faceIndices[1]]); val p2View = viewMatrix.transform(worldVertices[faceIndices[2]])
-                    val normalView = (p1View - p0View).cross(p2View - p0View).normalize()
+                val worldVertices = mesh.mesh.vertices.map { mesh.transformMatrix.transform(it) }
+                for (faceIndex in mesh.mesh.faces.indices) {
+                    val faceIndices = mesh.mesh.faces[faceIndex]
+                    if (faceIndices.size < 3) continue
+
+                    val p0View = viewMatrix.transform(worldVertices[faceIndices[0]])
+                    val p1View = viewMatrix.transform(worldVertices[faceIndices[1]])
+                    val p2View = viewMatrix.transform(worldVertices[faceIndices[2]])
+
+                    var normalView = (p1View - p0View).cross(p2View - p0View).normalize()
                     val cameraRayView = (Vector3d(0.0, 0.0, 0.0) - p0View).normalize()
 
                     if (normalView.dot(cameraRayView) > 0) {
                         val faceWorldVertices = faceIndices.map { worldVertices[it] }
-                        val faceTexCoords = transformedCube.cube.faceTextureCoords[faceIndex]
+                        val faceTexCoords = mesh.mesh.faceUVs[faceIndex]
 
-                        val triangle1_world = listOf(faceWorldVertices[0], faceWorldVertices[1], faceWorldVertices[2])
-                        val triangle2_world = listOf(faceWorldVertices[0], faceWorldVertices[2], faceWorldVertices[3])
-                        val triangle1_uv = listOf(faceTexCoords[0], faceTexCoords[1], faceTexCoords[2]).map { Vector3d(it.x, it.y, 0.0) }
-                        val triangle2_uv = listOf(faceTexCoords[0], faceTexCoords[2], faceTexCoords[3]).map { Vector3d(it.x, it.y, 0.0) }
-
-                        val faceId = FaceIdentifier(transformedCube, faceIndex)
-                        val dynamicLightColor = illuminatedFacesMap[faceId]
-                        val finalCalculatedColor = if (dynamicLightColor != null) {
-                            val finalR = (dynamicLightColor.red + transformedCube.cube.color.red * ambientIntensity).coerceIn(0.0, 1.0)
-                            val finalG = (dynamicLightColor.green + transformedCube.cube.color.green * ambientIntensity).coerceIn(0.0, 1.0)
-                            val finalB = (dynamicLightColor.blue + transformedCube.cube.color.blue * ambientIntensity).coerceIn(0.0, 1.0)
-
-                            Color(finalR, finalG, finalB, 1.0)
+                        val triangles = if (faceIndices.size == 4) {
+                            listOf(
+                                Pair(listOf(faceWorldVertices[0], faceWorldVertices[1], faceWorldVertices[2]),
+                                    listOf(faceTexCoords[0], faceTexCoords[1], faceTexCoords[2])),
+                                Pair(listOf(faceWorldVertices[0], faceWorldVertices[2], faceWorldVertices[3]),
+                                    listOf(faceTexCoords[0], faceTexCoords[2], faceTexCoords[3]))
+                            )
                         } else {
-                            Color(transformedCube.cube.color.red * ambientIntensity, transformedCube.cube.color.green * ambientIntensity, transformedCube.cube.color.blue * ambientIntensity, 1.0).saturate()
+                            listOf(Pair(faceWorldVertices, faceTexCoords))
                         }
 
-                        val trianglesToProcess = listOf(
-                            Pair(triangle1_world, triangle1_uv),
-                            Pair(triangle2_world, triangle2_uv)
-                        )
+                        val dynamicLightColor = illuminatedFacesMap[Pair(mesh, faceIndex)]
+                        val finalCalculatedColor = if (dynamicLightColor != null) {
+                            val finalR = (dynamicLightColor.red + mesh.mesh.color.red * ambientIntensity).coerceIn(0.0, 1.0)
+                            val finalG = (dynamicLightColor.green + mesh.mesh.color.green * ambientIntensity).coerceIn(0.0, 1.0)
+                            val finalB = (dynamicLightColor.blue + mesh.mesh.color.blue * ambientIntensity).coerceIn(0.0, 1.0)
+                            Color(finalR, finalG, finalB, 1.0)
+                        } else {
+                            Color(mesh.mesh.color.red * ambientIntensity, mesh.mesh.color.green * ambientIntensity, mesh.mesh.color.blue * ambientIntensity, 1.0).saturate()
+                        }
 
-                        for ((triangleWorld, triangleUv) in trianglesToProcess) {
-                            val clippedTriangles = clipTriangleAgainstNearPlane(triangleWorld, triangleUv, viewMatrix, 0.1)
-
-                            for ((clippedWorldVertices, clippedUVs) in clippedTriangles) {
+                        for ((triWorld, triUV) in triangles) {
+                            val clippedTriangles = clipTriangleAgainstNearPlane(triWorld, triUV, viewMatrix, 0.1)
+                            for ((clippedW, clippedUVs) in clippedTriangles) {
                                 val projectedVertices = mutableListOf<Vector3d>()
                                 val originalClipW = mutableListOf<Double>()
-                                for (vertex in clippedWorldVertices) {
-                                    val projectedHomogeneous = combinedMatrix.transformHomogeneous(vertex); val w = projectedHomogeneous.w
+                                for (vertex in clippedW) {
+                                    val projectedHomogeneous = combinedMatrix.transformHomogeneous(vertex)
+                                    val w = projectedHomogeneous.w
                                     if (w.isCloseToZero()) continue
                                     projectedVertices.add(Vector3d((projectedHomogeneous.x / w + 1) * virtualWidth / 2.0, (1 - projectedHomogeneous.y / w) * virtualHeight / 2.0, projectedHomogeneous.z / w))
                                     originalClipW.add(w)
                                 }
                                 if (projectedVertices.size == 3) {
-                                    renderQueue.add(RenderableFace(projectedVertices, originalClipW, clippedUVs, transformedCube.cube.color, false, transformedCube.texture, clippedWorldVertices, finalCalculatedColor))
+                                    renderQueue.add(RenderableFace(projectedVertices, originalClipW, clippedUVs, mesh.mesh.color, false, mesh.texture, clippedW, finalCalculatedColor))
                                 }
                             }
                         }
@@ -506,7 +580,6 @@ class DrawingPanel : StackPane() {
         }
 
         backBuffer.pixelWriter.setPixels(0, 0, virtualWidth, virtualHeight, PixelFormat.getIntArgbInstance(), pixelBuffer, 0, virtualWidth)
-
         imageView.image = backBuffer
         drawOverlay()
         isRendering.set(false)
