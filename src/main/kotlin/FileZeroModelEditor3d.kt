@@ -207,38 +207,34 @@ class ModelEditor : Application() {
 
     private fun addCubeAtOrigin() {
         val baseIndex = vertices.size
-        val size = 100.0 // Całkowita długość boku kostki
+        val size = 100.0
 
-        // Definiujemy 8 wierzchołków nowej kostki
         val newVertices = listOf(
-            Vector3d(-size / 2, 0.0, -size / 2), // 0: lewy-dół-tył
-            Vector3d( size / 2, 0.0, -size / 2), // 1: prawy-dół-tył
-            Vector3d( size / 2, 0.0,  size / 2), // 2: prawy-dół-przód
-            Vector3d(-size / 2, 0.0,  size / 2), // 3: lewy-dół-przód
-            Vector3d(-size / 2,  size, -size / 2), // 4: lewy-góra-tył
-            Vector3d( size / 2,  size, -size / 2), // 5: prawy-góra-tył
-            Vector3d( size / 2,  size,  size / 2), // 6: prawy-góra-przód
-            Vector3d(-size / 2,  size,  size / 2)  // 7: lewy-góra-przód
+            Vector3d(-size / 2, 0.0, -size / 2),
+            Vector3d( size / 2, 0.0, -size / 2),
+            Vector3d( size / 2, 0.0,  size / 2),
+            Vector3d(-size / 2, 0.0,  size / 2),
+            Vector3d(-size / 2,  size, -size / 2),
+            Vector3d( size / 2,  size, -size / 2),
+            Vector3d( size / 2,  size,  size / 2),
+            Vector3d(-size / 2,  size,  size / 2)
         )
         vertices.addAll(newVertices)
 
         val newEdges = listOf(
-            // Dolna podstawa
             Edge(0, 1), Edge(1, 2), Edge(2, 3), Edge(3, 0),
-            // Górna podstawa
             Edge(4, 5), Edge(5, 6), Edge(6, 7), Edge(7, 4),
-            // Krawędzie pionowe
             Edge(0, 4), Edge(1, 5), Edge(2, 6), Edge(3, 7)
         ).map { Edge(it.a + baseIndex, it.b + baseIndex) }
         edges.addAll(newEdges)
 
         val newFaces = listOf(
-            Face(listOf(3, 2, 6, 7)), // Ściana przednia
-            Face(listOf(1, 0, 4, 5)), // Ściana tylna
-            Face(listOf(2, 1, 5, 6)), // Ściana prawa
-            Face(listOf(0, 3, 7, 4)), // Ściana lewa
-            Face(listOf(7, 6, 5, 4)), // Ściana górna
-            Face(listOf(0, 1, 2, 3)),  // Ściana dolna
+            Face(listOf(3, 2, 6, 7)),
+            Face(listOf(1, 0, 4, 5)),
+            Face(listOf(2, 1, 5, 6)),
+            Face(listOf(0, 3, 7, 4)),
+            Face(listOf(7, 6, 5, 4)),
+            Face(listOf(0, 1, 2, 3)),
         ).map { Face(it.indices.map { idx -> idx + baseIndex }) }
         faces.addAll(newFaces)
     }
@@ -299,7 +295,7 @@ class ModelEditor : Application() {
             if (p.first.isFinite() && p.second.isFinite()) {
                 gc.fill = when {
                     selectedVertex == i -> Color.ORANGE
-                    selectedForFace.contains(i) -> Color.CYAN // aktywny do tworzenia ściany
+                    selectedForFace.contains(i) -> Color.CYAN
                     else -> Color.WHITE
                 }
                 gc.fillOval(p.first - 4, p.second - 4, 8.0, 8.0)

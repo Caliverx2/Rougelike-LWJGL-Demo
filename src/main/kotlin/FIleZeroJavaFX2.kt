@@ -116,9 +116,9 @@ class DrawingPanel : StackPane() {
         val texCeiling = loadImage("textures/ceiling.jpg")
         val texFloor = loadImage("textures/floor.jpg")
         texSkybox = loadImage("textures/skybox.png")
-
         //
-        val skyboxMesh = createCubeMesh(1000.0*cubeSize, Color.rgb(80,80,80), inverted = true) //50
+
+        val skyboxMesh = createCubeMesh(1000.0*cubeSize, Color.rgb(80,80,80), inverted = true)
         val pyramidMesh = createPyramidMesh(cubeSize, cubeSize, Color.GOLD)
         val invertedPyramidMesh = createInvertedPyramidMesh(cubeSize, cubeSize, Color.DEEPSKYBLUE)
         val towerMesh = createTowerMesh(Color.WHITE)
