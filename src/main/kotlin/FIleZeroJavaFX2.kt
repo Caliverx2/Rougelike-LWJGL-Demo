@@ -55,6 +55,7 @@ class DrawingPanel : StackPane() {
     private lateinit var backBuffer: WritableImage
     private val imageView = ImageView()
     private val overlayCanvas = Canvas(virtualWidth.toDouble(), virtualHeight.toDouble())
+    private lateinit var texSkybox: Image
 
     val pressedKeys = Collections.synchronizedSet(mutableSetOf<KeyCode>())
 
@@ -62,6 +63,18 @@ class DrawingPanel : StackPane() {
     private val renderQueue = ConcurrentLinkedQueue<RenderableFace>()
 
     init {
+        sceneProperty().addListener { _, _, newScene ->
+            if (newScene != null) {
+                newScene.windowProperty().addListener { _, _, newWindow ->
+                    if (newWindow != null) {
+                        newWindow.setOnCloseRequest {
+                            System.exit(0)
+                        }
+                    }
+                }
+            }
+        }
+
         depthBuffer = DoubleArray(virtualWidth * virtualHeight) { Double.MAX_VALUE }
         pixelBuffer = IntArray(virtualWidth * virtualHeight)
         backBuffer = WritableImage(virtualWidth, virtualHeight)
@@ -94,102 +107,49 @@ class DrawingPanel : StackPane() {
             }
         }
 
-        // Def Mesh cube
-        fun createCubeMesh(size: Double, color: Color): Mesh {
-            val hs = size / 2.0
-            val vertices = listOf(
-                Vector3d(-hs, -hs, hs), Vector3d(hs, -hs, hs),
-                Vector3d(hs, hs, hs), Vector3d(-hs, hs, hs),
-                Vector3d(-hs, -hs, -hs), Vector3d(hs, -hs, -hs),
-                Vector3d(hs, hs, -hs), Vector3d(-hs, hs, -hs)
-            )
-            val faces = listOf(
-                listOf(0, 1, 2, 3),
-                listOf(4, 7, 6, 5),
-                listOf(3, 2, 6, 7),
-                listOf(0, 4, 5, 1),
-                listOf(1, 5, 6, 2),
-                listOf(4, 0, 3, 7)
-            )
-            val uvs = listOf(
-                listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0)),
-                listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(1.0, 1.0, 0.0)),
-                listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0)),
-                listOf(Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(0.0, 1.0, 0.0)),
-                listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0)),
-                listOf(Vector3d(1.0, 1.0, 0.0), Vector3d(0.0, 1.0, 0.0), Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0))
-            )
-            return Mesh(vertices, faces, uvs, color)
-        }
-
         val cubeMeshWhite = createCubeMesh(cubeSize, Color.WHITE)
         val cubeMeshRed = createCubeMesh(cubeSize, Color.RED)
         val cubeMeshGray = createCubeMesh(cubeSize, Color.rgb(188, 188, 188))
 
         val texBlackBricks = loadImage("textures/black_bricks.png")
         val texBricks = loadImage("textures/bricks.jpg")
+        val texCeiling = loadImage("textures/ceiling.jpg")
+        val texFloor = loadImage("textures/floor.jpg")
+        texSkybox = loadImage("textures/skybox.png")
 
         //
-        fun createPyramidMesh(size: Double, height: Double, color: Color): Mesh {
-            val hs = size / 2.0
-            val vertices = listOf(
-                Vector3d(-hs, 0.0, hs),   // 0 front-left
-                Vector3d(hs, 0.0, hs),    // 1 front-right
-                Vector3d(hs, 0.0, -hs),   // 2 back-right
-                Vector3d(-hs, 0.0, -hs),  // 3 back-left
-                Vector3d(0.0, height, 0.0) // 4 top
-            )
-            val faces = listOf(
-                listOf(0, 3, 2, 1), // podstawa
-                listOf(0, 1, 4),    // ściana frontowa
-                listOf(1, 2, 4),    // prawa
-                listOf(2, 3, 4),    // tył
-                listOf(3, 0, 4)     // lewa
-            )
-            val uvs = listOf(
-                listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0)),
-                listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0)),
-                listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0)),
-                listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0)),
-                listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))
-            )
-            return Mesh(vertices, faces, uvs, color)
-        }
-
-        fun createInvertedPyramidMesh(size: Double, height: Double, color: Color): Mesh {
-            val hs = size / 2.0
-            val vertices = listOf(
-                Vector3d(-hs, 0.0, hs),    // 0 front-left (góra)
-                Vector3d(hs, 0.0, hs),     // 1 front-right (góra)
-                Vector3d(hs, 0.0, -hs),    // 2 back-right (góra)
-                Vector3d(-hs, 0.0, -hs),   // 3 back-left (góra)
-                Vector3d(0.0, -height, 0.0) // 4 dół (szpic)
-            )
-            val faces = listOf(
-                listOf(0, 1, 2, 3), // podstawa
-                listOf(0, 4, 1),    // front
-                listOf(1, 4, 2),    // prawa
-                listOf(2, 4, 3),    // tył
-                listOf(3, 4, 0)     // lewa
-            )
-            val uvs = listOf(
-                listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0)),
-                listOf(Vector3d(0.0,0.0,0.0), Vector3d(0.5,1.0,0.0), Vector3d(1.0,0.0,0.0)),
-                listOf(Vector3d(0.0,0.0,0.0), Vector3d(0.5,1.0,0.0), Vector3d(1.0,0.0,0.0)),
-                listOf(Vector3d(0.0,0.0,0.0), Vector3d(0.5,1.0,0.0), Vector3d(1.0,0.0,0.0)),
-                listOf(Vector3d(0.0,0.0,0.0), Vector3d(0.5,1.0,0.0), Vector3d(1.0,0.0,0.0))
-            )
-            return Mesh(vertices, faces, uvs, color)
-        }
-
+        val skyboxMesh = createCubeMesh(1000.0*cubeSize, Color.rgb(80,80,80), inverted = true) //50
         val pyramidMesh = createPyramidMesh(cubeSize, cubeSize, Color.GOLD)
         val invertedPyramidMesh = createInvertedPyramidMesh(cubeSize, cubeSize, Color.DEEPSKYBLUE)
+        val towerMesh = createTowerMesh(Color.WHITE)
+        val KotlinModel = createKotlinModelMesh(Color.GRAY)
+        val Tank = createTankMesh(Color.GREEN)
+        val OffroadCar = createOffroadCarMesh(Color.GRAY)
+        val Stair = createStairMesh(Color.WHITE)
 
-        val pos1 = Vector3d(2.5 * cubeSize, 0.0 * cubeSize, 0.5 * cubeSize)
+        val pos0 = Vector3d(0.0, 0.0, 0.0)
+        meshes.add(PlacedMesh(skyboxMesh, Matrix4x4.translation(pos0.x, pos0.y, pos0.z), texture = texSkybox, collision=false))
+
+        val pos1 = Vector3d(5.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(pyramidMesh, Matrix4x4.translation(pos1.x, pos1.y, pos1.z), texture = texBricks))
 
-        val pos2 = Vector3d(0.5 * cubeSize, 0.0 * cubeSize, 0.5 * cubeSize)
+        val pos2 = Vector3d(7.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(invertedPyramidMesh, Matrix4x4.translation(pos2.x, pos2.y, pos2.z), texture = texBlackBricks))
+
+        val pos3 = Vector3d(9.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(towerMesh,Matrix4x4.translation(pos3.x, pos3.y, pos3.z), texture = texBricks))
+
+        val pos4 = Vector3d(11.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(KotlinModel,Matrix4x4.translation(pos4.x, pos4.y, pos4.z), texture = texFloor))
+
+        val pos5 = Vector3d(13.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(Tank,Matrix4x4.translation(pos5.x, pos5.y, pos5.z), texture = texCeiling))
+
+        val pos6 = Vector3d(15.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(OffroadCar,Matrix4x4.translation(pos6.x, pos6.y, pos6.z), texture = texBlackBricks))
+
+        val pos7 = Vector3d(17.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(Stair,Matrix4x4.translation(pos7.x, pos7.y, pos7.z), texture = texCeiling))
         //
 
         for (x in 0..8) {
@@ -205,7 +165,7 @@ class DrawingPanel : StackPane() {
                         1 -> meshes.add(PlacedMesh(cubeMeshWhite, mat, texBlackBricks, collisionPos = pos))
                         2 -> meshes.add(PlacedMesh(cubeMeshRed, mat, texBlackBricks, collisionPos = pos))
                         3 -> {meshes.add(PlacedMesh(cubeMeshGray, mat, texBricks, collision=false, collisionPos = pos))
-                        println("${pos.x} ${pos.y} ${pos.z}")}
+                            println("${pos.x} ${pos.y} ${pos.z}")}
                     }
                 }
             }
@@ -333,12 +293,7 @@ class DrawingPanel : StackPane() {
 
         if (pressedKeys.contains(KeyCode.G)) println("X:${((cameraPosition.x+500)/100).toInt()} Y:${((cameraPosition.y+500)/100).toInt()} Z:${((cameraPosition.z+500)/100).toInt()} YAW:${((cameraYaw*10).toInt()/10.0)} PITCH:${((cameraPitch*10).toInt()/10.0)} SPEED:$currentMovementSpeed")
         if (pressedKeys.contains(KeyCode.R)) {
-            val cubeMeshGray = Mesh(
-                vertices = meshes[5].mesh.vertices,
-                faces = meshes[5].mesh.faces,
-                faceUVs = meshes[5].mesh.faceUVs,
-                color = Color.LIGHTGRAY
-            )
+            val cubeMeshGray = createCubeMesh(cubeSize, Color.GRAY)
             val initialPos = Vector3d(
                 (((cameraPosition.x.toInt()) / 100) + 0.5) * cubeSize,
                 (((cameraPosition.y.toInt()) / 100) - 0.5) * cubeSize,
@@ -651,12 +606,18 @@ class DrawingPanel : StackPane() {
                         val litG = texColor.green * illG
                         val litB = texColor.blue * illB
 
-                        val distance = inv_z_prime
-                        val fogFactor = ((distance - fogStartDistance) / (fogEndDistance - fogStartDistance)).coerceIn(0.0, 1.0) * fogDensity
+                        var r = litR
+                        var g = litG
+                        var b = litB
 
-                        val r = litR * (1 - fogFactor) + fogR * fogFactor
-                        val g = litG * (1 - fogFactor) + fogG * fogFactor
-                        val b = litB * (1 - fogFactor) + fogB * fogFactor
+                        if (texture != this.texSkybox) {
+                            val distance = inv_z_prime
+                            val fogFactor = ((distance - fogStartDistance) / (fogEndDistance - fogStartDistance)).coerceIn(0.0, 1.0) * fogDensity
+
+                            r = litR * (1 - fogFactor) + fogR * fogFactor
+                            g = litG * (1 - fogFactor) + fogG * fogFactor
+                            b = litB * (1 - fogFactor) + fogB * fogFactor
+                        }
 
                         pixelBuffer[pixelIndex] = (0xFF shl 24) or
                                 ((r * 255).toInt().coerceIn(0, 255) shl 16) or
