@@ -307,6 +307,7 @@ class ModelEditor : Application() {
             }
         }
         drawCompass(gc, w, h)
+        drawVertexInfo(gc, w, h)
     }
 
     private fun drawClippedLine(gc: GraphicsContext, p1World: Vector3d, p2World: Vector3d, w: Double, h: Double) {
@@ -409,6 +410,22 @@ class ModelEditor : Application() {
         gc.stroke = Color.BLUE; gc.strokeLine(cx, cy, zx, zy)
         val xx = cx + radius * sin(angleY + PI / 2); val xy = cy - radius * cos(angleY + PI / 2)
         gc.stroke = Color.YELLOW; gc.strokeLine(cx, cy, xx, xy)
+    }
+
+    private fun drawVertexInfo(gc: GraphicsContext, w: Double, h: Double) {
+        selectedVertex?.let { index ->
+            val vertex = vertices.getOrNull(index) ?: return
+            val text = String.format("V[%d]:  X: %.2f, Y: %.2f, Z: %.2f", index, vertex.x, vertex.y, vertex.z)
+
+            gc.font = javafx.scene.text.Font.font("Monospaced", 14.0)
+            gc.fill = Color.WHITE
+
+            val padding = 15.0
+            val xPos = padding
+            val yPos = h - padding
+
+            gc.fillText(text, xPos, yPos)
+        }
     }
 
     private fun project(v: Vector3d, w: Double, h: Double): Pair<Double, Double> {
