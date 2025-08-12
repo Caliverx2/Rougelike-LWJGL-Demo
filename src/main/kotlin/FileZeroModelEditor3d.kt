@@ -262,6 +262,11 @@ class ModelEditor : Application() {
         gc.fill = Color.BLACK; gc.fillRect(0.0, 0.0, w, h)
         drawGrid(gc, w, h); drawAxisMarker(gc, w, h)
 
+        if (angleY > 6.2) angleY = 0.0
+        if (angleY < -6.2) angleY = 0.0
+        if (angleX < -6.2) angleX = 0.0
+        if (angleX > 6.2) angleX = 0.0
+
         gc.globalAlpha = 0.2; gc.fill = Color.GRAY
         for (face in faces.sortedByDescending { f -> f.indices.map { vertices[it].z }.average() }) {
             val pts = face.indices.map { project(vertices[it], w, h) }
@@ -369,14 +374,31 @@ class ModelEditor : Application() {
     }
 
     private fun drawAxisMarker(gc: GraphicsContext, w: Double, h: Double) {
-        val origin = project(Vector3d(0.0, 0.0, 0.0), w, h)
-        val up = project(Vector3d(0.0, 200.0, 0.0), w, h)
-        val down = project(Vector3d(0.0, -200.0, 0.0), w, h)
-        if (origin.first.isFinite() && up.first.isFinite()) {
-            gc.stroke = Color.GREEN; gc.strokeLine(origin.first, origin.second, up.first, up.second)
+        val axisLength = 25.0
+
+        val originWorld = Vector3d(0.0, 0.0, 0.0)
+        val leftWorld = Vector3d(-axisLength, 0.0, 0.0)
+        val upWorld = Vector3d(0.0, axisLength, 0.0)
+        val forwardWorld = Vector3d(0.0, 0.0, -axisLength)
+
+        val origin = project(originWorld, w, h)
+        val left = project(leftWorld, w, h)
+        val up = project(upWorld, w, h)
+        val forward = project(forwardWorld, w, h)
+
+        if (origin.first.isFinite() && left.first.isFinite()) {
+            gc.stroke = Color.RED
+            gc.strokeLine(origin.first, origin.second, left.first, left.second)
         }
-        if (origin.first.isFinite() && down.first.isFinite()){
-            gc.stroke = Color.RED; gc.strokeLine(origin.first, origin.second, down.first, down.second)
+
+        if (origin.first.isFinite() && up.first.isFinite()) {
+            gc.stroke = Color.GREEN
+            gc.strokeLine(origin.first, origin.second, up.first, up.second)
+        }
+
+        if (origin.first.isFinite() && forward.first.isFinite()) {
+            gc.stroke = Color.BLUE
+            gc.strokeLine(origin.first, origin.second, forward.first, forward.second)
         }
     }
 
