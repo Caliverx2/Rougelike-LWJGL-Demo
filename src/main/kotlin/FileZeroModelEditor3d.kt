@@ -95,7 +95,9 @@ class ModelEditor : Application() {
                 KeyCode.MINUS -> ifSelectedMoveY(-5.0)
                 KeyCode.PERIOD -> zoom += 25
                 KeyCode.COMMA -> zoom -= 25
-                KeyCode.C -> addCubeAtOrigin()
+                KeyCode.DIGIT1 -> addCubeAtOrigin()
+                KeyCode.DIGIT2 -> addPyramidAtOrigin()
+                KeyCode.DIGIT3 -> addPlaneAtOrigin()
 
                 KeyCode.Q -> {
                     faceSelectMode = !faceSelectMode
@@ -235,6 +237,59 @@ class ModelEditor : Application() {
             Face(listOf(0, 3, 7, 4)),
             Face(listOf(7, 6, 5, 4)),
             Face(listOf(0, 1, 2, 3)),
+        ).map { Face(it.indices.map { idx -> idx + baseIndex }) }
+        faces.addAll(newFaces)
+    }
+
+    private fun addPyramidAtOrigin() {
+        val baseIndex = vertices.size
+        val size = 100.0
+
+        val newVertices = listOf(
+            Vector3d(-size / 2, 0.0, -size / 2),
+            Vector3d(size / 2, 0.0, -size / 2),
+            Vector3d(size / 2, 0.0, size / 2),
+            Vector3d(-size / 2, 0.0, size / 2),
+            Vector3d(0.0, size, 0.0),
+        )
+        vertices.addAll(newVertices)
+
+        val newEdges = listOf(
+            Edge(0, 1), Edge(1, 2), Edge(2, 3), Edge(3, 0),
+            Edge(0, 4), Edge(1, 4), Edge(2, 4), Edge(3, 4),
+        ).map { Edge(it.a + baseIndex, it.b + baseIndex) }
+        edges.addAll(newEdges)
+
+        val newFaces = listOf(
+            Face(listOf(4, 2, 1)),
+            Face(listOf(4, 1, 0)),
+            Face(listOf(4, 0, 3)),
+            Face(listOf(4, 3, 2)),
+            Face(listOf(0, 1, 2, 3)),
+        ).map { Face(it.indices.map { idx -> idx + baseIndex }) }
+        faces.addAll(newFaces)
+    }
+
+    private fun addPlaneAtOrigin() {
+        val baseIndex = vertices.size
+        val size = 100.0
+
+        val newVertices = listOf(
+            Vector3d(-size / 2, 0.0, -size / 2),
+            Vector3d( size / 2, 0.0, -size / 2),
+            Vector3d( size / 2, 0.0,  size / 2),
+            Vector3d(-size / 2, 0.0,  size / 2),
+        )
+        vertices.addAll(newVertices)
+
+        val newEdges = listOf(
+            Edge(0, 1), Edge(1, 2), Edge(2, 3), Edge(3, 0),
+        ).map { Edge(it.a + baseIndex, it.b + baseIndex) }
+        edges.addAll(newEdges)
+
+        val newFaces = listOf(
+            Face(listOf(0, 1, 2, 3)),
+            Face(listOf(3, 2, 1, 0)),
         ).map { Face(it.indices.map { idx -> idx + baseIndex }) }
         faces.addAll(newFaces)
     }
