@@ -126,6 +126,7 @@ class DrawingPanel : StackPane() {
         val Tank = createTankMesh(Color.GREEN)
         val OffroadCar = createOffroadCarMesh(Color.GRAY)
         val Stair = createStairMesh(Color.WHITE)
+        val Sphere = createCapsuleMesh(Color.WHITE)
 
         val pos0 = Vector3d(0.0, 0.0, 0.0)
         meshes.add(PlacedMesh(skyboxMesh, Matrix4x4.translation(pos0.x, pos0.y, pos0.z), texture = texSkybox, collision=false))
@@ -150,6 +151,9 @@ class DrawingPanel : StackPane() {
 
         val pos7 = Vector3d(17.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(Stair,Matrix4x4.translation(pos7.x, pos7.y, pos7.z), texture = texCeiling))
+
+        val pos8 = Vector3d(19.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(Sphere,Matrix4x4.translation(pos8.x, pos8.y, pos8.z), texture = texCeiling))
         //
 
         for (x in 0..8) {

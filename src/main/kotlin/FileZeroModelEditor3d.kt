@@ -93,11 +93,12 @@ class ModelEditor : Application() {
                 KeyCode.RIGHT -> moveSelectedVertex(5.0, 0.0, 0.0)
                 KeyCode.PLUS, KeyCode.EQUALS -> ifSelectedMoveY(5.0)
                 KeyCode.MINUS -> ifSelectedMoveY(-5.0)
-                KeyCode.PERIOD -> zoom += 25
-                KeyCode.COMMA -> zoom -= 25
+                KeyCode.PERIOD -> if (zoom < 1000) zoom += 25
+                KeyCode.COMMA -> if (zoom > 25) zoom -= 25
                 KeyCode.DIGIT1 -> addCubeAtOrigin()
                 KeyCode.DIGIT2 -> addPyramidAtOrigin()
                 KeyCode.DIGIT3 -> addPlaneAtOrigin()
+                KeyCode.DIGIT4 -> addCapsuleAtOrigin()
 
                 KeyCode.Q -> {
                     faceSelectMode = !faceSelectMode
@@ -294,6 +295,161 @@ class ModelEditor : Application() {
         faces.addAll(newFaces)
     }
 
+    private fun addCapsuleAtOrigin() {
+        val height = 125.0
+        val radius = 50.0
+        val segments = 16
+        val rings = 4
+
+        val yOffset = radius + height / 2.0
+
+        val baseIndex = vertices.size
+        val newVertices = mutableListOf<Vector3d>()
+        val newEdges = mutableListOf<Edge>()
+        val newFaces = mutableListOf<Face>()
+
+        newVertices.add(Vector3d(0.0, height + 2 * radius, 0.0))
+        val topPoleIndex = 0
+
+        // Pierścienie górnej półsfery (górny)
+        for (j in 1 until rings) {
+            val phi = PI / 2.0 * (1.0 - j.toDouble() / rings)
+            val y = height / 2 + radius * sin(phi) + yOffset
+            val ringRadius = radius * cos(phi)
+            for (i in 0 until segments) {
+                val theta = 2.0 * PI * i / segments
+                val x = ringRadius * cos(theta)
+                val z = ringRadius * sin(theta)
+                newVertices.add(Vector3d(x, y, z))
+            }
+        }
+
+        // Pierścień na styku z cylindrem (górny)
+        val topCylinderRingStartIndex = newVertices.size
+        for (i in 0 until segments) {
+            val angle = 2.0 * PI * i / segments
+            newVertices.add(Vector3d(radius * cos(angle), height / 2 + yOffset, radius * sin(angle)))
+        }
+
+        // Pierścień na styku z cylindrem (dolny)
+        val bottomCylinderRingStartIndex = newVertices.size
+        for (i in 0 until segments) {
+            val angle = 2.0 * PI * i / segments
+            newVertices.add(Vector3d(radius * cos(angle), -height / 2 + yOffset, radius * sin(angle)))
+        }
+
+        // Pierścienie dolnej półsfery (dolne)
+        for (j in 1 until rings) {
+            val phi = -PI / 2.0 * (j.toDouble() / rings)
+            val y = -height / 2 + radius * sin(phi) + yOffset
+            val ringRadius = radius * cos(phi)
+            for (i in 0 until segments) {
+                val theta = 2.0 * PI * i / segments
+                val x = ringRadius * cos(theta)
+                val z = ringRadius * sin(theta)
+                newVertices.add(Vector3d(x, y, z))
+            }
+        }
+
+        newVertices.add(Vector3d(0.0, 0.0, 0.0))
+        val bottomPoleIndex = newVertices.size - 1
+
+        vertices.addAll(newVertices)
+
+        // Łączenie "czubka" z pierwszym pierścieniem
+        for (i in 0 until segments) {
+            val nextI = (i + 1) % segments
+            val p1 = 1 + i
+            val p2 = 1 + nextI
+            newFaces.add(Face(listOf(topPoleIndex, p2, p1)))
+            newEdges.add(Edge(topPoleIndex, p1))
+            newEdges.add(Edge(p1, p2))
+        }
+
+        // Łączenie pierścieni górnej półsfery
+        for (j in 0 until rings - 2) {
+            val ringStart1 = 1 + j * segments
+            val ringStart2 = 1 + (j + 1) * segments
+            for (i in 0 until segments) {
+                val nextI = (i + 1) % segments
+                val p1 = ringStart1 + i
+                val p2 = ringStart1 + nextI
+                val p3 = ringStart2 + i
+                val p4 = ringStart2 + nextI
+                newFaces.add(Face(listOf(p1, p2, p4, p3)))
+                newEdges.add(Edge(p1, p3))
+            }
+        }
+
+        // Łączenie ostatniego pierścienia półsfery z pierścieniem cylindra
+        val lastRingStart = 1 + (rings - 2) * segments
+        for (i in 0 until segments) {
+            val nextI = (i + 1) % segments
+            val p1 = lastRingStart + i
+            val p2 = lastRingStart + nextI
+            val p3 = topCylinderRingStartIndex + i
+            val p4 = topCylinderRingStartIndex + nextI
+            newFaces.add(Face(listOf(p1, p2, p4, p3)))
+            newEdges.add(Edge(p1, p3))
+            newEdges.add(Edge(p3,p4))
+        }
+
+        // Ściany cylindra
+        for (i in 0 until segments) {
+            val nextI = (i + 1) % segments
+            val p1 = topCylinderRingStartIndex + i
+            val p2 = topCylinderRingStartIndex + nextI
+            val p3 = bottomCylinderRingStartIndex + i
+            val p4 = bottomCylinderRingStartIndex + nextI
+            newFaces.add(Face(listOf(p2, p4, p3, p1)))
+            newEdges.add(Edge(p1, p3))
+            newEdges.add(Edge(p3,p4))
+        }
+
+        // Łączenie pierścienia cylindra z pierwszym pierścieniem dolnej półsfery
+        val firstBottomRingStart = bottomCylinderRingStartIndex + segments
+        for (i in 0 until segments) {
+            val nextI = (i + 1) % segments
+            val p1 = bottomCylinderRingStartIndex + i
+            val p2 = bottomCylinderRingStartIndex + nextI
+            val p3 = firstBottomRingStart + i
+            val p4 = firstBottomRingStart + nextI
+            newFaces.add(Face(listOf(p2, p4, p3, p1)))
+            newEdges.add(Edge(p1,p3))
+            newEdges.add(Edge(p3,p4))
+        }
+
+        // Łączenie pierścieni dolnej półsfery
+        for (j in 0 until rings - 2) {
+            val ringStart1 = firstBottomRingStart + j * segments
+            val ringStart2 = firstBottomRingStart + (j + 1) * segments
+            for (i in 0 until segments) {
+                val nextI = (i + 1) % segments
+                val p1 = ringStart1 + i
+                val p2 = ringStart1 + nextI
+                val p3 = ringStart2 + i
+                val p4 = ringStart2 + nextI
+                newFaces.add(Face(listOf(p2, p4, p3, p1)))
+                newEdges.add(Edge(p1, p3))
+                newEdges.add(Edge(p1, p2))
+            }
+        }
+
+        // Łączenie ostatniego pierścienia z "dołem"
+        val lastBottomRingStart = firstBottomRingStart + (rings - 2) * segments
+        for (i in 0 until segments) {
+            val nextI = (i + 1) % segments
+            val p1 = lastBottomRingStart + i
+            val p2 = lastBottomRingStart + nextI
+            newFaces.add(Face(listOf(p1, p2, bottomPoleIndex)))
+            newEdges.add(Edge(p1, bottomPoleIndex))
+            newEdges.add(Edge(p1, p2))
+        }
+
+        edges.addAll(newEdges.map { Edge(it.a + baseIndex, it.b + baseIndex) })
+        faces.addAll(newFaces.map { Face(it.indices.map { idx -> idx + baseIndex }) })
+    }
+
     private fun exportMeshFunction() {
         println("fun createCustomMesh(color: Color): Mesh {")
         println("    val vertices = listOf(")
@@ -317,10 +473,10 @@ class ModelEditor : Application() {
         gc.fill = Color.BLACK; gc.fillRect(0.0, 0.0, w, h)
         drawGrid(gc, w, h); drawAxisMarker(gc, w, h)
 
-        if (angleY > 6.2) angleY = 0.0
-        if (angleY < -6.2) angleY = 0.0
-        if (angleX < -6.2) angleX = 0.0
-        if (angleX > 6.2) angleX = 0.0
+        if (angleY > PI * 2) angleY -= PI * 2
+        if (angleY < -PI * 2) angleY += PI * 2
+        if (angleX < -PI * 2) angleX += PI * 2
+        if (angleX > PI * 2) angleX -= PI * 2
 
         gc.globalAlpha = 0.2; gc.fill = Color.GRAY
         for (face in faces.sortedByDescending { f -> f.indices.map { vertices[it].z }.average() }) {
@@ -414,7 +570,7 @@ class ModelEditor : Application() {
 
     private fun drawGrid(gc: GraphicsContext, w: Double, h: Double) {
         gc.stroke = Color.rgb(50, 50, 50)
-        val range = -20..20
+        val range = -8..8
         val step = 50.0
         val gridSize = range.last * step + step
 
