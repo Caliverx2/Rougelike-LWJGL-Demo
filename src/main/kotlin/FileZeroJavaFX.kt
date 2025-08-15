@@ -18,6 +18,9 @@ data class Vector3d(var x: Double, var y: Double, var z: Double) {
     operator fun times(scalar: Double) = Vector3d(x * scalar, y * scalar, z * scalar)
     operator fun div(scalar: Double) = Vector3d(x / scalar, y / scalar, z / scalar)
 
+    fun lerp(other: Vector3d, alpha: Double): Vector3d {
+        return this * (1.0 - alpha) + other * alpha
+    }
     fun dot(other: Vector3d): Double = x * other.x + y * other.y + z * other.z
     fun cross(other: Vector3d): Vector3d = Vector3d(
         this.y * other.z - this.z * other.y,
@@ -166,7 +169,7 @@ data class RenderableFace(
     val isEdge: Boolean,
     val texture: Image? = null,
     val worldVertices: List<Vector3d> = listOf(),
-    var illuminatedColor: Color? = null
+    val lightGrid: Array<Array<Color>>? = null
 )
 
 data class Mesh(

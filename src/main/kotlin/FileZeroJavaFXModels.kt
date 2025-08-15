@@ -12,7 +12,7 @@ fun createCubeMesh(size: Double, color: Color, inverted: Boolean = false): Mesh 
     )
     var faces = listOf(
         listOf(0, 1, 2, 3),
-        listOf(4, 7, 6, 5),
+        listOf(5, 4, 7, 6),
         listOf(3, 2, 6, 7),
         listOf(0, 4, 5, 1),
         listOf(1, 5, 6, 2),
@@ -22,14 +22,13 @@ fun createCubeMesh(size: Double, color: Color, inverted: Boolean = false): Mesh 
     if (inverted) {
         faces = faces.map { it.reversed() }
     }
-    val uvs = listOf(
-        listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0)),
-        listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(1.0, 1.0, 0.0)),
-        listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0)),
-        listOf(Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(0.0, 1.0, 0.0)),
-        listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0)),
-        listOf(Vector3d(1.0, 1.0, 0.0), Vector3d(0.0, 1.0, 0.0), Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0))
-    )
+    val uvs: List<List<Vector3d>> = faces.map { face ->
+        when(face.size) {
+            3 -> listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))
+            4 -> listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0))
+            else -> face.map { Vector3d(0.0,0.0,0.0) }
+        }
+    }
     return Mesh(vertices, faces, uvs, color)
 }
 
@@ -95,14 +94,14 @@ fun createTowerMesh(color: Color): Mesh {
         Vector3d(50.0, 50.0, -50.0),
         Vector3d(-50.0, 50.0, 50.0),
         Vector3d(50.0, 50.0, 50.0),
-        Vector3d(-20.0, 50.0, -20.0),
-        Vector3d(20.0, 50.0, -20.0),
-        Vector3d(20.0, 50.0, 20.0),
-        Vector3d(-20.0, 50.0, 20.0),
-        Vector3d(-20.0, 100.0, -20.0),
-        Vector3d(20.0, 100.0, -20.0),
-        Vector3d(-20.0, 100.0, 20.0),
-        Vector3d(20.0, 100.0, 20.0),
+        Vector3d(-25.0, 50.0, -25.0),
+        Vector3d(25.0, 50.0, -25.0),
+        Vector3d(25.0, 50.0, 25.0),
+        Vector3d(-25.0, 50.0, 25.0),
+        Vector3d(-25.0, 100.0, -25.0),
+        Vector3d(25.0, 100.0, -25.0),
+        Vector3d(-25.0, 100.0, 25.0),
+        Vector3d(25.0, 100.0, 25.0),
     )
     val faces: List<List<Int>> = listOf(
         listOf(7, 5, 3, 6),
