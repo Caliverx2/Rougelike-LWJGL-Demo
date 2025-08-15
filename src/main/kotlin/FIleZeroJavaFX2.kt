@@ -58,7 +58,11 @@ class DrawingPanel : StackPane() {
     private lateinit var backBuffer: WritableImage
     private val imageView = ImageView()
     private val overlayCanvas = Canvas(virtualWidth.toDouble(), virtualHeight.toDouble())
-    private lateinit var texSkybox: Image
+    lateinit var texSkybox: Image
+    lateinit var texBlackBricks: Image
+    lateinit var texBricks: Image
+    lateinit var texCeiling: Image
+    lateinit var texFloor: Image
 
     val pressedKeys = Collections.synchronizedSet(mutableSetOf<KeyCode>())
 
@@ -114,15 +118,15 @@ class DrawingPanel : StackPane() {
         val cubeMeshRed = createCubeMesh(cubeSize, Color.RED)
         val cubeMeshGray = createCubeMesh(cubeSize, Color.rgb(188, 188, 188))
 
-        val texBlackBricks = loadImage("textures/black_bricks.png")
-        val texBricks = loadImage("textures/bricks.jpg")
-        val texCeiling = loadImage("textures/ceiling.jpg")
-        val texFloor = loadImage("textures/floor.jpg")
+        texBlackBricks = loadImage("textures/black_bricks.png")
+        texBricks = loadImage("textures/bricks.jpg")
+        texCeiling = loadImage("textures/ceiling.jpg")
+        texFloor = loadImage("textures/floor.jpg")
         texSkybox = loadImage("textures/skybox.png")
         //
 
         val skyboxMesh = createCubeMesh(1000.0*cubeSize, Color.rgb(80,80,80), inverted = true)
-        val pyramidMesh = createPyramidMesh(cubeSize, cubeSize, Color.GOLD)
+        val pyramidMesh = createPyramidMesh(cubeSize, cubeSize, Color.RED)
         val invertedPyramidMesh = createInvertedPyramidMesh(cubeSize, cubeSize, Color.DEEPSKYBLUE)
         val towerMesh = createTowerMesh(Color.WHITE)
         val KotlinModel = createKotlinModelMesh(Color.GRAY)
@@ -131,14 +135,33 @@ class DrawingPanel : StackPane() {
         val Stair = createStairMesh(Color.WHITE)
         val Sphere = createCapsuleMesh(Color.WHITE)
 
+        val loadedTextures = mapOf(
+            "blackBricks" to texBlackBricks,
+            "bricks" to texBricks,
+            "ceiling" to texCeiling,
+            "floor" to texFloor,
+            "skybox" to texSkybox,
+            "green" to createColorTexture(Color.GREEN),
+            "darkGreen" to createColorTexture(Color.DARKGREEN),
+        )
+
+        fun placedTextures(mesh: Mesh): Map<Int, Image> {
+            return mesh.faceTextureNames.mapValues { (faceIndex, textureName) ->
+                loadedTextures[textureName] ?: run {
+                    println("missing texture $textureName for face $faceIndex")
+                    texSkybox
+                }
+            }
+        }
+
         val pos0 = Vector3d(0.0, 0.0, 0.0)
         meshes.add(PlacedMesh(skyboxMesh, Matrix4x4.translation(pos0.x, pos0.y, pos0.z), texture = texSkybox, collision=false))
 
         val pos1 = Vector3d(5.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(pyramidMesh, Matrix4x4.translation(pos1.x, pos1.y, pos1.z), texture = texBricks))
+        meshes.add(PlacedMesh(pyramidMesh, Matrix4x4.translation(pos1.x, pos1.y, pos1.z), faceTextures = placedTextures(pyramidMesh)))
 
         val pos2 = Vector3d(7.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(invertedPyramidMesh, Matrix4x4.translation(pos2.x, pos2.y, pos2.z), texture = texBlackBricks))
+        meshes.add(PlacedMesh(invertedPyramidMesh, Matrix4x4.translation(pos2.x, pos2.y, pos2.z), faceTextures = placedTextures(invertedPyramidMesh)))
 
         val pos3 = Vector3d(9.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(towerMesh,Matrix4x4.translation(pos3.x, pos3.y, pos3.z), texture = texBricks))
@@ -147,7 +170,7 @@ class DrawingPanel : StackPane() {
         meshes.add(PlacedMesh(KotlinModel,Matrix4x4.translation(pos4.x, pos4.y, pos4.z), texture = texFloor))
 
         val pos5 = Vector3d(13.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(Tank,Matrix4x4.translation(pos5.x, pos5.y, pos5.z), texture = texCeiling))
+        meshes.add(PlacedMesh(Tank,Matrix4x4.translation(pos5.x, pos5.y, pos5.z), faceTextures = placedTextures(Tank)))
 
         val pos6 = Vector3d(15.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(OffroadCar,Matrix4x4.translation(pos6.x, pos6.y, pos6.z), texture = texBlackBricks))
@@ -657,7 +680,8 @@ class DrawingPanel : StackPane() {
                                     originalClipW.add(w)
                                 }
                                 if (projectedVertices.size == 3) {
-                                    renderQueue.add(RenderableFace(projectedVertices, originalClipW, clippedUVs, mesh.mesh.color, false, mesh.texture, clippedW, lightGrid))
+                                    val faceTexture = mesh.faceTextures[faceIndex] ?: mesh.texture
+                                    renderQueue.add(RenderableFace(projectedVertices, originalClipW, clippedUVs, mesh.mesh.color, false, faceTexture, clippedW, lightGrid))
                                 }
                             }
                         }
@@ -789,7 +813,25 @@ class DrawingPanel : StackPane() {
         return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
     }
 
-    private fun loadImage(path: String): Image {
+    fun createColorTexture(color: Color): WritableImage {
+        val image = WritableImage(8, 8)
+        val pixelWriter = image.pixelWriter
+        val colorInt = colorToInt(color)
+        val pixels = IntArray(8 * 8) { colorInt }
+
+        pixelWriter.setPixels(
+            0, 0,
+            8, 8,
+            PixelFormat.getIntArgbInstance(),
+            pixels,
+            0,
+            8
+        )
+
+        return image
+    }
+
+    fun loadImage(path: String): Image {
         val stream = DrawingPanel::class.java.classLoader.getResourceAsStream(path)
         val bufferedImage = ImageIO.read(stream)
         return SwingFXUtils.toFXImage(bufferedImage, null)

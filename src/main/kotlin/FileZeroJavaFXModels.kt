@@ -55,7 +55,15 @@ fun createPyramidMesh(size: Double, height: Double, color: Color): Mesh {
         listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0)),
         listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))
     )
-    return Mesh(vertices, faces, uvs, color)
+    val textureMapping = mapOf(
+        0 to "floor",
+        1 to "bricks",
+        2 to "bricks",
+        3 to "bricks",
+        4 to "bricks"
+    )
+
+    return Mesh(vertices, faces, uvs, color, faceTextureNames = textureMapping)
 }
 
 fun createInvertedPyramidMesh(size: Double, height: Double, color: Color): Mesh {
@@ -81,7 +89,14 @@ fun createInvertedPyramidMesh(size: Double, height: Double, color: Color): Mesh 
         listOf(Vector3d(0.0,0.0,0.0), Vector3d(0.5,1.0,0.0), Vector3d(1.0,0.0,0.0)),
         listOf(Vector3d(0.0,0.0,0.0), Vector3d(0.5,1.0,0.0), Vector3d(1.0,0.0,0.0))
     )
-    return Mesh(vertices, faces, uvs, color)
+    val textureMapping = mapOf(
+        0 to "floor",
+        1 to "bricks",
+        2 to "bricks",
+        3 to "bricks",
+        4 to "bricks"
+    )
+    return Mesh(vertices, faces, uvs, color, faceTextureNames = textureMapping)
 }
 
 fun createTowerMesh(color: Color): Mesh {
@@ -105,15 +120,15 @@ fun createTowerMesh(color: Color): Mesh {
     )
     val faces: List<List<Int>> = listOf(
         listOf(7, 5, 3, 6),
-        listOf(5, 2, 0, 3),
-        listOf(3, 0, 1, 6),
-        listOf(6, 1, 4, 7),
-        listOf(7, 4, 2, 5),
+        listOf(2, 0, 3, 5),
+        listOf(0, 1, 6, 3),
+        listOf(1, 4, 7, 6),
+        listOf(4, 2, 5, 7),
         listOf(4, 1, 0, 2),
-        listOf(12, 8, 11, 14),
-        listOf(14, 11, 10, 15),
-        listOf(15, 10, 9, 13),
-        listOf(13, 9, 8, 12),
+        listOf(8, 11, 14, 12),
+        listOf(11, 10, 15, 14),
+        listOf(10, 9, 13, 15),
+        listOf(9, 8, 12, 13),
         listOf(15, 13, 12, 14),
     )
     val uvs: List<List<Vector3d>> = faces.map { face ->
@@ -200,7 +215,7 @@ fun createTankMesh(color: Color): Mesh {
         listOf(18, 20, 14, 16),
         listOf(17, 19, 18, 16),
         listOf(17, 15, 21, 19),
-        listOf(20, 14, 15, 21),
+        listOf(21, 15, 14, 20),
     )
     val uvs: List<List<Vector3d>> = faces.map { face ->
         when(face.size) {
@@ -209,7 +224,31 @@ fun createTankMesh(color: Color): Mesh {
             else -> face.map { Vector3d(0.0,0.0,0.0) }
         }
     }
-    return Mesh(vertices, faces, uvs, color)
+    val textureMapping = mapOf(
+        0 to "darkGreen",
+        1 to "floor",
+        2 to "darkGreen",
+        3 to "ceiling",
+        4 to "floor",
+
+        5 to "green",
+        6 to "floor",
+        7 to "green",
+
+        8 to "ceiling",
+
+        9 to "blackBricks",
+        10 to "ceiling",
+        11 to "ceiling",
+        12 to "ceiling",
+        13 to "ceiling",
+        14 to "blackBricks",
+        15 to "blackBricks",
+        16 to "blackBricks",
+        17 to "blackBricks",
+    )
+
+    return Mesh(vertices, faces, uvs, color, faceTextureNames = textureMapping)
 }
 
 fun createOffroadCarMesh(color: Color): Mesh {

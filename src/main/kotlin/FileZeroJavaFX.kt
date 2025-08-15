@@ -176,13 +176,15 @@ data class Mesh(
     val vertices: List<Vector3d>,
     val faces: List<List<Int>>,
     val faceUVs: List<List<Vector3d>>,
-    val color: Color
+    val color: Color,
+    val faceTextureNames: Map<Int, String> = emptyMap()
 )
 
 class PlacedMesh(
     val mesh: Mesh,
     var transformMatrix: Matrix4x4 = Matrix4x4.identity(),
     val texture: Image? = null,
+    val faceTextures: Map<Int, Image> = emptyMap(),
     var collision: Boolean = true,
     var collisionPos: Vector3d = Vector3d(0.0,0.0,0.0)
 ) {
