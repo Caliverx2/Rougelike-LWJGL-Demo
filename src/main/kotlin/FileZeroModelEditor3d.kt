@@ -451,13 +451,22 @@ class ModelEditor : Application() {
     }
 
     private fun exportMeshFunction() {
-        println("fun createCustomMesh(color: Color): Mesh {")
+        println("fun createCustomMesh(size: Double, color: Color): Mesh {")
+        println("    val hs = size / 100.0")
+
         println("    val vertices = listOf(")
-        for (v in vertices) println("        Vector3d(${v.x}, ${v.y}, ${v.z}),")
+        for (v in vertices) println("        Vector3d(${v.x} * hs, ${v.y} * hs, ${v.z} * hs),")
         println("    )")
+
         println("    val faces: List<List<Int>> = listOf(")
         for (f in faces) println("        listOf(${f.indices.joinToString(", ")}),")
         println("    )")
+
+        println("    data class Edge(val a: Int, val b: Int)")
+        println("    val edges: List<List<Edge>> = listOf(")
+        for (e in edges) println("        listOf(${e}),")
+        println("    )")
+
         println("    val uvs: List<List<Vector3d>> = faces.map { face ->")
         println("        when(face.size) {")
         println("            3 -> listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))")

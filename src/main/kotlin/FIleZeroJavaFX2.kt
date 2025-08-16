@@ -37,20 +37,24 @@ class DrawingPanel : StackPane() {
     private var debugNoclip = false
 
     private val cubeSize = 100.0
+    private var gridDimension = 9
 
-    private val playerHeight = 45.0
-    private val playerWidth = 45.0
+    private val playerHeight = (cubeSize / 2 ) - (cubeSize / 20)
+    private val playerWidth = (cubeSize / 2 ) - (cubeSize / 20)
     private val playerHalfWidth = playerWidth / 2.0
 
     private val fogColor = Color.rgb(180, 180, 180)
-    private val fogStartDistance = 150.0
-    private val fogEndDistance = 700.0
+    private val fogStartDistance = 1.5 * cubeSize
+    private val fogEndDistance = 7.0 * cubeSize
     private val fogDensity = 0.5
 
     private val ambientIntensity = 0.5
 
-    private val virtualWidth = 1920 / 4
-    private val virtualHeight = 1080 / 4
+    private val renderDownscaleFactor = 4
+    private val baseResolutionWidth = 1920
+    private val baseResolutionHeight = 1080
+    private val virtualWidth = baseResolutionWidth / renderDownscaleFactor
+    private val virtualHeight = baseResolutionHeight / renderDownscaleFactor
 
     private lateinit var depthBuffer: DoubleArray
     private lateinit var pixelBuffer: IntArray
@@ -99,12 +103,12 @@ class DrawingPanel : StackPane() {
 
         children.addAll(imageView, overlayCanvas)
 
-        cameraPosition = Vector3d(-250.0, -325.0, 150.0)
+        cameraPosition = Vector3d(-2.5 * cubeSize, -3.25 * cubeSize, 1.5 * cubeSize)
 
         val grids = listOf(GRID_1, GRID_2, GRID_3, GRID_4)
-        for (x in 0..8) {
+        for (x in 0 until gridDimension) {
             for (y in grids.indices) {
-                for (z in 0..8) {
+                for (z in 0 until gridDimension) {
                     when (grids[y][x][z]) {
                         1 -> GRID_MAP[z][y][x] = 1
                         2 -> GRID_MAP[z][y][x] = 2
@@ -113,27 +117,27 @@ class DrawingPanel : StackPane() {
                 }
             }
         }
-
-        val cubeMeshWhite = createCubeMesh(cubeSize, Color.WHITE)
-        val cubeMeshRed = createCubeMesh(cubeSize, Color.RED)
-        val cubeMeshGray = createCubeMesh(cubeSize, Color.rgb(188, 188, 188))
-
         texBlackBricks = loadImage("textures/black_bricks.png")
         texBricks = loadImage("textures/bricks.jpg")
         texCeiling = loadImage("textures/ceiling.jpg")
         texFloor = loadImage("textures/floor.jpg")
         texSkybox = loadImage("textures/skybox.png")
-        //
 
-        val skyboxMesh = createCubeMesh(1000.0*cubeSize, Color.rgb(80,80,80), inverted = true)
+        //
+        val cubeMesh = createCubeMesh(cubeSize, Color.GRAY)
+        val cubeMeshRed = createCubeMesh(cubeSize, Color.RED)
+        val cubeMeshGates = createCubeMesh(cubeSize, Color.rgb(40,255,40))
+
+        val skyboxMesh = createCubeMesh(1000.0 * cubeSize, Color.rgb(80,80,80), inverted = true)
         val pyramidMesh = createPyramidMesh(cubeSize, cubeSize, Color.RED)
         val invertedPyramidMesh = createInvertedPyramidMesh(cubeSize, cubeSize, Color.DEEPSKYBLUE)
-        val towerMesh = createTowerMesh(Color.WHITE)
-        val KotlinModel = createKotlinModelMesh(Color.GRAY)
-        val Tank = createTankMesh(Color.GREEN)
-        val OffroadCar = createOffroadCarMesh(Color.GRAY)
-        val Stair = createStairMesh(Color.WHITE)
-        val Sphere = createCapsuleMesh(Color.WHITE)
+        val towerMesh = createTowerMesh(cubeSize, Color.WHITE)
+        val KotlinModel = createKotlinModelMesh(cubeSize, Color.GRAY)
+        val Tank = createTankMesh(cubeSize, Color.GREEN)
+        val OffroadCar = createOffroadCarMesh(cubeSize, Color.GRAY)
+        val Stair = createStairMesh(cubeSize, Color.WHITE)
+        val Sphere = createCapsuleMesh(cubeSize, Color.WHITE)
+        val custom = createCustomMesh(cubeSize, Color.WHITE)
 
         val loadedTextures = mapOf(
             "blackBricks" to texBlackBricks,
@@ -180,21 +184,25 @@ class DrawingPanel : StackPane() {
 
         val pos8 = Vector3d(19.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(Sphere,Matrix4x4.translation(pos8.x, pos8.y, pos8.z), texture = texCeiling))
+
+        val pos9 = Vector3d(21.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(custom,Matrix4x4.translation(pos9.x, pos9.y, pos9.z), texture = texCeiling))
         //
 
-        for (x in 0..8) {
-            for (y in 0..8) {
-                for (z in 0..8) {
+        for (x in 0 until gridDimension) {
+            for (y in 0 until gridDimension) {
+                for (z in 0 until gridDimension) {
+                    val offset = (gridDimension) / 2.0
                     val pos = Vector3d(
-                        (x - 4.5) * cubeSize,
-                        (y - 4.5) * cubeSize,
-                        (z - 4.5) * cubeSize
+                        (x - offset) * cubeSize,
+                        (y - offset) * cubeSize,
+                        (z - offset) * cubeSize
                     )
                     val mat = Matrix4x4.translation(pos.x, pos.y, pos.z)
                     when (GRID_MAP[x][y][z]) {
-                        1 -> meshes.add(PlacedMesh(cubeMeshWhite, mat, texBlackBricks, collisionPos = pos))
+                        1 -> meshes.add(PlacedMesh(cubeMesh, mat, texBlackBricks, collisionPos = pos))
                         2 -> meshes.add(PlacedMesh(cubeMeshRed, mat, texBlackBricks, collisionPos = pos))
-                        3 -> {meshes.add(PlacedMesh(cubeMeshGray, mat, texBricks, collision=false, collisionPos = pos))
+                        3 -> {meshes.add(PlacedMesh(cubeMeshGates, mat, texBricks, collision=false, collisionPos = pos))
                             println("${pos.x} ${pos.y} ${pos.z}")}
                     }
                 }
@@ -249,8 +257,8 @@ class DrawingPanel : StackPane() {
 
         var newCameraPosition = Vector3d(cameraPosition.x, cameraPosition.y, cameraPosition.z)
 
-        var currentMovementSpeed = 350.0
-        val playerSprintSpeed = 550.0
+        var currentMovementSpeed = 3.5 * cubeSize
+        val playerSprintSpeed = 5.5 * cubeSize
 
         if (pressedKeys.contains(KeyCode.SHIFT)) currentMovementSpeed = playerSprintSpeed
 
@@ -326,13 +334,28 @@ class DrawingPanel : StackPane() {
         if (pressedKeys.contains(KeyCode.DOWN) && (cameraPitch > -1.3)) cameraPitch -= currentRotationSpeed * deltaTime
         if (pressedKeys.contains(KeyCode.UP) && (cameraPitch < 1.3)) cameraPitch += currentRotationSpeed * deltaTime
 
-        if (pressedKeys.contains(KeyCode.G)) println("X:${((cameraPosition.x+500)/100).toInt()} Y:${((cameraPosition.y+500)/100).toInt()} Z:${((cameraPosition.z+500)/100).toInt()} YAW:${((cameraYaw*10).toInt()/10.0)} PITCH:${((cameraPitch*10).toInt()/10.0)} SPEED:$currentMovementSpeed")
+        if (pressedKeys.contains(KeyCode.G)){
+            val gridPos = worldToGridCoords(cameraPosition)
+            println(
+                "X:${gridPos.x.toInt()}" +
+                " Y:${gridPos.y.toInt()}" +
+                " Z:${gridPos.z.toInt()}" +
+                " YAW:${((cameraYaw*10).toInt()/10.0)}" +
+                " PITCH:${((cameraPitch*10).toInt()/10.0)}" +
+                " SPEED:$currentMovementSpeed")
+        }
+
         if (pressedKeys.contains(KeyCode.R)) {
             val cubeMeshGray = createCubeMesh(cubeSize, Color.GRAY)
+            val playerGridPos = worldToGridCoords(cameraPosition)
+            val gridX = playerGridPos.x.toInt()
+            val gridY = playerGridPos.y.toInt()
+            val gridZ = playerGridPos.z.toInt()
+            val offset = gridDimension / 2.0
             val initialPos = Vector3d(
-                (((cameraPosition.x.toInt()) / 100) + 0.5) * cubeSize,
-                (((cameraPosition.y.toInt()) / 100) - 0.5) * cubeSize,
-                (((cameraPosition.z.toInt()) / 100) - 0.5) * cubeSize
+                (gridX - offset) * cubeSize,
+                (gridY - offset) * cubeSize,
+                (gridZ - offset) * cubeSize
             )
             val translationMatrix = Matrix4x4.translation(initialPos.x, initialPos.y, initialPos.z)
             meshes.add(PlacedMesh(cubeMeshGray, transformMatrix = translationMatrix, texture = loadImage("textures/black_bricks.png")))
@@ -363,29 +386,27 @@ class DrawingPanel : StackPane() {
     }
 
     private fun updateGameLogic() {
-        for (x in 0..8) {
-            for (y in 0..8) {
-                for (zLevel in 0 until 4) {
-                    if (GRID_MAP[x][zLevel][y] == 3) {
-                        if ((((cameraPosition.x + 500) / 100).toInt() == x) &&
-                            (((cameraPosition.y + 500) / 100).toInt() == zLevel) &&
-                            (((cameraPosition.z + 500) / 100).toInt() == y)) {
+        val playerGridPos = worldToGridCoords(cameraPosition)
+        val gridX = playerGridPos.x.toInt()
+        val gridY = playerGridPos.y.toInt()
+        val gridZ = playerGridPos.z.toInt()
 
-                            val pos = Vector3d(
-                                (x - 4.5) * cubeSize,
-                                (zLevel - 4.5) * cubeSize,
-                                (y - 4.5) * cubeSize
-                            )
 
-                            val meshToRemove = meshes.find { it.collisionPos == pos }
-                            if (meshToRemove != null) {
-                                println("$meshToRemove X:${((cameraPosition.x+500)/100).toInt()} Y:${((cameraPosition.y+500)/100).toInt()} Z:${((cameraPosition.z+500)/100).toInt()}")
-                                meshes.remove(meshToRemove)
-                                GRID_MAP[x][zLevel][y] = 0
-                            }
-                        }
-                    }
-                }
+        if (gridX in 0 until gridDimension &&
+            gridY in 0 until 4 &&
+            gridZ in 0 until gridDimension &&
+            GRID_MAP[gridX][gridY][gridZ] == 3) {
+            val offset = gridDimension / 2.0
+            val pos = Vector3d(
+                (gridX - offset) * cubeSize,
+                (gridY - offset) * cubeSize,
+                (gridZ - offset) * cubeSize
+            )
+            val meshToRemove = meshes.find { it.collisionPos == pos }
+            if (meshToRemove != null) {
+                println("$meshToRemove X:$gridX, Y:$gridY, Z:$gridZ")
+                meshes.remove(meshToRemove)
+                GRID_MAP[gridX][gridY][gridZ] = 0
             }
         }
     }
@@ -400,7 +421,7 @@ class DrawingPanel : StackPane() {
 
         lightingUpdateQueue.clear()
         for (mesh in meshes) {
-            if (mesh.mesh.faces.isNotEmpty() && mesh.texture != texSkybox && mesh.collision) {
+            if (mesh.mesh.faces.isNotEmpty() && mesh.texture != texSkybox) {
                 for (faceIndex in mesh.mesh.faces.indices) {
                     lightingUpdateQueue.add(Pair(mesh, faceIndex))
                 }
@@ -631,7 +652,7 @@ class DrawingPanel : StackPane() {
         val lookDirection = Vector3d(cos(cameraPitch) * sin(cameraYaw), sin(cameraPitch), cos(cameraPitch) * cos(cameraYaw)).normalize()
         val upVector = Vector3d(0.0, 1.0, 0.0)
         val viewMatrix = Matrix4x4.lookAt(cameraPosition, cameraPosition + lookDirection, upVector)
-        val projectionMatrix = Matrix4x4.perspective(90.0, virtualWidth.toDouble() / virtualHeight.toDouble(), 0.1, 1200.0)
+        val projectionMatrix = Matrix4x4.perspective(90.0, virtualWidth.toDouble() / virtualHeight.toDouble(), 0.1, 1.0)
         val combinedMatrix = projectionMatrix * viewMatrix
 
         val tasks = mutableListOf<Future<*>>()
@@ -767,16 +788,16 @@ class DrawingPanel : StackPane() {
                         val texColor = texReader.getColor(texX, texY)
 
                         val dynamicLight = if (lightGrid != null) {
-                            val gridX = (u * 8).toInt().coerceIn(0, 9)
-                            val gridY = ((1.0 - v) * 8).toInt().coerceIn(0, 9)
+                            val gridX = (u * 8).toInt().coerceIn(0, 7)
+                            val gridY = ((1.0 - v) * 8).toInt().coerceIn(0, 7)
                             lightGrid[gridX][gridY]
                         } else {
                             Color.BLACK
                         }
 
-                        val illR = (ambientR + dynamicLight.red).coerceIn(0.0, 1.0)
-                        val illG = (ambientG + dynamicLight.green).coerceIn(0.0, 1.0)
-                        val illB = (ambientB + dynamicLight.blue).coerceIn(0.0, 1.0)
+                        val illR = (ambientR*2 + dynamicLight.red * (ambientIntensity * 6))
+                        val illG = (ambientG*2 + dynamicLight.green * (ambientIntensity * 6))
+                        val illB = (ambientB*2 + dynamicLight.blue * (ambientIntensity * 6))
 
                         val litR = texColor.red * illR
                         val litG = texColor.green * illG
@@ -829,6 +850,16 @@ class DrawingPanel : StackPane() {
         )
 
         return image
+    }
+
+    private fun worldToGridCoords(worldPos: Vector3d): Vector3d {
+        val offset = gridDimension / 2.0
+
+        val gridX = floor(worldPos.x / cubeSize + offset).toInt()
+        val gridY = floor(worldPos.y / cubeSize + offset).toInt()
+        val gridZ = floor(worldPos.z / cubeSize + offset).toInt()
+
+        return Vector3d(gridX.toDouble(), gridY.toDouble(), gridZ.toDouble())
     }
 
     fun loadImage(path: String): Image {
