@@ -32,29 +32,41 @@ fun createCubeMesh(size: Double, color: Color, inverted: Boolean = false): Mesh 
     return Mesh(vertices, faces, uvs, color)
 }
 
-fun createPyramidMesh(size: Double, height: Double, color: Color): Mesh {
-    val hs = size / 2.0
+fun createPyramidMesh(size: Double, color: Color): Mesh {
+    val hs = size / 100.0
     val vertices = listOf(
-        Vector3d(-hs, 0.0, hs),   // 0 front-left
-        Vector3d(hs, 0.0, hs),    // 1 front-right
-        Vector3d(hs, 0.0, -hs),   // 2 back-right
-        Vector3d(-hs, 0.0, -hs),  // 3 back-left
-        Vector3d(0.0, height, 0.0) // 4 top
+        Vector3d(-50.0 * hs, 0.0 * hs, -50.0 * hs),
+        Vector3d(50.0 * hs, 0.0 * hs, -50.0 * hs),
+        Vector3d(-50.0 * hs, 0.0 * hs, 50.0 * hs),
+        Vector3d(50.0 * hs, 0.0 * hs, 50.0 * hs),
+        Vector3d(0.0 * hs, 100.0 * hs, 0.0 * hs),
+        Vector3d(0.0 * hs, 100.0 * hs, 0.0 * hs),
     )
-    val faces = listOf(
-        listOf(0, 3, 2, 1), // podstawa
-        listOf(0, 1, 4),    // ściana frontowa
-        listOf(1, 2, 4),    // prawa
-        listOf(2, 3, 4),    // tył
-        listOf(3, 0, 4)     // lewa
+    val faces: List<List<Int>> = listOf(
+        listOf(1, 3, 2, 0),
+        listOf(1, 0, 4, 5),
+        listOf(0, 2, 4, 5),
+        listOf(2, 3, 4, 5),
+        listOf(3, 1, 4, 5),
     )
-    val uvs = listOf(
-        listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0)),
-        listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0)),
-        listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0)),
-        listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0)),
-        listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))
+    data class Edge(val a: Int, val b: Int)
+    val edges: List<List<Edge>> = listOf(
+        listOf(Edge(a=1, b=0)),
+        listOf(Edge(a=0, b=2)),
+        listOf(Edge(a=2, b=3)),
+        listOf(Edge(a=3, b=1)),
+        listOf(Edge(a=1, b=5)),
+        listOf(Edge(a=5, b=0)),
+        listOf(Edge(a=5, b=2)),
+        listOf(Edge(a=5, b=3)),
     )
+    val uvs: List<List<Vector3d>> = faces.map { face ->
+        when(face.size) {
+            3 -> listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))
+            4 -> listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0))
+            else -> face.map { Vector3d(0.0,0.0,0.0) }
+        }
+    }
     val textureMapping = mapOf(
         0 to "floor",
         1 to "bricks",
@@ -62,33 +74,44 @@ fun createPyramidMesh(size: Double, height: Double, color: Color): Mesh {
         3 to "bricks",
         4 to "bricks"
     )
-
     return Mesh(vertices, faces, uvs, color, faceTextureNames = textureMapping)
 }
 
-fun createInvertedPyramidMesh(size: Double, height: Double, color: Color): Mesh {
-    val hs = size / 2.0
+fun createInvertedPyramidMesh(size: Double, color: Color): Mesh {
+    val hs = size / 100.0
     val vertices = listOf(
-        Vector3d(-hs, height, hs),    // 0 front-left (góra)
-        Vector3d(hs, height, hs),     // 1 front-right (góra)
-        Vector3d(hs, height, -hs),    // 2 back-right (góra)
-        Vector3d(-hs, height, -hs),   // 3 back-left (góra)
-        Vector3d(0.0, 0.0, 0.0) // 4 dół (szpic)
+        Vector3d(0.0 * hs, 0.0 * hs, 0.0 * hs),
+        Vector3d(0.0 * hs, 0.0 * hs, 0.0 * hs),
+        Vector3d(50.0 * hs, 100.0 * hs, -50.0 * hs),
+        Vector3d(-50.0 * hs, 100.0 * hs, -50.0 * hs),
+        Vector3d(-50.0 * hs, 100.0 * hs, 50.0 * hs),
+        Vector3d(50.0 * hs, 100.0 * hs, 50.0 * hs),
     )
-    val faces = listOf(
-        listOf(0, 1, 2, 3), // podstawa
-        listOf(0, 4, 1),    // front
-        listOf(1, 4, 2),    // prawa
-        listOf(2, 4, 3),    // tył
-        listOf(3, 4, 0)     // lewa
+    val faces: List<List<Int>> = listOf(
+        listOf(5, 2, 3, 4),
+        listOf(3, 2, 1, 0),
+        listOf(4, 3, 1, 0),
+        listOf(5, 4, 1, 0),
+        listOf(2, 5, 1, 0),
     )
-    val uvs = listOf(
-        listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0)),
-        listOf(Vector3d(0.0,0.0,0.0), Vector3d(0.5,1.0,0.0), Vector3d(1.0,0.0,0.0)),
-        listOf(Vector3d(0.0,0.0,0.0), Vector3d(0.5,1.0,0.0), Vector3d(1.0,0.0,0.0)),
-        listOf(Vector3d(0.0,0.0,0.0), Vector3d(0.5,1.0,0.0), Vector3d(1.0,0.0,0.0)),
-        listOf(Vector3d(0.0,0.0,0.0), Vector3d(0.5,1.0,0.0), Vector3d(1.0,0.0,0.0))
+    data class Edge(val a: Int, val b: Int)
+    val edges: List<List<Edge>> = listOf(
+        listOf(Edge(a=4, b=3)),
+        listOf(Edge(a=3, b=2)),
+        listOf(Edge(a=2, b=5)),
+        listOf(Edge(a=5, b=4)),
+        listOf(Edge(a=5, b=0)),
+        listOf(Edge(a=0, b=4)),
+        listOf(Edge(a=3, b=0)),
+        listOf(Edge(a=0, b=2)),
     )
+    val uvs: List<List<Vector3d>> = faces.map { face ->
+        when(face.size) {
+            3 -> listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))
+            4 -> listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0))
+            else -> face.map { Vector3d(0.0,0.0,0.0) }
+        }
+    }
     val textureMapping = mapOf(
         0 to "floor",
         1 to "bricks",
@@ -219,6 +242,46 @@ fun createTankMesh(size: Double, color: Color): Mesh {
         listOf(17, 19, 18, 16),
         listOf(17, 15, 21, 19),
         listOf(21, 15, 14, 20),
+    )
+    data class Edge(val a: Int, val b: Int)
+    val edges: List<Edge> = listOf(
+        Edge(a=2, b=3),
+        Edge(a=3, b=0),
+        Edge(a=0, b=1),
+        Edge(a=1, b=2),
+        Edge(a=4, b=5),
+        Edge(a=4, b=7),
+        Edge(a=6, b=7),
+        Edge(a=6, b=5),
+        Edge(a=5, b=3),
+        Edge(a=6, b=2),
+        Edge(a=7, b=1),
+        Edge(a=4, b=0),
+        Edge(a=19, b=18),
+        Edge(a=18, b=20),
+        Edge(a=20, b=21),
+        Edge(a=21, b=19),
+        Edge(a=17, b=16),
+        Edge(a=16, b=14),
+        Edge(a=14, b=15),
+        Edge(a=15, b=17),
+        Edge(a=16, b=18),
+        Edge(a=20, b=14),
+        Edge(a=15, b=21),
+        Edge(a=19, b=17),
+        Edge(a=8, b=9),
+        Edge(a=9, b=10),
+        Edge(a=10, b=11),
+        Edge(a=11, b=8),
+        Edge(a=8, b=4),
+        Edge(a=11, b=5),
+        Edge(a=10, b=6),
+        Edge(a=7, b=9),
+        Edge(a=12, b=13),
+        Edge(a=12, b=10),
+        Edge(a=9, b=12),
+        Edge(a=8, b=13),
+        Edge(a=13, b=11),
     )
     val uvs: List<List<Vector3d>> = faces.map { face ->
         when(face.size) {

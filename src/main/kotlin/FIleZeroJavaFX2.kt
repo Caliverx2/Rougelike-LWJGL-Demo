@@ -129,8 +129,8 @@ class DrawingPanel : StackPane() {
         val cubeMeshGates = createCubeMesh(cubeSize, Color.rgb(40,255,40))
 
         val skyboxMesh = createCubeMesh(1000.0 * cubeSize, Color.rgb(80,80,80), inverted = true)
-        val pyramidMesh = createPyramidMesh(cubeSize, cubeSize, Color.RED)
-        val invertedPyramidMesh = createInvertedPyramidMesh(cubeSize, cubeSize, Color.DEEPSKYBLUE)
+        val pyramidMesh = createPyramidMesh(cubeSize, Color.RED)
+        val invertedPyramidMesh = createInvertedPyramidMesh(cubeSize, Color.DEEPSKYBLUE)
         val towerMesh = createTowerMesh(cubeSize, Color.WHITE)
         val KotlinModel = createKotlinModelMesh(cubeSize, Color.GRAY)
         val Tank = createTankMesh(cubeSize, Color.GREEN)

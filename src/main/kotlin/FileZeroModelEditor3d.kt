@@ -1,13 +1,19 @@
 package org.lewapnoob.FileZeroModel3DEditor
 
 import javafx.application.Application
+import javafx.geometry.Insets
 import javafx.scene.Scene
 import javafx.scene.canvas.Canvas
 import javafx.scene.canvas.GraphicsContext
+import javafx.scene.control.Button
+import javafx.scene.control.Label
+import javafx.scene.control.TextArea
 import javafx.scene.input.KeyCode
 import javafx.scene.input.MouseButton
+import javafx.scene.layout.VBox
 import javafx.scene.layout.StackPane
 import javafx.scene.paint.Color
+import javafx.stage.Modality
 import javafx.stage.Stage
 import kotlin.math.*
 
@@ -33,7 +39,7 @@ class ModelEditor : Application() {
     private var faceSelectMode = false // tryb Q
 
     override fun start(stage: Stage) {
-        val canvas = Canvas((1920.0*2)/3, (1080.0*2)/3)
+        val canvas = Canvas((1920.0 * 2) / 3, (1080.0 * 2) / 3)
         val gc = canvas.graphicsContext2D
 
         canvas.setOnMousePressed { e ->
@@ -121,6 +127,7 @@ class ModelEditor : Application() {
                     }
                 }
                 KeyCode.E -> exportMeshFunction()
+                KeyCode.I -> showImportDialog(gc)
                 KeyCode.G -> println("$angleX $angleY")
                 else -> {}
             }
@@ -391,7 +398,7 @@ class ModelEditor : Application() {
             val p4 = topCylinderRingStartIndex + nextI
             newFaces.add(Face(listOf(p1, p2, p4, p3)))
             newEdges.add(Edge(p1, p3))
-            newEdges.add(Edge(p3,p4))
+            newEdges.add(Edge(p3, p4))
         }
 
         // Ściany cylindra
@@ -403,7 +410,7 @@ class ModelEditor : Application() {
             val p4 = bottomCylinderRingStartIndex + nextI
             newFaces.add(Face(listOf(p2, p4, p3, p1)))
             newEdges.add(Edge(p1, p3))
-            newEdges.add(Edge(p3,p4))
+            newEdges.add(Edge(p3, p4))
         }
 
         // Łączenie pierścienia cylindra z pierwszym pierścieniem dolnej półsfery
@@ -415,8 +422,8 @@ class ModelEditor : Application() {
             val p3 = firstBottomRingStart + i
             val p4 = firstBottomRingStart + nextI
             newFaces.add(Face(listOf(p2, p4, p3, p1)))
-            newEdges.add(Edge(p1,p3))
-            newEdges.add(Edge(p3,p4))
+            newEdges.add(Edge(p1, p3))
+            newEdges.add(Edge(p3, p4))
         }
 
         // Łączenie pierścieni dolnej półsfery
@@ -454,20 +461,20 @@ class ModelEditor : Application() {
         println("fun createCustomMesh(size: Double, color: Color): Mesh {")
         println("    val hs = size / 100.0")
 
-        println("    val vertices = listOf(")
+        println("\n    val vertices = listOf(")
         for (v in vertices) println("        Vector3d(${v.x} * hs, ${v.y} * hs, ${v.z} * hs),")
         println("    )")
 
-        println("    val faces: List<List<Int>> = listOf(")
+        println("\n    val faces: List<List<Int>> = listOf(")
         for (f in faces) println("        listOf(${f.indices.joinToString(", ")}),")
         println("    )")
 
-        println("    data class Edge(val a: Int, val b: Int)")
-        println("    val edges: List<List<Edge>> = listOf(")
-        for (e in edges) println("        listOf(${e}),")
+        println("\n    data class Edge(val a: Int, val b: Int)")
+        println("    val edges: List<Edge> = listOf(")
+        for (e in edges) println("        $e,")
         println("    )")
 
-        println("    val uvs: List<List<Vector3d>> = faces.map { face ->")
+        println("\n    val uvs: List<List<Vector3d>> = faces.map { face ->")
         println("        when(face.size) {")
         println("            3 -> listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))")
         println("            4 -> listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0))")
@@ -476,6 +483,122 @@ class ModelEditor : Application() {
         println("    }")
         println("    return Mesh(vertices, faces, uvs, color)")
         println("}")
+    }
+
+    private fun showImportDialog(gc: GraphicsContext) {
+        val dialogStage = Stage()
+        dialogStage.initModality(Modality.APPLICATION_MODAL)
+        dialogStage.title = "Importuj Model"
+
+        val textArea = TextArea()
+        textArea.text = "Wklej tutaj wyeksportowany kod funkcji create...Mesh"
+        textArea.isWrapText = true
+        textArea.prefRowCount = 25
+        textArea.prefColumnCount = 90
+
+        val importButton = Button("Importuj")
+        importButton.setOnAction {
+            parseAndLoadModel(textArea.text)
+            val canvas = gc.canvas
+            draw(gc, canvas.width, canvas.height, 0.0, 0.0)
+            dialogStage.close()
+        }
+
+        val layout = VBox(10.0)
+        layout.padding = Insets(10.0)
+        layout.children.addAll(Label("Wklej kod modelu:"), textArea, importButton)
+
+        val dialogScene = Scene(layout)
+        dialogStage.scene = dialogScene
+        dialogStage.showAndWait()
+    }
+
+    private fun parseAndLoadModel(code: String) {
+        println("--- Rozpoczynam import modelu ---")
+        try {
+            val newVertices = mutableListOf<Vector3d>()
+            val newFaces = mutableListOf<Face>()
+            val newEdges = mutableListOf<Edge>()
+
+            var inVerticesBlock = false
+            var inFacesBlock = false
+            var inEdgesBlock = false
+
+            for (line in code.lines()) {
+                val trimmedLine = line.trim()
+
+                if (trimmedLine.startsWith("val vertices")) {
+                    println("Znaleziono blok 'vertices'.")
+                    inVerticesBlock = true; inFacesBlock = false; inEdgesBlock = false
+                    continue
+                }
+                if (trimmedLine.startsWith("val faces")) {
+                    println("Zakończono 'vertices'. Znaleziono: ${newVertices.size}.")
+                    inVerticesBlock = false; inFacesBlock = true; inEdgesBlock = false
+                    continue
+                }
+                if (trimmedLine.startsWith("val edges")) {
+                    println("Zakończono 'faces'. Znaleziono: ${newFaces.size}.")
+                    inVerticesBlock = false; inFacesBlock = false; inEdgesBlock = true
+                    continue
+                }
+                if (trimmedLine.startsWith("val uvs") || trimmedLine.startsWith("return Mesh")) {
+                    if (inEdgesBlock) println("Zakończono 'edges'. Znaleziono: ${newEdges.size}.")
+                    inVerticesBlock = false; inFacesBlock = false; inEdgesBlock = false
+                }
+
+                if (inVerticesBlock && trimmedLine.contains("Vector3d(")) {
+                    val content = trimmedLine.substringAfter('(').substringBeforeLast(')')
+                    val cleanedContent = content.replace(Regex("[^\\d.,\\s-]"), "")
+                    val parts = cleanedContent.split(',').map { it.trim() }
+                    if (parts.size == 3) {
+                        try {
+                            val x = parts[0].toDouble()
+                            val y = parts[1].toDouble()
+                            val z = parts[2].toDouble()
+                            newVertices.add(Vector3d(x, y, z))
+                        } catch (e: NumberFormatException) {
+                            println(" > Ostrzeżenie: Nie udało się sparsować liczb w linii: $trimmedLine")
+                        }
+                    }
+                } else if (inFacesBlock && trimmedLine.contains("listOf(")) {
+                    val content = trimmedLine.substringAfter('(').substringBeforeLast(')')
+                    if (content.all { it.isDigit() || it.isWhitespace() || it == ',' }) {
+                        val indices = content.split(',').mapNotNull { it.trim().toIntOrNull() }
+                        if (indices.isNotEmpty()) newFaces.add(Face(indices))
+                    }
+                } else if (inEdgesBlock && trimmedLine.contains("Edge(")) {
+                    val content = trimmedLine.substringAfter('(').substringBeforeLast(')')
+                    val cleanedContent = content.replace(Regex("[^\\d,]"), "")
+                    val parts = cleanedContent.split(',').mapNotNull { it.trim().toIntOrNull() }
+                    if (parts.size == 2) {
+                        newEdges.add(Edge(parts[0], parts[1]))
+                    }
+                }
+            }
+            println("--- Zakończono parsowanie pliku ---")
+
+            if (newVertices.isEmpty()) {
+                println("BŁĄD KRYTYCZNY: Nie udało się sparsować żadnych wierzchołków.")
+                return
+            }
+
+            vertices.clear()
+            edges.clear()
+            faces.clear()
+            selectedForFace.clear()
+            selectedVertex = null
+
+            vertices.addAll(newVertices)
+            edges.addAll(newEdges)
+            faces.addAll(newFaces)
+
+            println("Załadowano model: ${vertices.size} wierzchołków, ${edges.size} krawędzi, ${faces.size} ścian.")
+
+        } catch (e: Exception) {
+            println("KRYTYCZNY BŁĄD podczas parsowania modelu: ${e.message}")
+            e.printStackTrace()
+        }
     }
 
     private fun draw(gc: GraphicsContext, w: Double, h: Double, mouseX: Double, mouseY: Double) {
@@ -488,7 +611,17 @@ class ModelEditor : Application() {
         if (angleX > PI * 2) angleX -= PI * 2
 
         gc.globalAlpha = 0.2; gc.fill = Color.GRAY
-        for (face in faces.sortedByDescending { f -> f.indices.map { vertices[it].z }.average() }) {
+        val sortedFaces = try {
+            faces.sortedByDescending { f ->
+                if (f.indices.any { it >= vertices.size }) 0.0
+                else f.indices.map { vertices[it].z }.average()
+            }
+        } catch (e: Exception) {
+            faces
+        }
+
+        for (face in sortedFaces) {
+            if (face.indices.any { it >= vertices.size }) continue
             val pts = face.indices.map { project(vertices[it], w, h) }
             if (pts.any { !it.first.isFinite() || !it.second.isFinite() }) continue
             gc.beginPath()
@@ -507,6 +640,7 @@ class ModelEditor : Application() {
         // Krawędzie
         gc.stroke = Color.LIME
         for (e in edges) {
+            if (e.a >= vertices.size || e.b >= vertices.size) continue
             val p1 = project(vertices[e.a], w, h)
             val p2 = project(vertices[e.b], w, h)
             if (p1.first.isFinite() && p1.second.isFinite() && p2.first.isFinite() && p2.second.isFinite()) {
