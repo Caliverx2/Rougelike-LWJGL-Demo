@@ -39,8 +39,9 @@ class DrawingPanel : StackPane() {
     private val cubeSize = 100.0
     private var gridDimension = 9
 
-    private val playerHeight = (cubeSize / 2 ) - (cubeSize / 20)
-    private val playerWidth = (cubeSize / 2 ) - (cubeSize / 20)
+    private val scalePlayer = 1.25
+    private val playerHeight = ((cubeSize / 2 ) - (cubeSize / 20)) * scalePlayer
+    private val playerWidth = ((cubeSize / 2 ) - (cubeSize / 20)) * scalePlayer
     private val playerHalfWidth = playerWidth / 2.0
 
     private val fogColor = Color.rgb(180, 180, 180)
@@ -103,7 +104,7 @@ class DrawingPanel : StackPane() {
 
         children.addAll(imageView, overlayCanvas)
 
-        cameraPosition = Vector3d(-2.5 * cubeSize, -3.25 * cubeSize, 1.5 * cubeSize)
+        cameraPosition = Vector3d(-2.5 * cubeSize, (-3.97 * cubeSize) + playerHeight, 1.5 * cubeSize)
 
         val grids = listOf(GRID_1, GRID_2, GRID_3, GRID_4)
         for (x in 0 until gridDimension) {
@@ -257,8 +258,8 @@ class DrawingPanel : StackPane() {
 
         var newCameraPosition = Vector3d(cameraPosition.x, cameraPosition.y, cameraPosition.z)
 
-        var currentMovementSpeed = 3.5 * cubeSize
-        val playerSprintSpeed = 5.5 * cubeSize
+        var currentMovementSpeed = 2.8 * cubeSize * scalePlayer
+        val playerSprintSpeed = 4.4 * cubeSize * scalePlayer
 
         if (pressedKeys.contains(KeyCode.SHIFT)) currentMovementSpeed = playerSprintSpeed
 
@@ -343,6 +344,13 @@ class DrawingPanel : StackPane() {
                 " YAW:${((cameraYaw*10).toInt()/10.0)}" +
                 " PITCH:${((cameraPitch*10).toInt()/10.0)}" +
                 " SPEED:$currentMovementSpeed")
+        }
+
+        if (pressedKeys.contains(KeyCode.H)){
+            println(
+                "X:${cameraPosition.x}" +
+                " Y:${cameraPosition.y}" +
+                " Z:${cameraPosition.z}")
         }
 
         if (pressedKeys.contains(KeyCode.R)) {
@@ -855,10 +863,11 @@ class DrawingPanel : StackPane() {
     private fun worldToGridCoords(worldPos: Vector3d): Vector3d {
         val offset = gridDimension / 2.0
 
-        val gridX = floor(worldPos.x / cubeSize + offset).toInt()
-        val gridY = floor(worldPos.y / cubeSize + offset).toInt()
-        val gridZ = floor(worldPos.z / cubeSize + offset).toInt()
+        val gridX = (worldPos.x / cubeSize + offset).roundToInt()
+        val gridY = (worldPos.y / cubeSize + offset).roundToInt()
+        val gridZ = (worldPos.z / cubeSize + offset).roundToInt()
 
+        // Zwracamy wektor z liczbami całkowitymi (Int), bo takie są koordynaty siatki
         return Vector3d(gridX.toDouble(), gridY.toDouble(), gridZ.toDouble())
     }
 

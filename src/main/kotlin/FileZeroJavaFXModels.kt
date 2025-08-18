@@ -723,22 +723,27 @@ fun createCapsuleMesh(size: Double, color: Color): Mesh {
 
 fun createCustomMesh(size: Double, color: Color): Mesh {
     val hs = size / 100.0
+
     val vertices = listOf(
-        Vector3d(-50.0 * hs, 0.0 * hs, 50.0 * hs),
+        Vector3d(-50.0 * hs, 0.0 * hs, -50.0 * hs),
+        Vector3d(50.0 * hs, 0.0 * hs, -50.0 * hs),
         Vector3d(50.0 * hs, 0.0 * hs, 50.0 * hs),
-        Vector3d(-5.0 * hs, 0.0 * hs, -50.0 * hs),
-        Vector3d(5.0 * hs, 0.0 * hs, -50.0 * hs),
+        Vector3d(-50.0 * hs, 0.0 * hs, 50.0 * hs),
     )
+
     val faces: List<List<Int>> = listOf(
-        listOf(2, 0, 1, 3),
+        listOf(0, 1, 2, 3),
+        listOf(3, 2, 1, 0),
     )
+
     data class Edge(val a: Int, val b: Int)
-    val edges: List<List<Edge>> = listOf(
-        listOf(Edge(a=2, b=3)),
-        listOf(Edge(a=3, b=1)),
-        listOf(Edge(a=1, b=0)),
-        listOf(Edge(a=0, b=2)),
+    val edges: List<Edge> = listOf(
+        Edge(a=0, b=1),
+        Edge(a=1, b=2),
+        Edge(a=2, b=3),
+        Edge(a=3, b=0),
     )
+
     val uvs: List<List<Vector3d>> = faces.map { face ->
         when(face.size) {
             3 -> listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))
