@@ -29,20 +29,23 @@ class DrawingPanel : StackPane() {
     private val lightingExecutor = Executors.newSingleThreadExecutor()
     private var lightingFuture: Future<*>? = null
 
-    private var cameraPosition = Vector3d(0.0, 0.0, 0.0)
-    private var cameraYaw = 2.4
-    private var cameraPitch = 0.0
-
-    private var debugFly = false
-    private var debugNoclip = false
-
     private val cubeSize = 100.0
     private var gridDimension = 9
 
-    private val scalePlayer = 1.25
+    private val defaultScalePlayer = 1.25
+    private val scalePlayer = defaultScalePlayer
     private val playerHeight = ((cubeSize / 2 ) - (cubeSize / 20)) * scalePlayer
     private val playerWidth = ((cubeSize / 2 ) - (cubeSize / 20)) * scalePlayer
     private val playerHalfWidth = playerWidth / 2.0
+
+    private var cameraPosition = Vector3d(0.0, 0.0, 0.0)
+    private var cameraYaw = 2.4
+    private var cameraPitch = 0.0
+    private val baseFov = 90.0
+    private val dynamicFov = (baseFov / sqrt(scalePlayer / defaultScalePlayer).coerceAtLeast(0.5)).coerceIn(60.0..120.0)
+
+    private var debugFly = false
+    private var debugNoclip = false
 
     private val fogColor = Color.rgb(180, 180, 180)
     private val fogStartDistance = 1.5 * cubeSize
@@ -343,7 +346,8 @@ class DrawingPanel : StackPane() {
                 " Z:${gridPos.z.toInt()}" +
                 " YAW:${((cameraYaw*10).toInt()/10.0)}" +
                 " PITCH:${((cameraPitch*10).toInt()/10.0)}" +
-                " SPEED:$currentMovementSpeed")
+                " SPEED:$currentMovementSpeed" +
+                " FOV: $dynamicFov")
         }
 
         if (pressedKeys.contains(KeyCode.H)){
@@ -660,7 +664,7 @@ class DrawingPanel : StackPane() {
         val lookDirection = Vector3d(cos(cameraPitch) * sin(cameraYaw), sin(cameraPitch), cos(cameraPitch) * cos(cameraYaw)).normalize()
         val upVector = Vector3d(0.0, 1.0, 0.0)
         val viewMatrix = Matrix4x4.lookAt(cameraPosition, cameraPosition + lookDirection, upVector)
-        val projectionMatrix = Matrix4x4.perspective(90.0, virtualWidth.toDouble() / virtualHeight.toDouble(), 0.1, 1.0)
+        val projectionMatrix = Matrix4x4.perspective(dynamicFov, virtualWidth.toDouble() / virtualHeight.toDouble(), 0.1, 1.0)
         val combinedMatrix = projectionMatrix * viewMatrix
 
         val tasks = mutableListOf<Future<*>>()
