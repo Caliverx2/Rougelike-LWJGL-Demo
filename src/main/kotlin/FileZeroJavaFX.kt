@@ -225,6 +225,64 @@ data class AABB(val min: Vector3d, val max: Vector3d) {
     }
 }
 
+object CollisionUtils {
+    private fun getInterval(aabb: AABB, axis: Vector3d): Pair<Double, Double> {
+        val center = (aabb.min + aabb.max) * 0.5
+        val extents = (aabb.max - aabb.min) * 0.5
+
+        val c = center.dot(axis)
+        val e = extents.x * abs(axis.x) + extents.y * abs(axis.y) + extents.z * abs(axis.z)
+
+        return Pair(c - e, c + e)
+    }
+
+    private fun getInterval(v0: Vector3d, v1: Vector3d, v2: Vector3d, axis: Vector3d): Pair<Double, Double> {
+        val d0 = v0.dot(axis)
+        val d1 = v1.dot(axis)
+        val d2 = v2.dot(axis)
+
+        return Pair(minOf(d0, d1, d2), maxOf(d0, d1, d2))
+    }
+
+    fun testAABBTriangle(aabb: AABB, v0: Vector3d, v1: Vector3d, v2: Vector3d): Boolean {
+        // Separating Axis Theorem
+        val axes = mutableListOf<Vector3d>()
+
+        // axes world
+        axes.add(Vector3d(1.0, 0.0, 0.0))
+        axes.add(Vector3d(0.0, 1.0, 0.0))
+        axes.add(Vector3d(0.0, 0.0, 1.0))
+
+        val edge0 = v1 - v0
+        val edge1 = v2 - v1
+        val triNormal = edge0.cross(edge1).normalize()
+        axes.add(triNormal)
+
+        val triEdges = listOf(edge0, edge1, v0 - v2)
+        val boxAxes = listOf(Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 1.0, 0.0), Vector3d(0.0, 0.0, 1.0))
+
+        for (edge in triEdges) {
+            for (boxAxis in boxAxes) {
+                val crossProduct = edge.cross(boxAxis).normalize()
+                if (crossProduct.length() > 1e-6) {
+                    axes.add(crossProduct)
+                }
+            }
+        }
+
+        for (axis in axes) {
+            val aabbInterval = getInterval(aabb, axis)
+            val triInterval = getInterval(v0, v1, v2, axis)
+
+            if (aabbInterval.second < triInterval.first || triInterval.second < aabbInterval.first) {
+                return false
+            }
+        }
+
+        return true
+    }
+}
+
 val GRID_1 = arrayOf(
     intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
     intArrayOf(1, 1, 1, 1, 1, 1, 1, 1, 1),
@@ -272,7 +330,18 @@ val GRID_4 = arrayOf(
 
 val GRID_MAP: Array<Array<Array<Int>>> = Array(18) { Array(18) { Array(18) { 0 } } }
 
-data class LightSource(val position: Vector3d, val radius: Double = 5.0, val color: Color = Color.rgb(255, 20, 20), val intensity: Double = 1.0)
+enum class LightType {
+    RAYTRACED,
+    VERTEX
+}
+
+data class LightSource(
+    val position: Vector3d,
+    val radius: Double,
+    val color: Color,
+    val intensity: Double = 1.0,
+    val type: LightType = LightType.RAYTRACED
+)
 
 class MainApp : Application() {
     override fun start(primaryStage: Stage) {
