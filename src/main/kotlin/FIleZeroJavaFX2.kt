@@ -192,7 +192,7 @@ class DrawingPanel : StackPane() {
         meshes.add(PlacedMesh(sphere,Matrix4x4.translation(pos8.x, pos8.y, pos8.z), texture = texCeiling))
 
         val pos9 = Vector3d(31.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(mapMesh,Matrix4x4.translation(pos9.x, pos9.y, pos9.z), texture = texBricks))
+        meshes.add(PlacedMesh(mapMesh,Matrix4x4.translation(pos9.x, pos9.y, pos9.z), faceTextures = placedTextures(mapMesh)))
         //
 
         for (x in 0 until gridDimension) {
@@ -242,6 +242,39 @@ class DrawingPanel : StackPane() {
         }
     }
 
+    private fun isCollidingAt(testPosition: Vector3d): Boolean {
+        val playerAABB = AABB(
+            Vector3d(testPosition.x - playerHalfWidth, testPosition.y - playerHeight / 2, testPosition.z - playerHalfWidth),
+            Vector3d(testPosition.x + playerHalfWidth, testPosition.y + playerHeight / 2, testPosition.z + playerHalfWidth)
+        )
+
+        for (mesh in meshes.filter { it.collision }) {
+            val worldBlushes = mesh.mesh.blushes.map { blush ->
+                val transformedCorners = blush.getCorners().map { corner -> mesh.transformMatrix.transform(corner) }
+                AABB.fromCube(transformedCorners)
+            }
+            if (worldBlushes.any { it.contains(testPosition) }) {
+                continue
+            }
+
+            val meshAABB = AABB.fromCube(mesh.getTransformedVertices())
+            if (playerAABB.intersects(meshAABB)) {
+                val worldVertices = mesh.getTransformedVertices()
+                for (faceIndices in mesh.mesh.faces.filter { it.size >= 3 }) {
+                    for (i in 0 until faceIndices.size - 2) {
+                        val v0 = worldVertices[faceIndices[0]]
+                        val v1 = worldVertices[faceIndices[i + 1]]
+                        val v2 = worldVertices[faceIndices[i + 2]]
+                        if (CollisionUtils.testAABBTriangle(playerAABB, v0, v1, v2)) {
+                            return true
+                        }
+                    }
+                }
+            }
+        }
+        return false
+    }
+
     private fun updateCameraPosition(deltaTime: Double) {
         var lookDirection = Vector3d(
             cos(cameraPitch) * sin(cameraYaw),
@@ -261,7 +294,7 @@ class DrawingPanel : StackPane() {
         val rightVector = lookDirection.cross(upVector).normalize()
         val forwardVector = lookDirection
 
-        var newCameraPosition = Vector3d(cameraPosition.x, cameraPosition.y, cameraPosition.z)
+        var newCameraPosition = cameraPosition.copy()
 
         var currentMovementSpeed = 2.8 * cubeSize * scalePlayer
         val playerSprintSpeed = 4.4 * cubeSize * scalePlayer
@@ -275,110 +308,29 @@ class DrawingPanel : StackPane() {
         if (pressedKeys.contains(KeyCode.SPACE) && debugFly) newCameraPosition += Vector3d(0.0, currentMovementSpeed, 0.0) * deltaTime
         if (pressedKeys.contains(KeyCode.CONTROL) && debugFly) newCameraPosition -= Vector3d(0.0, currentMovementSpeed, 0.0) * deltaTime
 
-        val oldCameraPosition = Vector3d(cameraPosition.x, cameraPosition.y, cameraPosition.z)
+        val oldCameraPosition = cameraPosition.copy()
 
-        val playerMin = Vector3d(newCameraPosition.x - playerHalfWidth, newCameraPosition.y - playerHeight / 2, newCameraPosition.z - playerHalfWidth)
-        val playerMax = Vector3d(newCameraPosition.x + playerHalfWidth, newCameraPosition.y + playerHeight / 2, newCameraPosition.z + playerHalfWidth)
-        val playerAABB = AABB(playerMin, playerMax)
-
-        var collisionOccurred = false
-
-        for (mesh in meshes) {
-            if (!mesh.collision) continue
-
-            // Broad Phase = speed math
-            val meshAABB = AABB.fromCube(mesh.getTransformedVertices())
-            if (playerAABB.intersects(meshAABB)) {
-
-                // Narrow Phase = slow math
-                val worldVertices = mesh.getTransformedVertices()
-                for (faceIndices in mesh.mesh.faces) {
-                    if (faceIndices.size < 3) continue
-
-                    for (i in 0 until faceIndices.size - 2) {
-                        val v0 = worldVertices[faceIndices[0]]
-                        val v1 = worldVertices[faceIndices[i + 1]]
-                        val v2 = worldVertices[faceIndices[i + 2]]
-
-                        if (CollisionUtils.testAABBTriangle(playerAABB, v0, v1, v2)) {
-                            collisionOccurred = true
-                            break
-                        }
-                    }
-                    if (collisionOccurred) break
-                }
-            }
-            if (collisionOccurred) break
-        }
-
-        if (!collisionOccurred || debugNoclip) {
+        if (debugNoclip || !isCollidingAt(newCameraPosition)) {
             cameraPosition = newCameraPosition
         } else {
-            val testX = AABB(
-                Vector3d(newCameraPosition.x - playerHalfWidth, oldCameraPosition.y - playerHeight / 2, oldCameraPosition.z - playerHalfWidth),
-                Vector3d(newCameraPosition.x + playerHalfWidth, oldCameraPosition.y + playerHeight / 2, oldCameraPosition.z + playerHalfWidth)
-            )
-            var collisionX = false
-            for (mesh in meshes.filter { it.collision }) {
-                if (testX.intersects(AABB.fromCube(mesh.getTransformedVertices()))) {
-                    val worldVertices = mesh.getTransformedVertices()
-                    for (faceIndices in mesh.mesh.faces) {
-                        for (i in 0 until faceIndices.size - 2) {
-                            if (CollisionUtils.testAABBTriangle(testX, worldVertices[faceIndices[0]], worldVertices[faceIndices[i + 1]], worldVertices[faceIndices[i + 2]])) {
-                                collisionX = true
-                                break
-                            }
-                        }
-                        if (collisionX) break
-                    }
-                }
-                if (collisionX) break
+            val resolvedPosition = oldCameraPosition.copy()
+            
+            val tempPosX = resolvedPosition.copy(x = newCameraPosition.x)
+            if (!isCollidingAt(tempPosX)) {
+                resolvedPosition.x = newCameraPosition.x
             }
-            if (!collisionX) cameraPosition.x = newCameraPosition.x
+            
+            val tempPosZ = resolvedPosition.copy(z = newCameraPosition.z)
+            if (!isCollidingAt(tempPosZ)) {
+                resolvedPosition.z = newCameraPosition.z
+            }
+            
+            val tempPosY = resolvedPosition.copy(y = newCameraPosition.y)
+            if (!isCollidingAt(tempPosY)) {
+                resolvedPosition.y = newCameraPosition.y
+            }
 
-            val testY = AABB(
-                Vector3d(oldCameraPosition.x - playerHalfWidth, newCameraPosition.y - playerHeight / 2, oldCameraPosition.z - playerHalfWidth),
-                Vector3d(oldCameraPosition.x + playerHalfWidth, newCameraPosition.y + playerHeight / 2, oldCameraPosition.z + playerHalfWidth)
-            )
-            var collisionY = false
-            for (mesh in meshes.filter { it.collision }) {
-                if (testY.intersects(AABB.fromCube(mesh.getTransformedVertices()))) {
-                    val worldVertices = mesh.getTransformedVertices()
-                    for (faceIndices in mesh.mesh.faces) {
-                        for (i in 0 until faceIndices.size - 2) {
-                            if (CollisionUtils.testAABBTriangle(testY, worldVertices[faceIndices[0]], worldVertices[faceIndices[i + 1]], worldVertices[faceIndices[i + 2]])) {
-                                collisionY = true
-                                break
-                            }
-                        }
-                        if (collisionY) break
-                    }
-                }
-                if (collisionY) break
-            }
-            if (!collisionY) cameraPosition.y = newCameraPosition.y
-
-            val testZ = AABB(
-                Vector3d(oldCameraPosition.x - playerHalfWidth, oldCameraPosition.y - playerHeight / 2, newCameraPosition.z - playerHalfWidth),
-                Vector3d(oldCameraPosition.x + playerHalfWidth, oldCameraPosition.y + playerHeight / 2, newCameraPosition.z + playerHalfWidth)
-            )
-            var collisionZ = false
-            for (mesh in meshes.filter { it.collision }) {
-                if (testZ.intersects(AABB.fromCube(mesh.getTransformedVertices()))) {
-                    val worldVertices = mesh.getTransformedVertices()
-                    for (faceIndices in mesh.mesh.faces) {
-                        for (i in 0 until faceIndices.size - 2) {
-                            if (CollisionUtils.testAABBTriangle(testZ, worldVertices[faceIndices[0]], worldVertices[faceIndices[i + 1]], worldVertices[faceIndices[i + 2]])) {
-                                collisionZ = true
-                                break
-                            }
-                        }
-                        if (collisionZ) break
-                    }
-                }
-                if (collisionZ) break
-            }
-            if (!collisionZ) cameraPosition.z = newCameraPosition.z
+            cameraPosition = resolvedPosition
         }
 
         val currentRotationSpeed = 4.0
@@ -667,6 +619,11 @@ class DrawingPanel : StackPane() {
         for (mesh in meshes) {
             if (!mesh.collision) continue
 
+            val worldBlushes by lazy { mesh.mesh.blushes.map { blush ->
+                val transformedCorners = blush.getCorners().map { corner -> mesh.transformMatrix.transform(corner) }
+                AABB.fromCube(transformedCorners)
+            }}
+
             val worldVertices = mesh.mesh.vertices.map { mesh.transformMatrix.transform(it) }
 
             for (faceIndex in mesh.mesh.faces.indices) {
@@ -683,14 +640,20 @@ class DrawingPanel : StackPane() {
 
                 val intersectionDist = rayIntersectsTriangle(rayOrigin, rayDir, v0, v1, v2)
                 if (intersectionDist != null && intersectionDist < rayLength) {
-                    return true
+                    val intersectionPoint = rayOrigin + rayDir * intersectionDist
+                    if (worldBlushes.isEmpty() || !worldBlushes.any { it.contains(intersectionPoint) }) {
+                        return true
+                    }
                 }
 
                 if (faceIndices.size == 4) {
                     val v3 = worldVertices[faceIndices[3]]
                     val intersectionDist2 = rayIntersectsTriangle(rayOrigin, rayDir, v0, v2, v3)
                     if (intersectionDist2 != null && intersectionDist2 < rayLength) {
-                        return true
+                        val intersectionPoint = rayOrigin + rayDir * intersectionDist2
+                        if (worldBlushes.isEmpty() || !worldBlushes.any { it.contains(intersectionPoint) }) {
+                            return true
+                        }
                     }
                 }
             }
@@ -713,14 +676,14 @@ class DrawingPanel : StackPane() {
                     continue
                 }
                 val meshAABB = AABB.fromCube(mesh.getTransformedVertices())
-                if ((testPoint.x).toInt() >= (meshAABB.min.x).toInt() &&
-                    (testPoint.x).toInt() <= (meshAABB.max.x).toInt() &&
-                    (testPoint.y).toInt() >= (meshAABB.min.y).toInt() &&
-                    (testPoint.y).toInt() <= (meshAABB.max.y).toInt() &&
-                    (testPoint.z).toInt() >= (meshAABB.min.z).toInt() &&
-                    (testPoint.z).toInt() <= (meshAABB.max.z).toInt()) {
-
-                    return true
+                if (meshAABB.contains(testPoint)) {
+                    val worldBlushes = mesh.mesh.blushes.map { blush ->
+                        val transformedCorners = blush.getCorners().map { corner -> mesh.transformMatrix.transform(corner) }
+                        AABB.fromCube(transformedCorners)
+                    }
+                    if (worldBlushes.isEmpty() || !worldBlushes.any { it.contains(testPoint) }) {
+                        return true
+                    }
                 }
             }
         }
@@ -853,6 +816,10 @@ class DrawingPanel : StackPane() {
                         }
 
                         val lightGrid = faceLightGrids[Pair(mesh, faceIndex)]
+                        val worldBlushes = mesh.mesh.blushes.map { blush ->
+                            val transformedCorners = blush.getCorners().map { corner -> mesh.transformMatrix.transform(corner) }
+                            AABB.fromCube(transformedCorners)
+                        }
 
                         for ((triWorld, triUV) in triangles) {
                             val clippedTriangles = clipTriangleAgainstNearPlane(triWorld, triUV, viewMatrix, 0.1)
@@ -868,7 +835,7 @@ class DrawingPanel : StackPane() {
                                 }
                                 if (projectedVertices.size == 3) {
                                     val faceTexture = mesh.faceTextures[faceIndex] ?: mesh.texture
-                                    renderQueue.add(RenderableFace(projectedVertices, originalClipW, clippedUVs, mesh.mesh.color, false, faceTexture, clippedW, lightGrid))
+                                    renderQueue.add(RenderableFace(projectedVertices, originalClipW, clippedUVs, mesh.mesh.color, false, faceTexture, clippedW, lightGrid, worldBlushes))
                                 }
                             }
                         }
@@ -891,10 +858,11 @@ class DrawingPanel : StackPane() {
     }
 
     private fun rasterizeTexturedTriangle(pixelBuffer: IntArray, renderableFace: RenderableFace, screenWidth: Int, screenHeight: Int) {
-        val (screenVertices, originalClipW, textureVertices, color, _, texture, _, lightGrid) = renderableFace
+        val (screenVertices, originalClipW, textureVertices, color, _, texture, worldVertices, lightGrid, blushes) = renderableFace
         if (screenVertices.size != 3 || textureVertices.size != 3 || originalClipW.size != 3 || texture == null) return
 
         val v0 = screenVertices[0]; val v1 = screenVertices[1]; val v2 = screenVertices[2]
+        val wVert0 = worldVertices[0]; val wVert1 = worldVertices[1]; val wVert2 = worldVertices[2]
         val uv0 = textureVertices[0]; val uv1 = textureVertices[1]; val uv2 = textureVertices[2]
         val w0 = originalClipW[0]; val w1 = originalClipW[1]; val w2 = originalClipW[2]
         val texReader = texture.pixelReader
@@ -920,6 +888,10 @@ class DrawingPanel : StackPane() {
         val u1_prime = uv1.x / w1; val v1_prime = uv1.y / w1; val z1_inv_prime = 1.0 / w1
         val u2_prime = uv2.x / w2; val v2_prime = uv2.y / w2; val z2_inv_prime = 1.0 / w2
 
+        val wVert0_prime = wVert0 / w0
+        val wVert1_prime = wVert1 / w1
+        val wVert2_prime = wVert2 / w2
+
         val ambientR = color.red * ambientIntensity
         val ambientG = color.green * ambientIntensity
         val ambientB = color.blue * ambientIntensity
@@ -938,14 +910,19 @@ class DrawingPanel : StackPane() {
                     val beta = barycentric_w1 * invTotalArea
                     val gamma = 1.0 - alpha - beta
 
-                    val pixelIndex = px + rowOffset
                     val interpolated_z_inv_prime = alpha * z0_inv_prime + beta * z1_inv_prime + gamma * z2_inv_prime
+                    if (interpolated_z_inv_prime < 1e-6) continue
+                    val inv_z_prime = 1.0 / interpolated_z_inv_prime
+
+                    val interpolatedWorldPos = (wVert0_prime * alpha + wVert1_prime * beta + wVert2_prime * gamma) * inv_z_prime
+                    if (blushes.any { it.contains(interpolatedWorldPos) }) {
+                        continue
+                    }
+
+                    val pixelIndex = px + rowOffset
                     val interpolatedZ = alpha * v0.z + beta * v1.z + gamma * v2.z
 
                     if (interpolatedZ < depthBuffer[pixelIndex]) {
-                        if (interpolated_z_inv_prime < 1e-6) continue
-
-                        val inv_z_prime = 1.0 / interpolated_z_inv_prime
                         val u = (alpha * u0_prime + beta * u1_prime + gamma * u2_prime) * inv_z_prime
                         val v = (alpha * v0_prime + beta * v1_prime + gamma * v2_prime) * inv_z_prime
                         val texX = (u * (texWidth - 1)).toInt().coerceIn(0, texWidth - 1)

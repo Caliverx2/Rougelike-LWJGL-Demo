@@ -722,52 +722,58 @@ fun createCapsuleMesh(size: Double, color: Color): Mesh {
 }
 
 fun createMapMesh(size: Double, color: Color): Mesh {
-    val hs = (size / 100.0) * 5
+    val hs = (size * 10.0) / 100.0
 
     val vertices = listOf(
-        Vector3d(-50.0 * hs, 0.0 * hs, -50.0 * hs),
-        Vector3d(0.0 * hs, 0.0 * hs, -50.0 * hs),
-        Vector3d(0.0 * hs, 0.0 * hs, 0.0 * hs),
-        Vector3d(-50.0 * hs, 0.0 * hs, 0.0 * hs),
-        Vector3d(0.0 * hs, 0.0 * hs, 0.0 * hs),
-        Vector3d(0.0 * hs, 0.0 * hs, -50.0 * hs),
-        Vector3d(50.0 * hs, 0.0 * hs, -50.0 * hs),
-        Vector3d(50.0 * hs, 0.0 * hs, 0.0 * hs),
-        Vector3d(0.0 * hs, 0.0 * hs, 0.0 * hs),
-        Vector3d(0.0 * hs, 0.0 * hs, 0.0 * hs),
-        Vector3d(50.0 * hs, 0.0 * hs, -50.0 * hs),
-        Vector3d(100.0 * hs, 0.0 * hs, -50.0 * hs),
-        Vector3d(100.0 * hs, 0.0 * hs, 0.0 * hs),
-        Vector3d(50.0 * hs, 0.0 * hs, 0.0 * hs),
-        Vector3d(-50.0 * hs, 50.0 * hs, -50.0 * hs),
-        Vector3d(0.0 * hs, 50.0 * hs, -50.0 * hs),
-        Vector3d(50.0 * hs, 50.0 * hs, -50.0 * hs),
-        Vector3d(100.0 * hs, 50.0 * hs, -50.0 * hs),
-        Vector3d(-50.0 * hs, 50.0 * hs, 0.0 * hs),
-        Vector3d(0.0 * hs, 50.0 * hs, 0.0 * hs),
-        Vector3d(50.0 * hs, 50.0 * hs, 0.0 * hs),
-        Vector3d(100.0 * hs, 50.0 * hs, 0.0 * hs),
+        Vector3d(-75.0 * hs, 0.0 * hs, -25.0 * hs),
+        Vector3d(-25.0 * hs, 0.0 * hs, -25.0 * hs),
+        Vector3d(-25.0 * hs, 0.0 * hs, 25.0 * hs),
+        Vector3d(-75.0 * hs, 0.0 * hs, 25.0 * hs),
+        Vector3d(-25.0 * hs, 0.0 * hs, -25.0 * hs),
+        Vector3d(25.0 * hs, 0.0 * hs, -25.0 * hs),
+        Vector3d(25.0 * hs, 0.0 * hs, 25.0 * hs),
+        Vector3d(-25.0 * hs, 0.0 * hs, 25.0 * hs),
+        Vector3d(25.0 * hs, 0.0 * hs, -25.0 * hs),
+        Vector3d(75.0 * hs, 0.0 * hs, -25.0 * hs),
+        Vector3d(75.0 * hs, 0.0 * hs, 25.0 * hs),
+        Vector3d(25.0 * hs, 0.0 * hs, 25.0 * hs),
+        Vector3d(-75.0 * hs, 50.0 * hs, -25.0 * hs),
+        Vector3d(-25.0 * hs, 50.0 * hs, -25.0 * hs),
+        Vector3d(25.0 * hs, 50.0 * hs, -25.0 * hs),
+        Vector3d(75.0 * hs, 50.0 * hs, -25.0 * hs),
+        Vector3d(-75.0 * hs, 50.0 * hs, 25.0 * hs),
+        Vector3d(-25.0 * hs, 50.0 * hs, 25.0 * hs),
+        Vector3d(25.0 * hs, 50.0 * hs, 25.0 * hs),
+        Vector3d(75.0 * hs, 50.0 * hs, 25.0 * hs),
     )
 
     val faces: List<List<Int>> = listOf(
-        listOf(0, 1, 2, 3),
-        listOf(3, 2, 1, 0),
-        listOf(5, 6, 7, 8),
-        listOf(8, 7, 6, 5),
-        listOf(10, 11, 12, 13),
-        listOf(13, 12, 11, 10),
-        listOf(14, 0, 1, 15),
-        listOf(15, 1, 6, 16),
-        listOf(16, 6, 11, 17),
-        listOf(17, 11, 12, 21),
-        listOf(21, 12, 7, 20),
-        listOf(20, 7, 2, 19),
-        listOf(19, 2, 3, 18),
-        listOf(18, 3, 0, 14),
-        listOf(15, 1, 2, 19),
-        listOf(19, 2, 1, 15),
-        listOf(16, 6, 7, 20),
-        listOf(20, 7, 6, 16),
+        listOf(1, 2, 3, 0),
+        listOf(2, 1, 0, 3),
+        listOf(5, 6, 7, 4),
+        listOf(6, 5, 4, 7),
+        listOf(9, 10, 11, 8),
+        listOf(10, 9, 8, 11),
+        listOf(0, 1, 13, 12),
+        listOf(1, 5, 14, 13),
+        listOf(5, 9, 15, 14),
+        listOf(9, 10, 19, 15),
+        listOf(10, 6, 18, 19),
+        listOf(6, 2, 17, 18),
+        listOf(2, 3, 16, 17),
+        listOf(3, 0, 12, 16),
+        listOf(1, 2, 17, 13),
+        listOf(2, 1, 13, 17),
+        listOf(5, 6, 18, 14),
+        listOf(6, 5, 14, 18),
+        listOf(3, 2, 17, 16),
+        listOf(2, 6, 18, 17),
+        listOf(6, 10, 19, 18),
+        listOf(10, 9, 15, 19),
+        listOf(9, 5, 14, 15),
+        listOf(5, 1, 13, 14),
+        listOf(1, 0, 12, 13),
+        listOf(0, 3, 16, 12),
     )
 
     data class Edge(val a: Int, val b: Int)
@@ -776,32 +782,32 @@ fun createMapMesh(size: Double, color: Color): Mesh {
         Edge(a=1, b=2),
         Edge(a=2, b=3),
         Edge(a=3, b=0),
+        Edge(a=4, b=5),
         Edge(a=5, b=6),
         Edge(a=6, b=7),
-        Edge(a=7, b=8),
-        Edge(a=8, b=5),
+        Edge(a=7, b=4),
+        Edge(a=8, b=9),
+        Edge(a=9, b=10),
         Edge(a=10, b=11),
-        Edge(a=11, b=12),
-        Edge(a=12, b=13),
-        Edge(a=13, b=10),
-        Edge(a=21, b=20),
-        Edge(a=20, b=19),
+        Edge(a=11, b=8),
         Edge(a=19, b=18),
-        Edge(a=18, b=14),
+        Edge(a=18, b=17),
+        Edge(a=17, b=16),
+        Edge(a=16, b=12),
+        Edge(a=12, b=13),
+        Edge(a=13, b=14),
         Edge(a=14, b=15),
-        Edge(a=15, b=16),
-        Edge(a=16, b=17),
-        Edge(a=17, b=21),
-        Edge(a=20, b=16),
         Edge(a=15, b=19),
-        Edge(a=1, b=15),
-        Edge(a=14, b=0),
-        Edge(a=6, b=16),
-        Edge(a=17, b=11),
-        Edge(a=12, b=21),
-        Edge(a=20, b=7),
-        Edge(a=2, b=19),
-        Edge(a=18, b=3),
+        Edge(a=18, b=14),
+        Edge(a=13, b=17),
+        Edge(a=1, b=13),
+        Edge(a=12, b=0),
+        Edge(a=5, b=14),
+        Edge(a=15, b=9),
+        Edge(a=10, b=19),
+        Edge(a=18, b=6),
+        Edge(a=2, b=17),
+        Edge(a=16, b=3),
     )
 
     val uvs: List<List<Vector3d>> = faces.map { face ->
@@ -811,5 +817,56 @@ fun createMapMesh(size: Double, color: Color): Mesh {
             else -> face.map { Vector3d(0.0,0.0,0.0) }
         }
     }
-    return Mesh(vertices, faces, uvs, color)
+
+    val textureMapping = mapOf(
+        0 to "floor",
+        1 to "floor",
+        2 to "floor",
+
+        3 to "floor",
+        4 to "floor",
+        5 to "floor",
+
+        6 to "ceiling",
+        7 to "ceiling",
+        8 to "ceiling",
+
+        9 to "ceiling",
+
+        10 to "ceiling",
+        11 to "ceiling",
+        12 to "ceiling",
+
+        13 to "ceiling",
+
+        14 to "bricks",
+        15 to "bricks",
+        16 to "bricks",
+        17 to "bricks",
+
+        18 to "blackBricks",
+        19 to "blackBricks",
+        20 to "blackBricks",
+
+        21 to "blackBricks",
+
+        22 to "blackBricks",
+        23 to "blackBricks",
+        24 to "blackBricks",
+
+        25 to "blackBricks",
+    )
+
+    val blushes = listOf(
+        AABB(
+            min = Vector3d(-29.0 * hs, 10.0 * hs, -5.0 * hs),
+            max = Vector3d(-21.0 * hs, 0.001 * hs , 5.0 * hs),
+        ),
+        AABB(
+            min = Vector3d(29.0 * hs, 10.0 * hs, -5.0 * hs),
+            max = Vector3d(21.9 * hs, 0.001 * hs , 5.0 * hs),
+        )
+    )
+
+    return Mesh(vertices, faces, uvs, color, blushes = blushes, faceTextureNames = textureMapping)
 }

@@ -169,7 +169,8 @@ data class RenderableFace(
     val isEdge: Boolean,
     val texture: Image? = null,
     val worldVertices: List<Vector3d> = listOf(),
-    val lightGrid: Array<Array<Color>>? = null
+    val lightGrid: Array<Array<Color>>? = null,
+    val blushes: List<AABB> = emptyList()
 )
 
 data class Mesh(
@@ -177,7 +178,8 @@ data class Mesh(
     val faces: List<List<Int>>,
     val faceUVs: List<List<Vector3d>>,
     val color: Color,
-    val faceTextureNames: Map<Int, String> = emptyMap()
+    val faceTextureNames: Map<Int, String> = emptyMap(),
+    val blushes: List<AABB> = emptyList()
 )
 
 class PlacedMesh(
@@ -216,6 +218,25 @@ data class AABB(val min: Vector3d, val max: Vector3d) {
             }
             return AABB(Vector3d(minX, minY, minZ), Vector3d(maxX, maxY, maxZ))
         }
+    }
+
+    fun getCorners(): List<Vector3d> {
+        return listOf(
+            Vector3d(min.x, min.y, min.z),
+            Vector3d(max.x, min.y, min.z),
+            Vector3d(min.x, max.y, min.z),
+            Vector3d(max.x, max.y, min.z),
+            Vector3d(min.x, min.y, max.z),
+            Vector3d(max.x, min.y, max.z),
+            Vector3d(min.x, max.y, max.z),
+            Vector3d(max.x, max.y, max.z)
+        )
+    }
+
+    fun contains(p: Vector3d): Boolean {
+        return p.x >= min.x && p.x <= max.x &&
+                p.y >= min.y && p.y <= max.y &&
+                p.z >= min.z && p.z <= max.z
     }
 
     fun intersects(other: AABB): Boolean {
