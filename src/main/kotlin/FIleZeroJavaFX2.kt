@@ -151,8 +151,42 @@ class DrawingPanel : StackPane() {
             "ceiling" to texCeiling,
             "floor" to texFloor,
             "skybox" to texSkybox,
+
+            "red" to createColorTexture(Color.RED),
+            "darkRed" to createColorTexture(Color.DARKRED),
+            "blue" to createColorTexture(Color.BLUE),
+            "darkBlue" to createColorTexture(Color.DARKBLUE),
             "green" to createColorTexture(Color.GREEN),
             "darkGreen" to createColorTexture(Color.DARKGREEN),
+            "gray" to createColorTexture(Color.GRAY),
+            "darkGray" to createColorTexture(Color.DARKGRAY),
+            "orange" to createColorTexture(Color.ORANGE),
+            "darkOrange" to createColorTexture(Color.DARKORANGE),
+            "yellow" to createColorTexture(Color.YELLOW),
+            "darkGoldenrod" to createColorTexture(Color.DARKGOLDENROD),
+            "cyan" to createColorTexture(Color.CYAN),
+            "darkCyan" to createColorTexture(Color.DARKCYAN),
+            "magenta" to createColorTexture(Color.MAGENTA),
+            "darkMagenta" to createColorTexture(Color.DARKMAGENTA),
+            "brown" to createColorTexture(Color.BROWN),
+            "navy" to createColorTexture(Color.NAVY),
+            "purple" to createColorTexture(Color.PURPLE),
+            "darkViolet" to createColorTexture(Color.DARKVIOLET),
+            "olive" to createColorTexture(Color.OLIVE),
+            "maroon" to createColorTexture(Color.MAROON),
+            "teal" to createColorTexture(Color.TEAL),
+            "black" to createColorTexture(Color.web("#000000")),
+            "darkPurple" to createColorTexture(Color.web("#7E2553")),
+            "lightGray" to createColorTexture(Color.web("#C2C3C7")),
+            "white" to createColorTexture(Color.web("#FFF1E8")),
+            "indigo" to createColorTexture(Color.web("#83769C")),
+            "pink" to createColorTexture(Color.web("#FF77A8")),
+            "peach" to createColorTexture(Color.web("#FFCCAA")),
+            "silver" to createColorTexture(Color.SILVER),
+            "gold" to createColorTexture(Color.GOLD),
+            "mintCream" to createColorTexture(Color.MINTCREAM),
+            "salmon" to createColorTexture(Color.SALMON),
+            "turquoise" to createColorTexture(Color.TURQUOISE)
         )
 
         fun placedTextures(mesh: Mesh): Map<Int, Image> {
@@ -186,7 +220,7 @@ class DrawingPanel : StackPane() {
         meshes.add(PlacedMesh(offroadCar,Matrix4x4.translation(pos6.x, pos6.y, pos6.z), texture = texBlackBricks))
 
         val pos7 = Vector3d(17.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(stair,Matrix4x4.translation(pos7.x, pos7.y, pos7.z), texture = texCeiling))
+        meshes.add(PlacedMesh(stair,Matrix4x4.translation(pos7.x, pos7.y, pos7.z), texture = texCeiling, faceTextures = placedTextures(stair)))
 
         val pos8 = Vector3d(19.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(sphere,Matrix4x4.translation(pos8.x, pos8.y, pos8.z), texture = texCeiling))

@@ -21,11 +21,13 @@ data class Vector3d(val x: Double, val y: Double, val z: Double)
 data class Edge(val a: Int, val b: Int)
 data class Face(val indices: List<Int>)
 data class Mesh(val vertices: List<Vector3d>, val faces: List<List<Int>>, val faceUVs: List<List<Vector3d>>, val color: Color)
+data class AABB(val min: Vector3d, val max: Vector3d)
 
 class ModelEditor : Application() {
     private val vertices = mutableListOf<Vector3d>()
     private val edges = mutableListOf<Edge>()
     private val faces = mutableListOf<Face>()
+    private val blushes = mutableListOf<AABB>()
 
     private var dragStartVertex: Int? = null
     private val selectedForFace = mutableListOf<Int>()
@@ -458,7 +460,7 @@ class ModelEditor : Application() {
     }
 
     private fun exportMeshFunction() {
-        println("fun createCustomMesh(size: Double, color: Color): Mesh {")
+        println("\nfun createCustomMesh(size: Double, color: Color): Mesh {")
         println("    val hs = size / 100.0")
 
         println("\n    val vertices = listOf(")
@@ -474,6 +476,12 @@ class ModelEditor : Application() {
         for (e in edges) println("        $e,")
         println("    )")
 
+        println("\n    val textureMapping = mapOf(")
+        println("    )")
+
+        println("\n    val blushes = listOf(")
+        println("    )")
+
         println("\n    val uvs: List<List<Vector3d>> = faces.map { face ->")
         println("        when(face.size) {")
         println("            3 -> listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))")
@@ -483,6 +491,7 @@ class ModelEditor : Application() {
         println("    }")
         println("    return Mesh(vertices, faces, uvs, color)")
         println("}")
+        println("\n")
     }
 
     private fun showImportDialog(gc: GraphicsContext) {
@@ -586,6 +595,7 @@ class ModelEditor : Application() {
             vertices.clear()
             edges.clear()
             faces.clear()
+            blushes.clear()
             selectedForFace.clear()
             selectedVertex = null
 

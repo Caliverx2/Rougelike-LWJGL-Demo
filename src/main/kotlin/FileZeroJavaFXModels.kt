@@ -421,6 +421,19 @@ fun createStairMesh(size: Double, color: Color): Mesh {
         listOf(6, 1, 0, 7),
         listOf(4, 13, 12, 5),
     )
+    val textureMapping = mapOf(
+        1 to "floor",
+
+        0 to "teal",
+        2 to "teal",
+        3 to "teal",
+        4 to "teal",
+        5 to "teal",
+        6 to "teal",
+        7 to "teal",
+        8 to "teal",
+        9 to "teal",
+    )
     val uvs: List<List<Vector3d>> = faces.map { face ->
         when(face.size) {
             3 -> listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))
@@ -428,7 +441,7 @@ fun createStairMesh(size: Double, color: Color): Mesh {
             else -> face.map { Vector3d(0.0,0.0,0.0) }
         }
     }
-    return Mesh(vertices, faces, uvs, color)
+    return Mesh(vertices, faces, uvs, color, faceTextureNames = textureMapping)
 }
 
 fun createCapsuleMesh(size: Double, color: Color): Mesh {
