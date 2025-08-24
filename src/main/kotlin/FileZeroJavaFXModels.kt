@@ -883,3 +883,52 @@ fun createMapMesh(size: Double, color: Color): Mesh {
 
     return Mesh(vertices, faces, uvs, color, blushes = blushes, faceTextureNames = textureMapping)
 }
+
+fun createCustomMesh(size: Double, color: Color): Mesh {
+    val hs = size / 100.0
+
+    val vertices = listOf(
+        Vector3d(-50.0 * hs, 0.0 * hs, -50.0 * hs),
+        Vector3d(50.0 * hs, 0.0 * hs, -50.0 * hs),
+        Vector3d(50.0 * hs, 0.0 * hs, 50.0 * hs),
+        Vector3d(-50.0 * hs, 0.0 * hs, 50.0 * hs),
+        Vector3d(-50.0 * hs, 100.0 * hs, -50.0 * hs),
+        Vector3d(50.0 * hs, 100.0 * hs, -50.0 * hs),
+        Vector3d(50.0 * hs, 25.0 * hs, 50.0 * hs),
+        Vector3d(-50.0 * hs, 20.0 * hs, 50.0 * hs),
+    )
+
+    val faces: List<List<Int>> = listOf(
+        listOf(3, 2, 6, 7),
+        listOf(1, 0, 4, 5),
+        listOf(2, 1, 5, 6),
+        listOf(0, 3, 7, 4),
+        listOf(7, 6, 5, 4),
+        listOf(0, 1, 2, 3),
+    )
+
+    data class Edge(val a: Int, val b: Int)
+    val edges: List<Edge> = listOf(
+        Edge(a=0, b=1),
+        Edge(a=1, b=2),
+        Edge(a=2, b=3),
+        Edge(a=3, b=0),
+        Edge(a=4, b=5),
+        Edge(a=5, b=6),
+        Edge(a=6, b=7),
+        Edge(a=7, b=4),
+        Edge(a=0, b=4),
+        Edge(a=1, b=5),
+        Edge(a=2, b=6),
+        Edge(a=3, b=7),
+    )
+
+    val uvs: List<List<Vector3d>> = faces.map { face ->
+        when(face.size) {
+            3 -> listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))
+            4 -> listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0))
+            else -> face.map { Vector3d(0.0,0.0,0.0) }
+        }
+    }
+    return Mesh(vertices, faces, uvs, color)
+}
