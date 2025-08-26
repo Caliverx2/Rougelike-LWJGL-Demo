@@ -985,25 +985,25 @@ class DrawingPanel : StackPane() {
                             Color.BLACK
                         }
 
-                        val illR = (ambientR * 2 + dynamicLight.red * (ambientIntensity * globalLightIntensity))
-                        val illG = (ambientG * 2 + dynamicLight.green * (ambientIntensity * globalLightIntensity))
-                        val illB = (ambientB * 2 + dynamicLight.blue * (ambientIntensity * globalLightIntensity))
+                        val ambientLitR = texColor.red * (ambientR * 2)
+                        val ambientLitG = texColor.green * (ambientG * 2)
+                        val ambientLitB = texColor.blue * (ambientB * 2)
 
-                        val litR = texColor.red * illR
-                        val litG = texColor.green * illG
-                        val litB = texColor.blue * illB
+                        val dynamicLightR = dynamicLight.red * (ambientIntensity * globalLightIntensity)
+                        val dynamicLightG = dynamicLight.green * (ambientIntensity * globalLightIntensity)
+                        val dynamicLightB = dynamicLight.blue * (ambientIntensity * globalLightIntensity)
 
-                        var r = litR
-                        var g = litG
-                        var b = litB
+                        var r = ambientLitR + dynamicLightR/4
+                        var g = ambientLitG + dynamicLightG/4
+                        var b = ambientLitB + dynamicLightB/4
 
                         if (texture != this.texSkybox) {
                             val distance = inv_z_prime
                             val fogFactor = ((distance - fogStartDistance) / (fogEndDistance - fogStartDistance)).coerceIn(0.0, 1.0) * fogDensity
 
-                            r = litR * (1 - fogFactor) + fogR * fogFactor
-                            g = litG * (1 - fogFactor) + fogG * fogFactor
-                            b = litB * (1 - fogFactor) + fogB * fogFactor
+                            r = r * (1 - fogFactor) + fogR * fogFactor
+                            g = g * (1 - fogFactor) + fogG * fogFactor
+                            b = b * (1 - fogFactor) + fogB * fogFactor
                         }
 
                         pixelBuffer[pixelIndex] = (0xFF shl 24) or
