@@ -17,7 +17,7 @@ import javafx.stage.Modality
 import javafx.stage.Stage
 import kotlin.math.*
 
-data class Vector3d(val x: Double, val y: Double, val z: Double)
+data class Vector3d(var x: Double, var y: Double, var z: Double)
 data class Edge(val a: Int, val b: Int)
 data class Face(val indices: List<Int>)
 data class Mesh(val vertices: List<Vector3d>, val faces: List<List<Int>>, val faceUVs: List<List<Vector3d>>, val color: Color)
@@ -29,9 +29,12 @@ class ModelEditor : Application() {
     private val faces = mutableListOf<Face>()
     private val blushes = mutableListOf<AABB>()
 
-    private var dragStartVertex: Int? = null
-    private val selectedForFace = mutableListOf<Int>()
     private var selectedVertex: Int? = null
+    private val groupSelectedVertices = mutableSetOf<Int>()
+    private var groupGizmoPosition: Vector3d? = null
+    private val selectedForFace = mutableListOf<Int>()
+
+    private var dragStartVertex: Int? = null
 
     private var angleX = -2.4
     private var angleY = 0.2
@@ -40,43 +43,156 @@ class ModelEditor : Application() {
     private var deleteMode = false
     private var faceSelectMode = false // tryb Q
 
+    // Gizmo
+    private var gizmoAxis: Char? = null
+    private var dragStartX: Double = 0.0
+    private var dragStartY: Double = 0.0
+    private var dragStartVertexPos: Vector3d? = null
+    private var dragStartGroupPositions: Map<Int, Vector3d>? = null
+    private val gizmoSize = 20.0
+
     override fun start(stage: Stage) {
         val canvas = Canvas((1920.0 * 2) / 3, (1080.0 * 2) / 3)
         val gc = canvas.graphicsContext2D
 
         canvas.setOnMousePressed { e ->
-            val clickedVertex = findClosestVertex(e.x, e.y, canvas.width, canvas.height)
+            val w = canvas.width
+            val h = canvas.height
+
+            val gizmoOrigin = if (groupSelectedVertices.isNotEmpty()) groupGizmoPosition else if (selectedVertex != null) vertices.getOrNull(selectedVertex!!) else null
+            if (e.button == MouseButton.PRIMARY && gizmoOrigin != null) {
+                val axis = findClosestGizmoAxis(e.x, e.y, w, h)
+                if (axis != null) {
+                    gizmoAxis = axis
+                    dragStartX = e.x
+                    dragStartY = e.y
+                    if (groupSelectedVertices.isNotEmpty()) {
+                        dragStartGroupPositions = groupSelectedVertices.associateWith { vertices[it].copy() }
+                        dragStartVertexPos = groupGizmoPosition!!.copy()
+                    } else {
+                        dragStartVertexPos = vertices[selectedVertex!!].copy()
+                    }
+                    draw(gc, w, h, e.x, e.y)
+                    return@setOnMousePressed
+                }
+            }
+
+            val clickedVertex = findClosestVertex(e.x, e.y, w, h)
 
             if (faceSelectMode && e.button == MouseButton.PRIMARY && clickedVertex != null) {
                 if (!selectedForFace.contains(clickedVertex)) {
                     selectedForFace.add(clickedVertex)
                 }
-                draw(gc, canvas.width, canvas.height, e.x, e.y)
+                draw(gc, w, h, e.x, e.y)
                 return@setOnMousePressed
             }
 
             if (deleteMode && e.button == MouseButton.PRIMARY && clickedVertex == null) {
-                val faceIndex = findFaceUnderCursor(e.x, e.y, canvas.width, canvas.height)
-                if (faceIndex != null) {
-                    faces.removeAt(faceIndex)
+                val faceResult = findFaceUnderCursor(e.x, e.y, w, h)
+                if (faceResult != null) {
+                    faces.removeAt(faceResult.first)
                 }
-                draw(gc, canvas.width, canvas.height, e.x, e.y)
+                draw(gc, w, h, e.x, e.y)
                 return@setOnMousePressed
             }
 
             if (e.button == MouseButton.PRIMARY) {
-                if (clickedVertex == null) {
-                    vertices.add(Vector3d(0.0, 0.0, 0.0))
-                    selectedVertex = vertices.size - 1
-                } else {
+                selectedVertex = null
+                groupSelectedVertices.clear()
+                groupGizmoPosition = null
+                dragStartVertex = null
+
+                if (clickedVertex != null) {
                     selectedVertex = clickedVertex
                     dragStartVertex = clickedVertex
+                } else {
+                    val closestFaceResult = findFaceUnderCursor(e.x, e.y, w, h)
+                    val closestEdgeResult = findClosestEdge(e.x, e.y, w, h)
+
+                    val faceDepth = closestFaceResult?.second ?: Double.MAX_VALUE
+                    val edgeDepth = closestEdgeResult?.second ?: Double.MAX_VALUE
+
+                    if (faceDepth < edgeDepth && faceDepth != Double.MAX_VALUE) {
+                        val face = faces[closestFaceResult!!.first]
+                        groupSelectedVertices.addAll(face.indices)
+                    } else if (edgeDepth != Double.MAX_VALUE) {
+                        val edge = edges[closestEdgeResult!!.first]
+                        groupSelectedVertices.add(edge.a)
+                        groupSelectedVertices.add(edge.b)
+                    }
+
+                    if (groupSelectedVertices.isNotEmpty()) {
+                        var sumX = 0.0; var sumY = 0.0; var sumZ = 0.0
+                        groupSelectedVertices.forEach { val v = vertices[it]; sumX += v.x; sumY += v.y; sumZ += v.z }
+                        val count = groupSelectedVertices.size
+                        groupGizmoPosition = Vector3d(sumX / count, sumY / count, sumZ / count)
+                    } else {
+                        vertices.add(Vector3d(0.0, 0.0, 0.0))
+                        selectedVertex = vertices.size - 1
+                    }
                 }
             }
-            draw(gc, canvas.width, canvas.height, e.x, e.y)
+            draw(gc, w, h, e.x, e.y)
+        }
+
+        canvas.setOnMouseDragged { e ->
+            if (gizmoAxis != null) {
+                val w = canvas.width
+                val h = canvas.height
+
+                val originPos = dragStartVertexPos ?: return@setOnMouseDragged
+
+                val axisUnitVector = when(gizmoAxis) {
+                    'X' -> Vector3d(-1.0, 0.0, 0.0)
+                    'Y' -> Vector3d(0.0, 1.0, 0.0)
+                    'Z' -> Vector3d(0.0, 0.0, -1.0)
+                    else -> return@setOnMouseDragged
+                }
+                val axisEndPoint = Vector3d(originPos.x + axisUnitVector.x, originPos.y + axisUnitVector.y, originPos.z + axisUnitVector.z)
+
+                val originProjected = project(originPos, w, h)
+                val axisEndProjected = project(axisEndPoint, w, h)
+
+                if (!originProjected.first.isFinite() || !axisEndProjected.first.isFinite()) return@setOnMouseDragged
+
+                val screenAxisVx = axisEndProjected.first - originProjected.first
+                val screenAxisVy = axisEndProjected.second - originProjected.second
+
+                val mouseDx = e.x - dragStartX
+                val mouseDy = e.y - dragStartY
+
+                val screenAxisLenSq = screenAxisVx * screenAxisVx + screenAxisVy * screenAxisVy
+                if (screenAxisLenSq < 1e-6) return@setOnMouseDragged
+
+                val dotProduct = mouseDx * screenAxisVx + mouseDy * screenAxisVy
+                val movementScale = dotProduct / screenAxisLenSq
+
+                val sensitivity = 1.0
+                val moveAmount = movementScale * sensitivity
+
+                val moveVector = Vector3d(axisUnitVector.x * moveAmount, axisUnitVector.y * moveAmount, axisUnitVector.z * moveAmount)
+
+                if (groupSelectedVertices.isNotEmpty() && dragStartGroupPositions != null) {
+                    groupSelectedVertices.forEach { index ->
+                        val startPos = dragStartGroupPositions!![index]
+                        if (startPos != null) {
+                            vertices[index] = Vector3d(startPos.x + moveVector.x, startPos.y + moveVector.y, startPos.z + moveVector.z)
+                        }
+                    }
+                    groupGizmoPosition = Vector3d(originPos.x + moveVector.x, originPos.y + moveVector.y, originPos.z + moveVector.z)
+                } else if (selectedVertex != null) {
+                    vertices[selectedVertex!!] = Vector3d(originPos.x + moveVector.x, originPos.y + moveVector.y, originPos.z + moveVector.z)
+                }
+
+                draw(gc, canvas.width, canvas.height, e.x, e.y)
+            }
         }
 
         canvas.setOnMouseReleased { e ->
+            gizmoAxis = null
+            dragStartVertexPos = null
+            dragStartGroupPositions = null
+
             val releasedVertex = findClosestVertex(e.x, e.y, canvas.width, canvas.height)
             if (dragStartVertex != null && releasedVertex != null && releasedVertex != dragStartVertex) {
                 if (edges.none { (it.a == dragStartVertex && it.b == releasedVertex) || (it.a == releasedVertex && it.b == dragStartVertex) }) {
@@ -95,12 +211,6 @@ class ModelEditor : Application() {
                 KeyCode.A -> angleY -= 0.1
                 KeyCode.D -> angleY += 0.1
 
-                KeyCode.UP -> moveSelectedVertex(0.0, 0.0, -5.0)
-                KeyCode.DOWN -> moveSelectedVertex(0.0, 0.0, 5.0)
-                KeyCode.LEFT -> moveSelectedVertex(-5.0, 0.0, 0.0)
-                KeyCode.RIGHT -> moveSelectedVertex(5.0, 0.0, 0.0)
-                KeyCode.PLUS, KeyCode.EQUALS -> ifSelectedMoveY(5.0)
-                KeyCode.MINUS -> ifSelectedMoveY(-5.0)
                 KeyCode.PERIOD -> if (zoom < 1000) zoom += 25
                 KeyCode.COMMA -> if (zoom > 25) zoom -= 25
                 KeyCode.DIGIT1 -> addCubeAtOrigin()
@@ -128,6 +238,59 @@ class ModelEditor : Application() {
                         deleteMode = !deleteMode
                     }
                 }
+                KeyCode.R -> {
+                    if (selectedVertex != null) {
+                        selectedVertex?.let { index ->
+                            vertices.get(index).x = vertices.get(index).x.toInt() + 0.0
+                            vertices.get(index).y = vertices.get(index).y.toInt() + 0.0
+                            vertices.get(index).z = vertices.get(index).z.toInt() + 0.0
+                        }
+                    }
+                }
+
+                KeyCode.UP -> {
+                    if (selectedVertex != null) {
+                        selectedVertex?.let { index ->
+                            vertices.get(index).z -= 10.0
+                        }
+                    }
+                }
+                KeyCode.DOWN -> {
+                    if (selectedVertex != null) {
+                        selectedVertex?.let { index ->
+                            vertices.get(index).z += 10.0
+                        }
+                    }
+                }
+                KeyCode.LEFT -> {
+                    if (selectedVertex != null) {
+                        selectedVertex?.let { index ->
+                            vertices.get(index).x -= 10.0
+                        }
+                    }
+                }
+                KeyCode.RIGHT -> {
+                    if (selectedVertex != null) {
+                        selectedVertex?.let { index ->
+                            vertices.get(index).x += 10.0
+                        }
+                    }
+                }
+                KeyCode.EQUALS -> {
+                    if (selectedVertex != null) {
+                        selectedVertex?.let { index ->
+                            vertices.get(index).y -= 10.0
+                        }
+                    }
+                }
+                KeyCode.MINUS -> {
+                    if (selectedVertex != null) {
+                        selectedVertex?.let { index ->
+                            vertices.get(index).y += 10.0
+                        }
+                    }
+                }
+
                 KeyCode.E -> exportMeshFunction()
                 KeyCode.I -> showImportDialog(gc)
                 KeyCode.G -> println("$angleX $angleY")
@@ -146,24 +309,6 @@ class ModelEditor : Application() {
         draw(gc, canvas.width, canvas.height, 0.0, 0.0)
     }
 
-    private fun moveSelectedVertex(dx: Double, dy: Double, dz: Double) {
-        selectedVertex?.let {
-            vertices[it] = vertices[it].copy(
-                x = vertices[it].x + dx,
-                y = vertices[it].y + dy,
-                z = vertices[it].z + dz
-            )
-        }
-    }
-
-    private fun ifSelectedMoveY(dy: Double) {
-        selectedVertex?.let {
-            vertices[it] = vertices[it].copy(
-                y = vertices[it].y + dy
-            )
-        }
-    }
-
     private fun deleteSelectedVertex() {
         selectedVertex?.let { index ->
             edges.removeIf { it.a == index || it.b == index }
@@ -174,6 +319,13 @@ class ModelEditor : Application() {
             for (i in faces.indices) faces[i] = Face(faces[i].indices.map { fixIndex(it) })
             selectedVertex = null
         }
+    }
+
+    private fun getZInViewSpace(v: Vector3d): Double {
+        val cosY = cos(angleY); val sinY = sin(angleY)
+        val cosX = cos(angleX); val sinX = sin(angleX)
+        val zAfterYRot = v.x * sinY + v.z * cosY
+        return v.y * sinX + zAfterYRot * cosX
     }
 
     private fun findClosestVertex(mouseX: Double, mouseY: Double, w: Double, h: Double): Int? {
@@ -192,13 +344,52 @@ class ModelEditor : Application() {
         return closestIdx
     }
 
-    private fun findFaceUnderCursor(mx: Double, my: Double, w: Double, h: Double): Int? {
-        for ((i, face) in faces.withIndex()) {
-            val pts = face.indices.map { project(vertices[it], w, h) }
-            if (pts.any { !it.first.isFinite() || !it.second.isFinite() }) continue
-            if (pointInPolygon(mx, my, pts)) return i
+    private fun findClosestEdge(mouseX: Double, mouseY: Double, w: Double, h: Double): Pair<Int, Double>? {
+        var closestEdgeIndex: Int? = null
+        var minAvgZ = Double.MAX_VALUE
+        val clickThreshold = 10.0
+
+        for ((i, edge) in edges.withIndex()) {
+            if (edge.a >= vertices.size || edge.b >= vertices.size) continue
+
+            val v1 = vertices[edge.a]
+            val v2 = vertices[edge.b]
+
+            val p1 = project(v1, w, h)
+            val p2 = project(v2, w, h)
+
+            if (p1.first.isFinite() && p1.second.isFinite() && p2.first.isFinite() && p2.second.isFinite()) {
+                val dist = pointToLineSegmentDistance(mouseX, mouseY, p1.first, p1.second, p2.first, p2.second)
+                if (dist < clickThreshold) {
+                    val z1 = getZInViewSpace(v1)
+                    val z2 = getZInViewSpace(v2)
+                    val avgZ = (z1 + z2) / 2.0
+
+                    if (avgZ < minAvgZ) {
+                        minAvgZ = avgZ
+                        closestEdgeIndex = i
+                    }
+                }
+            }
         }
-        return null
+        return if (closestEdgeIndex != null) Pair(closestEdgeIndex, minAvgZ) else null
+    }
+
+    private fun findFaceUnderCursor(mx: Double, my: Double, w: Double, h: Double): Pair<Int, Double>? {
+        var closestFace: Pair<Int, Double>? = null
+        faces.forEachIndexed { index, face ->
+            if (face.indices.any { it >= vertices.size }) return@forEachIndexed
+            val pts = face.indices.map { project(vertices[it], w, h) }
+            if (pts.any { !it.first.isFinite() || !it.second.isFinite() }) return@forEachIndexed
+
+            if (pointInPolygon(mx, my, pts)) {
+                val avgZ = face.indices.map { getZInViewSpace(vertices[it]) }.average()
+                if (closestFace == null || avgZ < closestFace!!.second) {
+                    closestFace = Pair(index, avgZ)
+                }
+            }
+        }
+        return closestFace
     }
 
     private fun pointInPolygon(px: Double, py: Double, polygon: List<Pair<Double, Double>>): Boolean {
@@ -613,7 +804,7 @@ class ModelEditor : Application() {
 
     private fun draw(gc: GraphicsContext, w: Double, h: Double, mouseX: Double, mouseY: Double) {
         gc.fill = Color.BLACK; gc.fillRect(0.0, 0.0, w, h)
-        drawGrid(gc, w, h); drawAxisMarker(gc, w, h)
+        drawGrid(gc, w, h)
 
         if (angleY > PI * 2) angleY -= PI * 2
         if (angleY < -PI * 2) angleY += PI * 2
@@ -624,7 +815,7 @@ class ModelEditor : Application() {
         val sortedFaces = try {
             faces.sortedByDescending { f ->
                 if (f.indices.any { it >= vertices.size }) 0.0
-                else f.indices.map { vertices[it].z }.average()
+                else f.indices.map { getZInViewSpace(vertices[it]) }.average()
             }
         } catch (e: Exception) {
             faces
@@ -638,12 +829,6 @@ class ModelEditor : Application() {
             gc.moveTo(pts[0].first, pts[0].second)
             for (i in 1 until pts.size) gc.lineTo(pts[i].first, pts[i].second)
             gc.closePath(); gc.fill()
-            // przekątna
-            gc.globalAlpha = 1.0; gc.stroke = Color.RED
-            val diagStart = pts[0]
-            val diagEnd = pts[pts.size / 2]
-            gc.strokeLine(diagStart.first, diagStart.second, diagEnd.first, diagEnd.second)
-            gc.globalAlpha = 0.2
         }
         gc.globalAlpha = 1.0
 
@@ -663,6 +848,7 @@ class ModelEditor : Application() {
             val p = project(v, w, h)
             if (p.first.isFinite() && p.second.isFinite()) {
                 gc.fill = when {
+                    groupSelectedVertices.contains(i) -> Color.PURPLE
                     selectedVertex == i -> Color.ORANGE
                     selectedForFace.contains(i) -> Color.CYAN
                     else -> Color.WHITE
@@ -670,19 +856,13 @@ class ModelEditor : Application() {
                 gc.fillOval(p.first - 4, p.second - 4, 8.0, 8.0)
             }
         }
-        drawCompass(gc, w, h)
+        drawOrientationGizmo(gc, w, h)
         drawVertexInfo(gc, w, h)
+        drawGizmo(gc, w, h)
     }
 
     private fun drawClippedLine(gc: GraphicsContext, p1World: Vector3d, p2World: Vector3d, w: Double, h: Double) {
         val zNearClip = -399.0
-
-        fun getZInViewSpace(v: Vector3d): Double {
-            val cosY = cos(angleY); val sinY = sin(angleY)
-            val cosX = cos(angleX); val sinX = sin(angleX)
-            val zAfterYRot = v.x * sinY + v.z * cosY
-            return v.y * sinX + zAfterYRot * cosX
-        }
 
         val z1 = getZInViewSpace(p1World)
         val z2 = getZInViewSpace(p2World)
@@ -738,42 +918,54 @@ class ModelEditor : Application() {
         }
     }
 
-    private fun drawAxisMarker(gc: GraphicsContext, w: Double, h: Double) {
-        val axisLength = 25.0
+    private fun drawOrientationGizmo(gc: GraphicsContext, w: Double, h: Double) {
+        val cx = w - 80.0
+        val cy = 80.0
+        val axisLength = 40.0
 
-        val originWorld = Vector3d(0.0, 0.0, 0.0)
-        val leftWorld = Vector3d(-axisLength, 0.0, 0.0)
-        val upWorld = Vector3d(0.0, axisLength, 0.0)
-        val forwardWorld = Vector3d(0.0, 0.0, -axisLength)
+        val xAxis = Vector3d(-1.0, 0.0, 0.0)
+        val yAxis = Vector3d(0.0, 1.0, 0.0)
+        val zAxis = Vector3d(0.0, 0.0, -1.0)
 
-        val origin = project(originWorld, w, h)
-        val left = project(leftWorld, w, h)
-        val up = project(upWorld, w, h)
-        val forward = project(forwardWorld, w, h)
+        val axes = listOf(
+            'X' to xAxis,
+            'Y' to yAxis,
+            'Z' to zAxis
+        ).map { (name, vec) ->
+            val rotatedZ = getRotatedZ(vec)
+            val projected = projectAxis(vec)
+            val color = when(name) {
+                'X' -> Color.RED
+                'Y' -> Color.GREEN
+                else -> Color.BLUE
+            }
+            Triple(rotatedZ, color, projected)
+        }.sortedBy { it.first }
 
-        if (origin.first.isFinite() && left.first.isFinite()) {
-            gc.stroke = Color.RED
-            gc.strokeLine(origin.first, origin.second, left.first, left.second)
+        gc.lineWidth = 2.5
+
+        for ((_, color, p) in axes) {
+            gc.stroke = color
+            gc.strokeLine(cx, cy, cx + p.first * axisLength, cy + p.second * axisLength)
         }
 
-        if (origin.first.isFinite() && up.first.isFinite()) {
-            gc.stroke = Color.GREEN
-            gc.strokeLine(origin.first, origin.second, up.first, up.second)
-        }
-
-        if (origin.first.isFinite() && forward.first.isFinite()) {
-            gc.stroke = Color.BLUE
-            gc.strokeLine(origin.first, origin.second, forward.first, forward.second)
-        }
+        gc.lineWidth = 1.0
     }
 
-    private fun drawCompass(gc: GraphicsContext, w: Double, h: Double) {
-        val radius = 40.0; val cx = w - 60; val cy = h - 60
-        gc.stroke = Color.WHITE; gc.strokeOval(cx - radius, cy - radius, radius * 2, radius * 2)
-        val zx = cx + radius * sin(angleY); val zy = cy - radius * cos(angleY)
-        gc.stroke = Color.BLUE; gc.strokeLine(cx, cy, zx, zy)
-        val xx = cx + radius * sin(angleY + PI / 2); val xy = cy - radius * cos(angleY + PI / 2)
-        gc.stroke = Color.YELLOW; gc.strokeLine(cx, cy, xx, xy)
+    private fun getRotatedZ(v: Vector3d): Double {
+        val cosY = cos(angleY); val sinY = sin(angleY)
+        val cosX = cos(angleX); val sinX = sin(angleX)
+        val z1 = v.x * sinY + v.z * cosY
+        return v.y * sinX + z1 * cosX
+    }
+
+    private fun projectAxis(v: Vector3d): Pair<Double, Double> {
+        val cosY = cos(angleY); val sinY = sin(angleY)
+        val cosX = cos(angleX); val sinX = sin(angleX)
+        val x1 = v.x * cosY - v.z * sinY
+        val z1 = v.x * sinY + v.z * cosY
+        val y2 = v.y * cosX - z1 * sinX
+        return Pair(x1, y2)
     }
 
     private fun drawVertexInfo(gc: GraphicsContext, w: Double, h: Double) {
@@ -795,8 +987,8 @@ class ModelEditor : Application() {
     private fun project(v: Vector3d, w: Double, h: Double): Pair<Double, Double> {
         val cosY = cos(angleY); val sinY = sin(angleY)
         val cosX = cos(angleX); val sinX = sin(angleX)
-        var x = v.x * cosY - v.z * sinY
-        var z = v.x * sinY + v.z * cosY
+        val x = v.x * cosY - v.z * sinY
+        val z = v.x * sinY + v.z * cosY
         var y = v.y
         val y2 = y * cosX - z * sinX
         val z2 = y * sinX + z * cosX
@@ -810,6 +1002,78 @@ class ModelEditor : Application() {
         val sx = w / 2 + x / denominator * (zoom / 100)
         val sy = h / 2 + y / denominator * (zoom / 100)
         return Pair(sx, sy)
+    }
+
+    private fun pointToLineSegmentDistance(px: Double, py: Double, x1: Double, y1: Double, x2: Double, y2: Double): Double {
+        val l2 = (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1)
+        if (l2 == 0.0) return hypot(px - x1, py - y1)
+        var t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2
+        t = max(0.0, min(1.0, t))
+        val projX = x1 + t * (x2 - x1)
+        val projY = y1 + t * (y2 - y1)
+        return hypot(px - projX, py - projY)
+    }
+
+    private fun findClosestGizmoAxis(mouseX: Double, mouseY: Double, w: Double, h: Double): Char? {
+        val gizmoOrigin = when {
+            groupSelectedVertices.isNotEmpty() -> groupGizmoPosition
+            selectedVertex != null -> vertices.getOrNull(selectedVertex!!)
+            else -> null
+        } ?: return null
+
+        val origin = project(gizmoOrigin, w, h)
+        if (!origin.first.isFinite()) return null
+
+        val clickThreshold = 10.0
+
+        val axes = mapOf(
+            'X' to project(gizmoOrigin.copy(x = gizmoOrigin.x - gizmoSize), w, h),
+            'Y' to project(gizmoOrigin.copy(y = gizmoOrigin.y + gizmoSize), w, h),
+            'Z' to project(gizmoOrigin.copy(z = gizmoOrigin.z - gizmoSize), w, h)
+        )
+
+        for ((axis, endPoint) in axes) {
+            if (!endPoint.first.isFinite() || !endPoint.second.isFinite()) continue
+            val dist = pointToLineSegmentDistance(mouseX, mouseY, origin.first, origin.second, endPoint.first, endPoint.second)
+            if (dist < clickThreshold) {
+                return axis
+            }
+        }
+        return null
+    }
+
+    private fun drawGizmo(gc: GraphicsContext, w: Double, h: Double) {
+        val gizmoOrigin = when {
+            groupSelectedVertices.isNotEmpty() -> groupGizmoPosition
+            selectedVertex != null -> vertices.getOrNull(selectedVertex!!)
+            else -> null
+        } ?: return
+
+        val origin = project(gizmoOrigin, w, h)
+        if (!origin.first.isFinite() || !origin.second.isFinite()) return
+
+        val xAxisEnd = project(gizmoOrigin.copy(x = gizmoOrigin.x - gizmoSize), w, h)
+        val yAxisEnd = project(gizmoOrigin.copy(y = gizmoOrigin.y + gizmoSize), w, h)
+        val zAxisEnd = project(gizmoOrigin.copy(z = gizmoOrigin.z - gizmoSize), w, h)
+
+        gc.stroke = Color.RED
+        gc.lineWidth = if (gizmoAxis == 'X') 3.0 else 1.5
+        if (xAxisEnd.first.isFinite() && xAxisEnd.second.isFinite()) {
+            gc.strokeLine(origin.first, origin.second, xAxisEnd.first, xAxisEnd.second)
+        }
+
+        gc.stroke = Color.GREEN
+        gc.lineWidth = if (gizmoAxis == 'Y') 3.0 else 1.5
+        if (yAxisEnd.first.isFinite() && yAxisEnd.second.isFinite()) {
+            gc.strokeLine(origin.first, origin.second, yAxisEnd.first, yAxisEnd.second)
+        }
+
+        gc.stroke = Color.BLUE
+        gc.lineWidth = if (gizmoAxis == 'Z') 3.0 else 1.5
+        if (zAxisEnd.first.isFinite() && zAxisEnd.second.isFinite()) {
+            gc.strokeLine(origin.first, origin.second, zAxisEnd.first, zAxisEnd.second)
+        }
+        gc.lineWidth = 1.0
     }
 }
 
