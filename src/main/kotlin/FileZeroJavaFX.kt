@@ -8,6 +8,7 @@ import javafx.scene.paint.Color
 import javafx.stage.Stage
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.floor
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.math.tan
@@ -301,6 +302,50 @@ object CollisionUtils {
         }
 
         return true
+    }
+}
+
+class SpatialGrid<T>(private val cellSize: Double) {
+    private val grid = mutableMapOf<Triple<Int, Int, Int>, MutableList<T>>()
+
+    private fun getGridCoords(position: Vector3d): Triple<Int, Int, Int> {
+        val x = floor(position.x / cellSize).toInt()
+        val y = floor(position.y / cellSize).toInt()
+        val z = floor(position.z / cellSize).toInt()
+        return Triple(x, y, z)
+    }
+
+    fun add(item: T, aabb: AABB) {
+        val minCoords = getGridCoords(aabb.min)
+        val maxCoords = getGridCoords(aabb.max)
+
+        for (x in minCoords.first..maxCoords.first) {
+            for (y in minCoords.second..maxCoords.second) {
+                for (z in minCoords.third..maxCoords.third) {
+                    val key = Triple(x, y, z)
+                    grid.computeIfAbsent(key) { mutableListOf() }.add(item)
+                }
+            }
+        }
+    }
+
+    fun query(aabb: AABB): Set<T> {
+        val items = mutableSetOf<T>()
+        val minCoords = getGridCoords(aabb.min)
+        val maxCoords = getGridCoords(aabb.max)
+
+        for (x in minCoords.first..maxCoords.first) {
+            for (y in minCoords.second..maxCoords.second) {
+                for (z in minCoords.third..maxCoords.third) {
+                    grid[Triple(x, y, z)]?.let { items.addAll(it) }
+                }
+            }
+        }
+        return items
+    }
+
+    fun clear() {
+        grid.clear()
     }
 }
 

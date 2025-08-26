@@ -1,6 +1,7 @@
 package org.lewapnoob.FileZero2
 
 import javafx.animation.AnimationTimer
+import org.lewapnoob.FileZero2.SpatialGrid
 import javafx.embed.swing.SwingFXUtils
 import javafx.scene.canvas.Canvas
 import javafx.scene.image.Image
@@ -76,6 +77,7 @@ class DrawingPanel : StackPane() {
 
     val pressedKeys = Collections.synchronizedSet(mutableSetOf<KeyCode>())
 
+    private val collisionGrid = SpatialGrid<PlacedMesh>(cubeSize * 2)
     private val executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
     private val renderQueue = ConcurrentLinkedQueue<RenderableFace>()
 
@@ -144,6 +146,7 @@ class DrawingPanel : StackPane() {
         val stair = createStairMesh(cubeSize, Color.WHITE)
         val sphere = createCapsuleMesh(cubeSize, Color.WHITE)
         val mapMesh = createMapMesh(cubeSize, Color.WHITE)
+        val colorPalette = createColorPaletteMesh(cubeSize, Color.WHITE)
 
         val loadedTextures = mapOf(
             "blackBricks" to texBlackBricks,
@@ -186,7 +189,8 @@ class DrawingPanel : StackPane() {
             "gold" to createColorTexture(Color.GOLD),
             "mintCream" to createColorTexture(Color.MINTCREAM),
             "salmon" to createColorTexture(Color.SALMON),
-            "turquoise" to createColorTexture(Color.TURQUOISE)
+            "turquoise" to createColorTexture(Color.TURQUOISE),
+            "orchid" to createColorTexture(Color.ORCHID)
         )
 
         fun placedTextures(mesh: Mesh): Map<Int, Image> {
@@ -227,6 +231,9 @@ class DrawingPanel : StackPane() {
 
         val pos9 = Vector3d(31.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(mapMesh,Matrix4x4.translation(pos9.x, pos9.y, pos9.z), faceTextures = placedTextures(mapMesh)))
+
+        val pos10 = Vector3d(50.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(colorPalette,Matrix4x4.translation(pos10.x, pos10.y, pos10.z), faceTextures = placedTextures(colorPalette)))
         //
 
         for (x in 0 until gridDimension) {
@@ -247,6 +254,10 @@ class DrawingPanel : StackPane() {
                     }
                 }
             }
+        }
+
+        meshes.filter { it.collision }.forEach { mesh ->
+            collisionGrid.add(mesh, AABB.fromCube(mesh.getTransformedVertices()))
         }
 
         object : AnimationTimer() {
@@ -282,7 +293,8 @@ class DrawingPanel : StackPane() {
             Vector3d(testPosition.x + playerHalfWidth, testPosition.y + playerHeight / 2, testPosition.z + playerHalfWidth)
         )
 
-        for (mesh in meshes.filter { it.collision }) {
+        val potentialColliders = collisionGrid.query(playerAABB)
+        for (mesh in potentialColliders) {
             val worldBlushes = mesh.mesh.blushes.map { blush ->
                 val transformedCorners = blush.getCorners().map { corner -> mesh.transformMatrix.transform(corner) }
                 AABB.fromCube(transformedCorners)
@@ -348,17 +360,17 @@ class DrawingPanel : StackPane() {
             cameraPosition = newCameraPosition
         } else {
             val resolvedPosition = oldCameraPosition.copy()
-            
+
             val tempPosX = resolvedPosition.copy(x = newCameraPosition.x)
             if (!isCollidingAt(tempPosX)) {
                 resolvedPosition.x = newCameraPosition.x
             }
-            
+
             val tempPosZ = resolvedPosition.copy(z = newCameraPosition.z)
             if (!isCollidingAt(tempPosZ)) {
                 resolvedPosition.z = newCameraPosition.z
             }
-            
+
             val tempPosY = resolvedPosition.copy(y = newCameraPosition.y)
             if (!isCollidingAt(tempPosY)) {
                 resolvedPosition.y = newCameraPosition.y
@@ -458,8 +470,9 @@ class DrawingPanel : StackPane() {
             )
             val meshToRemove = meshes.find { it.collisionPos == pos }
             if (meshToRemove != null) {
-                println("$meshToRemove X:$gridX, Y:$gridY, Z:$gridZ")
                 meshes.remove(meshToRemove)
+                collisionGrid.clear()
+                meshes.filter { it.collision }.forEach { mesh -> collisionGrid.add(mesh, AABB.fromCube(mesh.getTransformedVertices())) }
                 GRID_MAP[gridX][gridY][gridZ] = 0
             }
         }
