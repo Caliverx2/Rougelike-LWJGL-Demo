@@ -245,6 +245,26 @@ data class AABB(val min: Vector3d, val max: Vector3d) {
                 (this.min.y <= other.max.y && this.max.y >= other.min.y) &&
                 (this.min.z <= other.max.z && this.max.z >= other.min.z)
     }
+
+    fun union(other: AABB): AABB {
+        val newMin = Vector3d(
+            minOf(this.min.x, other.min.x),
+            minOf(this.min.y, other.min.y),
+            minOf(this.min.z, other.min.z)
+        )
+        val newMax = Vector3d(
+            maxOf(this.max.x, other.max.x),
+            maxOf(this.max.y, other.max.y),
+            maxOf(this.max.z, other.max.z)
+        )
+        return AABB(newMin, newMax)
+    }
+
+    fun union(point: Vector3d): AABB {
+        val newMin = Vector3d(minOf(this.min.x, point.x), minOf(this.min.y, point.y), minOf(this.min.z, point.z))
+        val newMax = Vector3d(maxOf(this.max.x, point.x), maxOf(this.max.y, point.y), maxOf(this.max.z, point.z))
+        return AABB(newMin, newMax)
+    }
 }
 
 object CollisionUtils {

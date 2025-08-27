@@ -1,7 +1,6 @@
 package org.lewapnoob.FileZero2
 
 import javafx.animation.AnimationTimer
-import org.lewapnoob.FileZero2.SpatialGrid
 import javafx.embed.swing.SwingFXUtils
 import javafx.scene.canvas.Canvas
 import javafx.scene.image.Image
@@ -80,6 +79,7 @@ class DrawingPanel : StackPane() {
     private val collisionGrid = SpatialGrid<PlacedMesh>(cubeSize * 2)
     private val meshAABBs = ConcurrentHashMap<PlacedMesh, AABB>()
     private val executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
+    private val bvh = BVH()
     private val renderQueue = ConcurrentLinkedQueue<RenderableFace>()
 
     init {
@@ -263,6 +263,8 @@ class DrawingPanel : StackPane() {
             meshAABBs[mesh] = aabb
         }
 
+        bvh.build(meshes)
+
         object : AnimationTimer() {
             override fun handle(now: Long) {
                 val deltaTime = (now - lastUpdateTime) / 1_000_000_000.0
@@ -431,6 +433,7 @@ class DrawingPanel : StackPane() {
                 meshes.filter { it.collision }.forEach { mesh ->
                     collisionGrid.add(mesh, meshAABBs[mesh]!!)
                 }
+                bvh.build(meshes)
             }
             pressedKeys.remove(KeyCode.R)
         }
@@ -492,6 +495,7 @@ class DrawingPanel : StackPane() {
                     val aabb = meshAABBs[mesh]!!
                     collisionGrid.add(mesh, aabb)
                 }
+                bvh.build(meshes)
                 GRID_MAP[gridX][gridY][gridZ] = 0
             }
         }
@@ -680,61 +684,11 @@ class DrawingPanel : StackPane() {
 
     private fun isOccluded(rayOrigin: Vector3d, rayTarget: Vector3d, ignoreMesh: PlacedMesh, ignoreFaceIndex: Int): Boolean {
         val rayDir = (rayTarget - rayOrigin).normalize()
-        val rayLength = (rayTarget - rayOrigin).length() - 1e-5
+        val rayLength = (rayTarget - rayOrigin).length()
+        if (rayLength < 1e-5) return false
 
-        val rayAABB = AABB(
-            Vector3d(min(rayOrigin.x, rayTarget.x), min(rayOrigin.y, rayTarget.y), min(rayOrigin.z, rayTarget.z)),
-            Vector3d(max(rayOrigin.x, rayTarget.x), max(rayOrigin.y, rayTarget.y), max(rayOrigin.z, rayTarget.z))
-        )
-
-        val potentialOccluders = collisionGrid.query(rayAABB)
-
-        for (mesh in potentialOccluders) {
-            val meshAABB = meshAABBs[mesh] ?: continue
-            if (!rayIntersectsAABB(rayOrigin, rayDir, rayLength, meshAABB)) {
-                continue
-            }
-
-            val worldBlushes by lazy { mesh.mesh.blushes.map { blush ->
-                val transformedCorners = blush.getCorners().map { corner -> mesh.transformMatrix.transform(corner) }
-                AABB.fromCube(transformedCorners)
-            }}
-
-            val worldVertices = mesh.mesh.vertices.map { mesh.transformMatrix.transform(it) }
-
-            for (faceIndex in mesh.mesh.faces.indices) {
-                if (mesh === ignoreMesh && faceIndex == ignoreFaceIndex) {
-                    continue
-                }
-
-                val faceIndices = mesh.mesh.faces[faceIndex]
-                if (faceIndices.size < 3) continue
-
-                val v0 = worldVertices[faceIndices[0]]
-                val v1 = worldVertices[faceIndices[1]]
-                val v2 = worldVertices[faceIndices[2]]
-
-                val intersectionDist = rayIntersectsTriangle(rayOrigin, rayDir, v0, v1, v2)
-                if (intersectionDist != null && intersectionDist < rayLength) {
-                    val intersectionPoint = rayOrigin + rayDir * intersectionDist
-                    if (worldBlushes.isEmpty() || !worldBlushes.any { it.contains(intersectionPoint) }) {
-                        return true
-                    }
-                }
-
-                if (faceIndices.size == 4) {
-                    val v3 = worldVertices[faceIndices[3]]
-                    val intersectionDist2 = rayIntersectsTriangle(rayOrigin, rayDir, v0, v2, v3)
-                    if (intersectionDist2 != null && intersectionDist2 < rayLength) {
-                        val intersectionPoint = rayOrigin + rayDir * intersectionDist2
-                        if (worldBlushes.isEmpty() || !worldBlushes.any { it.contains(intersectionPoint) }) {
-                            return true
-                        }
-                    }
-                }
-            }
-        }
-        return false
+        val biasedRayLength = rayLength - 0.01
+        return bvh.intersect(rayOrigin, rayDir, biasedRayLength, ignoreMesh, ignoreFaceIndex)
     }
 
     private fun isLineOfSightBlockedFast(start: Vector3d, end: Vector3d, ignoreMesh: PlacedMesh): Boolean {
@@ -768,88 +722,6 @@ class DrawingPanel : StackPane() {
             }
         }
         return false
-    }
-
-    private fun rayIntersectsTriangle(rayOrigin: Vector3d, rayDir: Vector3d, v0: Vector3d, v1: Vector3d, v2: Vector3d): Double? {
-        val edge1 = v1 - v0
-        val edge2 = v2 - v0
-        val h = rayDir.cross(edge2)
-        val a = edge1.dot(h)
-        if (a > -1e-6 && a < 1e-6) {
-            return null
-        }
-        val f = 1.0 / a
-        val s = rayOrigin - v0
-        val u = f * s.dot(h)
-        if (u < 0.0 || u > 1.0) {
-            return null
-        }
-        val q = s.cross(edge1)
-        val v = f * rayDir.dot(q)
-        if (v < 0.0 || u + v > 1.0) {
-            return null
-        }
-        val t = f * edge2.dot(q)
-        return if (t > 1e-6) {
-            t
-        } else {
-            null
-        }
-    }
-
-    private fun rayIntersectsAABB(rayOrigin: Vector3d, rayDir: Vector3d, maxDist: Double, aabb: AABB): Boolean {
-        val invDirX = 1.0 / rayDir.x
-        val invDirY = 1.0 / rayDir.y
-        val invDirZ = 1.0 / rayDir.z
-
-        var tmin: Double
-        var tmax: Double
-
-        if (invDirX >= 0) {
-            tmin = (aabb.min.x - rayOrigin.x) * invDirX
-            tmax = (aabb.max.x - rayOrigin.x) * invDirX
-        } else {
-            tmin = (aabb.max.x - rayOrigin.x) * invDirX
-            tmax = (aabb.min.x - rayOrigin.x) * invDirX
-        }
-
-        var tymin: Double
-        var tymax: Double
-
-        if (invDirY >= 0) {
-            tymin = (aabb.min.y - rayOrigin.y) * invDirY
-            tymax = (aabb.max.y - rayOrigin.y) * invDirY
-        } else {
-            tymin = (aabb.max.y - rayOrigin.y) * invDirY
-            tymax = (aabb.min.y - rayOrigin.y) * invDirY
-        }
-
-        if (tmin > tymax || tymin > tmax) {
-            return false
-        }
-
-        if (tymin > tmin) tmin = tymin
-        if (tymax < tmax) tmax = tymax
-
-        var tzmin: Double
-        var tzmax: Double
-
-        if (invDirZ >= 0) {
-            tzmin = (aabb.min.z - rayOrigin.z) * invDirZ
-            tzmax = (aabb.max.z - rayOrigin.z) * invDirZ
-        } else {
-            tzmin = (aabb.max.z - rayOrigin.z) * invDirZ
-            tzmax = (aabb.min.z - rayOrigin.z) * invDirZ
-        }
-
-        if (tmin > tzmax || tzmin > tmax) {
-            return false
-        }
-
-        if (tzmin > tmin) tmin = tzmin
-        if (tzmax < tmax) tmax = tzmax
-
-        return tmin < maxDist && tmax > 0
     }
 
     private fun clipTriangleAgainstNearPlane(worldVertices: List<Vector3d>, uvs: List<Vector3d>, viewMatrix: Matrix4x4, nearPlane: Double): List<Pair<List<Vector3d>, List<Vector3d>>> {
