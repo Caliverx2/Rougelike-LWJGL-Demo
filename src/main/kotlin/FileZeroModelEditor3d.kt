@@ -3,13 +3,12 @@ package org.lewapnoob.FileZeroModel3DEditor
 import javafx.application.Application
 import javafx.geometry.Insets
 import javafx.scene.Scene
+import javafx.scene.control.*
 import javafx.scene.canvas.Canvas
 import javafx.scene.canvas.GraphicsContext
-import javafx.scene.control.Button
-import javafx.scene.control.Label
-import javafx.scene.control.TextArea
 import javafx.scene.input.KeyCode
 import javafx.scene.input.MouseButton
+import javafx.scene.layout.GridPane
 import javafx.scene.layout.VBox
 import javafx.scene.layout.StackPane
 import javafx.scene.paint.Color
@@ -21,18 +20,40 @@ data class Vector3d(var x: Double, var y: Double, var z: Double)
 data class Edge(val a: Int, val b: Int)
 data class Face(val indices: List<Int>)
 data class Mesh(val vertices: List<Vector3d>, val faces: List<List<Int>>, val faceUVs: List<List<Vector3d>>, val color: Color)
-data class AABB(val min: Vector3d, val max: Vector3d)
+data class AABB(var min: Vector3d, var max: Vector3d) {
+    fun getCorners(): List<Vector3d> {
+        return listOf(
+            Vector3d(min.x, min.y, min.z),
+            Vector3d(max.x, min.y, min.z),
+            Vector3d(min.x, max.y, min.z),
+            Vector3d(max.x, max.y, min.z),
+            Vector3d(min.x, min.y, max.z),
+            Vector3d(max.x, min.y, max.z),
+            Vector3d(min.x, max.y, max.z),
+            Vector3d(max.x, max.y, max.z)
+        )
+    }
+    fun getCenter(): Vector3d = Vector3d((min.x + max.x) / 2.0, (min.y + max.y) / 2.0, (min.z + max.z) / 2.0)
+    fun translate(delta: Vector3d) {
+        min.x += delta.x; min.y += delta.y; min.z += delta.z
+        max.x += delta.x; max.y += delta.y; max.z += delta.z
+    }
+}
+enum class BlushCornerType { MIN, MAX }
 
 class ModelEditor : Application() {
     private val vertices = mutableListOf<Vector3d>()
     private val edges = mutableListOf<Edge>()
     private val faces = mutableListOf<Face>()
+    private val faceTextures = mutableMapOf<Int, String>()
     private val blushes = mutableListOf<AABB>()
 
     private var selectedVertex: Int? = null
     private val groupSelectedVertices = mutableSetOf<Int>()
     private var groupGizmoPosition: Vector3d? = null
     private val selectedForFace = mutableListOf<Int>()
+    private var selectedBlushIndex: Int? = null
+    private var selectedBlushCorner: BlushCornerType? = null
 
     private var dragStartVertex: Int? = null
 
@@ -42,6 +63,7 @@ class ModelEditor : Application() {
 
     private var deleteMode = false
     private var faceSelectMode = false // tryb Q
+    private var blushMode = false // tryb B
 
     // Gizmo
     private var gizmoAxis: Char? = null
@@ -49,7 +71,9 @@ class ModelEditor : Application() {
     private var dragStartY: Double = 0.0
     private var dragStartVertexPos: Vector3d? = null
     private var dragStartGroupPositions: Map<Int, Vector3d>? = null
-    private val gizmoSize = 20.0
+    private var dragStartBlushCornerPos: Vector3d? = null
+    private val gizmoStartOffset = 10.0
+    private val gizmoEndOffset = 30.0
 
     override fun start(stage: Stage) {
         val canvas = Canvas((1920.0 * 2) / 3, (1080.0 * 2) / 3)
@@ -59,14 +83,28 @@ class ModelEditor : Application() {
             val w = canvas.width
             val h = canvas.height
 
-            val gizmoOrigin = if (groupSelectedVertices.isNotEmpty()) groupGizmoPosition else if (selectedVertex != null) vertices.getOrNull(selectedVertex!!) else null
+            val gizmoOrigin = when {
+                blushMode && selectedBlushIndex != null && selectedBlushCorner != null -> {
+                    val blush = blushes[selectedBlushIndex!!]
+                    if (selectedBlushCorner == BlushCornerType.MIN) blush.min else blush.max
+                }
+                blushMode && selectedBlushIndex != null -> blushes.getOrNull(selectedBlushIndex!!)?.getCenter()
+                groupSelectedVertices.isNotEmpty() -> groupGizmoPosition
+                selectedVertex != null -> vertices.getOrNull(selectedVertex!!)
+                else -> null
+            }
+
             if (e.button == MouseButton.PRIMARY && gizmoOrigin != null) {
                 val axis = findClosestGizmoAxis(e.x, e.y, w, h)
                 if (axis != null) {
                     gizmoAxis = axis
                     dragStartX = e.x
                     dragStartY = e.y
-                    if (groupSelectedVertices.isNotEmpty()) {
+                    if (blushMode && selectedBlushIndex != null && selectedBlushCorner != null) {
+                        dragStartBlushCornerPos = gizmoOrigin.copy()
+                    } else if (blushMode && selectedBlushIndex != null) {
+                        dragStartVertexPos = gizmoOrigin.copy()
+                    } else if (groupSelectedVertices.isNotEmpty()) {
                         dragStartGroupPositions = groupSelectedVertices.associateWith { vertices[it].copy() }
                         dragStartVertexPos = groupGizmoPosition!!.copy()
                     } else {
@@ -75,6 +113,22 @@ class ModelEditor : Application() {
                     draw(gc, w, h, e.x, e.y)
                     return@setOnMousePressed
                 }
+            }
+
+            if (blushMode) {
+                val clickedCorner = findBlushCornerUnderCursor(e.x, e.y, w, h)
+                if (clickedCorner != null) {
+                    selectedBlushIndex = clickedCorner.first
+                    selectedBlushCorner = clickedCorner.second
+                } else {
+                    selectedBlushIndex = findBlushUnderCursor(e.x, e.y, w, h)
+                    selectedBlushCorner = null
+                }
+
+                selectedVertex = null
+                groupSelectedVertices.clear()
+                draw(gc, w, h, e.x, e.y)
+                return@setOnMousePressed
             }
 
             val clickedVertex = findClosestVertex(e.x, e.y, w, h)
@@ -100,6 +154,8 @@ class ModelEditor : Application() {
                 selectedVertex = null
                 groupSelectedVertices.clear()
                 groupGizmoPosition = null
+                selectedBlushIndex = null
+                selectedBlushCorner = null
                 dragStartVertex = null
 
                 if (clickedVertex != null) {
@@ -140,7 +196,7 @@ class ModelEditor : Application() {
                 val w = canvas.width
                 val h = canvas.height
 
-                val originPos = dragStartVertexPos ?: return@setOnMouseDragged
+                val originPos = dragStartBlushCornerPos ?: dragStartVertexPos ?: return@setOnMouseDragged
 
                 val axisUnitVector = when(gizmoAxis) {
                     'X' -> Vector3d(-1.0, 0.0, 0.0)
@@ -172,7 +228,17 @@ class ModelEditor : Application() {
 
                 val moveVector = Vector3d(axisUnitVector.x * moveAmount, axisUnitVector.y * moveAmount, axisUnitVector.z * moveAmount)
 
-                if (groupSelectedVertices.isNotEmpty() && dragStartGroupPositions != null) {
+                if (blushMode && selectedBlushIndex != null && selectedBlushCorner != null && dragStartBlushCornerPos != null) {
+                    val corner = if (selectedBlushCorner == BlushCornerType.MIN) blushes[selectedBlushIndex!!].min else blushes[selectedBlushIndex!!].max
+                    corner.x = dragStartBlushCornerPos!!.x + moveVector.x
+                    corner.y = dragStartBlushCornerPos!!.y + moveVector.y
+                    corner.z = dragStartBlushCornerPos!!.z + moveVector.z
+                } else if (blushMode && selectedBlushIndex != null) {
+                    val blush = blushes[selectedBlushIndex!!]
+                    val center = blush.getCenter()
+                    val newCenter = Vector3d(originPos.x + moveVector.x, originPos.y + moveVector.y, originPos.z + moveVector.z)
+                    blush.translate(Vector3d(newCenter.x - center.x, newCenter.y - center.y, newCenter.z - center.z))
+                } else if (groupSelectedVertices.isNotEmpty() && dragStartGroupPositions != null) {
                     groupSelectedVertices.forEach { index ->
                         val startPos = dragStartGroupPositions!![index]
                         if (startPos != null) {
@@ -192,6 +258,7 @@ class ModelEditor : Application() {
             gizmoAxis = null
             dragStartVertexPos = null
             dragStartGroupPositions = null
+            dragStartBlushCornerPos = null
 
             val releasedVertex = findClosestVertex(e.x, e.y, canvas.width, canvas.height)
             if (dragStartVertex != null && releasedVertex != null && releasedVertex != dragStartVertex) {
@@ -218,8 +285,21 @@ class ModelEditor : Application() {
                 KeyCode.DIGIT3 -> addPlaneAtOrigin()
                 KeyCode.DIGIT4 -> addCapsuleAtOrigin()
 
+                KeyCode.B -> {
+                    blushMode = !blushMode
+                    faceSelectMode = false
+                    deleteMode = false
+                    selectedVertex = null
+                    groupSelectedVertices.clear()
+                    if (!blushMode) {
+                        selectedBlushIndex = null
+                    }
+                }
+
                 KeyCode.Q -> {
                     faceSelectMode = !faceSelectMode
+                    blushMode = false
+                    deleteMode = false
                     if (!faceSelectMode) {
                         selectedForFace.clear()
                     }
@@ -232,62 +312,122 @@ class ModelEditor : Application() {
                     }
                 }
                 KeyCode.DELETE -> {
-                    if (selectedVertex != null) {
+                    if (blushMode && selectedBlushIndex != null) {
+                        blushes.removeAt(selectedBlushIndex!!)
+                        selectedBlushIndex = null
+                        selectedBlushCorner = null
+                    } else if (selectedVertex != null) {
                         deleteSelectedVertex()
                     } else {
                         deleteMode = !deleteMode
+                        faceSelectMode = false
+                        blushMode = false
                     }
                 }
                 KeyCode.R -> {
-                    if (selectedVertex != null) {
-                        selectedVertex?.let { index ->
-                            vertices.get(index).x = vertices.get(index).x.toInt() + 0.0
-                            vertices.get(index).y = vertices.get(index).y.toInt() + 0.0
-                            vertices.get(index).z = vertices.get(index).z.toInt() + 0.0
-                        }
+                    val verticesToTransform = if (groupSelectedVertices.isNotEmpty()) groupSelectedVertices else selectedVertex?.let { setOf(it) } ?: emptySet()
+                    verticesToTransform.forEach { index ->
+                        val v = vertices[index]
+                        v.x = v.x.roundToInt().toDouble()
+                        v.y = v.y.roundToInt().toDouble()
+                        v.z = v.z.roundToInt().toDouble()
                     }
                 }
 
+                KeyCode.T -> showTexturePalette(gc)
+
+                KeyCode.O -> {
+                    val newBlush = AABB(min = Vector3d(-25.0, -25.0, -25.0), max = Vector3d(25.0, 25.0, 25.0))
+                    blushes.add(newBlush)
+                    selectedBlushIndex = blushes.lastIndex
+                    selectedBlushCorner = null
+                    blushMode = true
+                    deleteMode = false
+                    faceSelectMode = false
+                }
+
                 KeyCode.UP -> {
-                    if (selectedVertex != null) {
-                        selectedVertex?.let { index ->
-                            vertices.get(index).z -= 10.0
+                    if (blushMode && selectedBlushIndex != null) {
+                        if (selectedBlushCorner != null) {
+                            val corner = if (selectedBlushCorner == BlushCornerType.MIN) blushes[selectedBlushIndex!!].min else blushes[selectedBlushIndex!!].max
+                            corner.z -= 10.0
+                        } else {
+                            blushes[selectedBlushIndex!!].translate(Vector3d(0.0, 0.0, -10.0))
                         }
+                    } else {
+                        val verticesToTransform = if (groupSelectedVertices.isNotEmpty()) groupSelectedVertices else selectedVertex?.let { setOf(it) } ?: emptySet()
+                        verticesToTransform.forEach { index -> vertices[index].z -= 10.0 }
+                        groupGizmoPosition?.let { it.z -= 10.0 }
                     }
                 }
                 KeyCode.DOWN -> {
-                    if (selectedVertex != null) {
-                        selectedVertex?.let { index ->
-                            vertices.get(index).z += 10.0
+                    if (blushMode && selectedBlushIndex != null) {
+                        if (selectedBlushCorner != null) {
+                            val corner = if (selectedBlushCorner == BlushCornerType.MIN) blushes[selectedBlushIndex!!].min else blushes[selectedBlushIndex!!].max
+                            corner.z += 10.0
+                        } else {
+                            blushes[selectedBlushIndex!!].translate(Vector3d(0.0, 0.0, 10.0))
                         }
+                    } else {
+                        val verticesToTransform = if (groupSelectedVertices.isNotEmpty()) groupSelectedVertices else selectedVertex?.let { setOf(it) } ?: emptySet()
+                        verticesToTransform.forEach { index -> vertices[index].z += 10.0 }
+                        groupGizmoPosition?.let { it.z += 10.0 }
                     }
                 }
                 KeyCode.LEFT -> {
-                    if (selectedVertex != null) {
-                        selectedVertex?.let { index ->
-                            vertices.get(index).x -= 10.0
+                    if (blushMode && selectedBlushIndex != null) {
+                        if (selectedBlushCorner != null) {
+                            val corner = if (selectedBlushCorner == BlushCornerType.MIN) blushes[selectedBlushIndex!!].min else blushes[selectedBlushIndex!!].max
+                            corner.x -= 10.0
+                        } else {
+                            blushes[selectedBlushIndex!!].translate(Vector3d(-10.0, 0.0, 0.0))
                         }
+                    } else {
+                        val verticesToTransform = if (groupSelectedVertices.isNotEmpty()) groupSelectedVertices else selectedVertex?.let { setOf(it) } ?: emptySet()
+                        verticesToTransform.forEach { index -> vertices[index].x -= 10.0 }
+                        groupGizmoPosition?.let { it.x -= 10.0 }
                     }
                 }
                 KeyCode.RIGHT -> {
-                    if (selectedVertex != null) {
-                        selectedVertex?.let { index ->
-                            vertices.get(index).x += 10.0
+                    if (blushMode && selectedBlushIndex != null) {
+                        if (selectedBlushCorner != null) {
+                            val corner = if (selectedBlushCorner == BlushCornerType.MIN) blushes[selectedBlushIndex!!].min else blushes[selectedBlushIndex!!].max
+                            corner.x += 10.0
+                        } else {
+                            blushes[selectedBlushIndex!!].translate(Vector3d(10.0, 0.0, 0.0))
                         }
+                    } else {
+                        val verticesToTransform = if (groupSelectedVertices.isNotEmpty()) groupSelectedVertices else selectedVertex?.let { setOf(it) } ?: emptySet()
+                        verticesToTransform.forEach { index -> vertices[index].x += 10.0 }
+                        groupGizmoPosition?.let { it.x += 10.0 }
                     }
                 }
                 KeyCode.EQUALS -> {
-                    if (selectedVertex != null) {
-                        selectedVertex?.let { index ->
-                            vertices.get(index).y -= 10.0
+                    if (blushMode && selectedBlushIndex != null) {
+                        if (selectedBlushCorner != null) {
+                            val corner = if (selectedBlushCorner == BlushCornerType.MIN) blushes[selectedBlushIndex!!].min else blushes[selectedBlushIndex!!].max
+                            corner.y -= 10.0
+                        } else {
+                            blushes[selectedBlushIndex!!].translate(Vector3d(0.0, -10.0, 0.0))
                         }
+                    } else {
+                        val verticesToTransform = if (groupSelectedVertices.isNotEmpty()) groupSelectedVertices else selectedVertex?.let { setOf(it) } ?: emptySet()
+                        verticesToTransform.forEach { index -> vertices[index].y -= 10.0 }
+                        groupGizmoPosition?.let { it.y -= 10.0 }
                     }
                 }
                 KeyCode.MINUS -> {
-                    if (selectedVertex != null) {
-                        selectedVertex?.let { index ->
-                            vertices.get(index).y += 10.0
+                    if (blushMode && selectedBlushIndex != null) {
+                        if (selectedBlushCorner != null) {
+                            val corner = if (selectedBlushCorner == BlushCornerType.MIN) blushes[selectedBlushIndex!!].min else blushes[selectedBlushIndex!!].max
+                            corner.y += 10.0
+                        } else {
+                            blushes[selectedBlushIndex!!].translate(Vector3d(0.0, 10.0, 0.0))
                         }
+                    } else {
+                        val verticesToTransform = if (groupSelectedVertices.isNotEmpty()) groupSelectedVertices else selectedVertex?.let { setOf(it) } ?: emptySet()
+                        verticesToTransform.forEach { index -> vertices[index].y += 10.0 }
+                        groupGizmoPosition?.let { it.y += 10.0 }
                     }
                 }
 
@@ -390,6 +530,53 @@ class ModelEditor : Application() {
             }
         }
         return closestFace
+    }
+
+    private fun findBlushUnderCursor(mx: Double, my: Double, w: Double, h: Double): Int? {
+        var closestBlush: Pair<Int, Double>? = null
+
+        blushes.forEachIndexed { index, aabb ->
+            val corners = aabb.getCorners()
+            val projectedCorners = corners.map { project(it, w, h) }
+
+            if (projectedCorners.any { !it.first.isFinite() || !it.second.isFinite() }) {
+                return@forEachIndexed
+            }
+
+            val minX = projectedCorners.minOf { it.first }
+            val maxX = projectedCorners.maxOf { it.first }
+            val minY = projectedCorners.minOf { it.second }
+            val maxY = projectedCorners.maxOf { it.second }
+
+            if (mx in minX..maxX && my in minY..maxY) {
+                val avgZ = corners.map { getZInViewSpace(it) }.average()
+                if (closestBlush == null || avgZ < closestBlush!!.second) {
+                    closestBlush = Pair(index, avgZ)
+                }
+            }
+        }
+        return closestBlush?.first
+    }
+
+    private fun findBlushCornerUnderCursor(mx: Double, my: Double, w: Double, h: Double): Pair<Int, BlushCornerType>? {
+        if (selectedBlushIndex == null) return null
+
+        val blush = blushes[selectedBlushIndex!!]
+        val cornersToTest = mapOf(
+            BlushCornerType.MIN to blush.min,
+            BlushCornerType.MAX to blush.max
+        )
+
+        for ((type, corner) in cornersToTest) {
+            val p = project(corner, w, h)
+            if (p.first.isFinite() && p.second.isFinite()) {
+                val dist = hypot(mx - p.first, my - p.second)
+                if (dist < 10.0) {
+                    return Pair(selectedBlushIndex!!, type)
+                }
+            }
+        }
+        return null
     }
 
     private fun pointInPolygon(px: Double, py: Double, polygon: List<Pair<Double, Double>>): Boolean {
@@ -650,6 +837,67 @@ class ModelEditor : Application() {
         faces.addAll(newFaces.map { Face(it.indices.map { idx -> idx + baseIndex }) })
     }
 
+    private fun getEditorTexturePalette(): Map<String, Color> {
+        return mapOf(
+            "blackBricks" to Color.web("#1D2B53"),
+            "bricks" to Color.web("#A34900"),
+            "ceiling" to Color.web("#C2C3C7"),
+            "floor" to Color.web("#5F574F"),
+            "skybox" to Color.web("#29ADFF"),
+            "red" to Color.RED, "darkRed" to Color.DARKRED, "blue" to Color.BLUE, "darkBlue" to Color.DARKBLUE,
+            "green" to Color.GREEN, "darkGreen" to Color.DARKGREEN, "gray" to Color.GRAY, "darkGray" to Color.DARKGRAY,
+            "orange" to Color.ORANGE, "darkOrange" to Color.DARKORANGE, "yellow" to Color.YELLOW, "darkGoldenrod" to Color.DARKGOLDENROD,
+            "cyan" to Color.CYAN, "darkCyan" to Color.DARKCYAN, "magenta" to Color.MAGENTA, "darkMagenta" to Color.DARKMAGENTA,
+            "brown" to Color.BROWN, "navy" to Color.NAVY, "purple" to Color.PURPLE, "darkViolet" to Color.DARKVIOLET,
+            "olive" to Color.OLIVE, "maroon" to Color.MAROON, "teal" to Color.TEAL, "black" to Color.web("#000000"),
+            "darkPurple" to Color.web("#7E2553"), "lightGray" to Color.web("#C2C3C7"), "white" to Color.web("#FFF1E8"),
+            "indigo" to Color.web("#83769C"), "pink" to Color.web("#FF77A8"), "peach" to Color.web("#FFCCAA"),
+            "silver" to Color.SILVER, "gold" to Color.GOLD, "mintCream" to Color.MINTCREAM, "salmon" to Color.SALMON,
+            "turquoise" to Color.TURQUOISE, "orchid" to Color.ORCHID
+        )
+    }
+
+    private fun showTexturePalette(gc: GraphicsContext) {
+        val paletteStage = Stage()
+        paletteStage.initModality(Modality.APPLICATION_MODAL)
+        paletteStage.title = "Texture/Material Palette"
+
+        val grid = GridPane()
+        grid.hgap = 10.0
+        grid.vgap = 5.0
+        grid.padding = Insets(10.0)
+
+        val texturePalette = getEditorTexturePalette()
+        var row = 0
+        texturePalette.entries.sortedBy { it.key }.forEach { (name, color) ->
+            val swatch = javafx.scene.shape.Rectangle(20.0, 20.0, color)
+            swatch.stroke = Color.WHITE
+            val nameLabel = Label(name)
+            nameLabel.textFill = Color.WHITE
+            val assignButton = Button("Assign")
+            assignButton.setOnAction {
+                val selectedFaceIndex = faces.indexOfFirst { it.indices.toSet() == groupSelectedVertices }
+                if (selectedFaceIndex != -1) {
+                    faceTextures[selectedFaceIndex] = name
+                    draw(gc, gc.canvas.width, gc.canvas.height, 0.0, 0.0)
+                } else {
+                    val alert = Alert(Alert.AlertType.WARNING, "No face selected to assign texture to.")
+                    alert.showAndWait()
+                }
+            }
+            grid.addRow(row++, swatch, nameLabel, assignButton)
+        }
+
+        val scrollPane = ScrollPane(grid)
+        scrollPane.style = "-fx-background: #333; -fx-background-color: #333;"
+        paletteStage.scene = Scene(scrollPane, 220.0, ((1080.0 * 2) / 3) - 40.0)
+
+        paletteStage.x = 1920/2.0 + 400
+        paletteStage.y = 1080/2.0 - (((1080.0 * 2) / 2) - 240.0)/2
+
+        paletteStage.show()
+    }
+
     private fun exportMeshFunction() {
         println("\nfun createCustomMesh(size: Double, color: Color): Mesh {")
         println("    val hs = size / 100.0")
@@ -668,9 +916,15 @@ class ModelEditor : Application() {
         println("    )")
 
         println("\n    val textureMapping = mapOf(")
+        faceTextures.entries.sortedBy { it.key }.forEach { (index, name) ->
+            println("        $index to \"$name\",")
+        }
         println("    )")
 
         println("\n    val blushes = listOf(")
+        blushes.forEach { blush ->
+            println("        AABB(min = Vector3d(${blush.min.x} * hs, ${blush.min.y} * hs, ${blush.min.z} * hs), max = Vector3d(${blush.max.x}, ${blush.max.y}, ${blush.max.z})),")
+        }
         println("    )")
 
         println("\n    val uvs: List<List<Vector3d>> = faces.map { face ->")
@@ -679,8 +933,7 @@ class ModelEditor : Application() {
         println("            4 -> listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0))")
         println("            else -> face.map { Vector3d(0.0,0.0,0.0) }")
         println("        }")
-        println("    }")
-        println("    return Mesh(vertices, faces, uvs, color)")
+        println("    }\n    return Mesh(vertices, faces, uvs, color, blushes = blushes, faceTextureNames = textureMapping)")
         println("}")
         println("\n")
     }
@@ -713,44 +966,72 @@ class ModelEditor : Application() {
         dialogStage.showAndWait()
     }
 
+    private fun parseVector3dFromString(vecContent: String): Vector3d? {
+        val cleanedContent = vecContent.replace(Regex("[^\\d.,\\s-]"), "")
+        val parts = cleanedContent.split(',').mapNotNull { it.trim().toDoubleOrNull() }
+        return if (parts.size == 3) Vector3d(parts[0], parts[1], parts[2]) else null
+    }
+
     private fun parseAndLoadModel(code: String) {
         println("--- Rozpoczynam import modelu ---")
         try {
             val newVertices = mutableListOf<Vector3d>()
             val newFaces = mutableListOf<Face>()
             val newEdges = mutableListOf<Edge>()
+            val newFaceTextures = mutableMapOf<Int, String>()
+            val newBlushes = mutableListOf<AABB>()
+            var blushBuffer = ""
 
             var inVerticesBlock = false
             var inFacesBlock = false
             var inEdgesBlock = false
+            var inTextureMappingBlock = false
+            var inBlushesBlock = false
 
             for (line in code.lines()) {
                 val trimmedLine = line.trim()
 
                 if (trimmedLine.startsWith("val vertices")) {
                     println("Znaleziono blok 'vertices'.")
-                    inVerticesBlock = true; inFacesBlock = false; inEdgesBlock = false
+                    inVerticesBlock = true; inFacesBlock = false; inEdgesBlock = false; inTextureMappingBlock = false; inBlushesBlock = false
                     continue
                 }
                 if (trimmedLine.startsWith("val faces")) {
                     println("Zakończono 'vertices'. Znaleziono: ${newVertices.size}.")
-                    inVerticesBlock = false; inFacesBlock = true; inEdgesBlock = false
+                    inVerticesBlock = false; inFacesBlock = true; inEdgesBlock = false; inTextureMappingBlock = false; inBlushesBlock = false
                     continue
                 }
                 if (trimmedLine.startsWith("val edges")) {
                     println("Zakończono 'faces'. Znaleziono: ${newFaces.size}.")
-                    inVerticesBlock = false; inFacesBlock = false; inEdgesBlock = true
+                    inVerticesBlock = false; inFacesBlock = false; inEdgesBlock = true; inTextureMappingBlock = false; inBlushesBlock = false
                     continue
                 }
-                if (trimmedLine.startsWith("val uvs") || trimmedLine.startsWith("return Mesh")) {
+                if (trimmedLine.startsWith("val textureMapping")) {
                     if (inEdgesBlock) println("Zakończono 'edges'. Znaleziono: ${newEdges.size}.")
-                    inVerticesBlock = false; inFacesBlock = false; inEdgesBlock = false
+                    inVerticesBlock = false; inFacesBlock = false; inEdgesBlock = false; inTextureMappingBlock = true; inBlushesBlock = false
+                    println("DEBUG: Rozpoczęto parsowanie bloku 'textureMapping'.")
+                    continue
+                }
+                if (trimmedLine.startsWith("val blushes")) {
+                    if (inTextureMappingBlock) println("Zakończono 'textureMapping'. Znaleziono: ${newFaceTextures.size}.")
+                    else if (inEdgesBlock) println("Zakończono 'edges'. Znaleziono: ${newEdges.size}.")
+                    inVerticesBlock = false; inFacesBlock = false; inEdgesBlock = false; inTextureMappingBlock = false; inBlushesBlock = true
+                    blushBuffer = ""
+                    println("Znaleziono blok 'blushes'.")
+                    continue
+                }
+
+                if (trimmedLine.startsWith("val uvs") || trimmedLine.startsWith("return Mesh") || trimmedLine.startsWith("}")) {
+                    if (inEdgesBlock) println("Zakończono 'edges'. Znaleziono: ${newEdges.size}.")
+                    if (inTextureMappingBlock) println("Zakończono 'textureMapping'. Znaleziono: ${newFaceTextures.size}.")
+                    if (inBlushesBlock) println("Zakończono 'blushes'. Znaleziono: ${newBlushes.size}.")
+                    inVerticesBlock = false; inFacesBlock = false; inEdgesBlock = false; inTextureMappingBlock = false; inBlushesBlock = false
                 }
 
                 if (inVerticesBlock && trimmedLine.contains("Vector3d(")) {
                     val content = trimmedLine.substringAfter('(').substringBeforeLast(')')
                     val cleanedContent = content.replace(Regex("[^\\d.,\\s-]"), "")
-                    val parts = cleanedContent.split(',').map { it.trim() }
+                    val parts = cleanedContent.split(',').mapNotNull { it.trim().ifEmpty { null } }
                     if (parts.size == 3) {
                         try {
                             val x = parts[0].toDouble()
@@ -774,10 +1055,55 @@ class ModelEditor : Application() {
                     if (parts.size == 2) {
                         newEdges.add(Edge(parts[0], parts[1]))
                     }
+                } else if (inTextureMappingBlock && trimmedLine.contains(" to ")) {
+                    val parts = trimmedLine.split(" to ")
+                    if (parts.size == 2) {
+                        val faceIndex = parts[0].trim().toIntOrNull()
+                        val textureName = parts[1].trim().removeSuffix(",").removeSurrounding("\"")
+                        if (faceIndex != null) {
+                            newFaceTextures[faceIndex] = textureName
+                            println("DEBUG: Sparsowano mapowanie: $faceIndex -> \"$textureName\"")
+                        }
+                    }
+                } else if (inBlushesBlock) {
+                    if (trimmedLine.startsWith("listOf(") || trimmedLine == ")" || trimmedLine.isEmpty()) {
+                    } else {
+                        blushBuffer += " " + trimmedLine
+
+                        val openParenCount = blushBuffer.count { it == '(' }
+                        val closeParenCount = blushBuffer.count { it == ')' }
+
+                        if (blushBuffer.contains("AABB(") && openParenCount > 0 && openParenCount == closeParenCount) {
+                            val parseableString = blushBuffer.trim()
+
+                            val minRegex = Regex("""min\s*=\s*Vector3d\s*\(([^)]+)\)""")
+                            val maxRegex = Regex("""max\s*=\s*Vector3d\s*\(([^)]+)\)""")
+
+                            val minMatch = minRegex.find(parseableString)
+                            val maxMatch = maxRegex.find(parseableString)
+
+                            if (minMatch != null && maxMatch != null) {
+                                val minContent = minMatch.groupValues[1]
+                                val maxContent = maxMatch.groupValues[1]
+                                val minVec = parseVector3dFromString(minContent)
+                                val maxVec = parseVector3dFromString(maxContent)
+
+                                if (minVec != null && maxVec != null) {
+                                    newBlushes.add(AABB(minVec, maxVec))
+                                } else {
+                                    println(" > Ostrzeżenie: Nie udało się sparsować wektorów w AABB z bufora: $blushBuffer")
+                                }
+                            } else {
+                                println(" > Ostrzeżenie: Nie udało się znaleźć min/max w AABB z bufora: $blushBuffer")
+                            }
+                            blushBuffer = ""
+                        }
+                    }
                 }
             }
             println("--- Zakończono parsowanie pliku ---")
 
+            println("DEBUG: newFaceTextures przed putAll: $newFaceTextures")
             if (newVertices.isEmpty()) {
                 println("BŁĄD KRYTYCZNY: Nie udało się sparsować żadnych wierzchołków.")
                 return
@@ -787,14 +1113,21 @@ class ModelEditor : Application() {
             edges.clear()
             faces.clear()
             blushes.clear()
+            faceTextures.clear()
             selectedForFace.clear()
             selectedVertex = null
+            groupSelectedVertices.clear()
+            groupGizmoPosition = null
+            selectedBlushIndex = null
+            selectedBlushCorner = null
 
             vertices.addAll(newVertices)
             edges.addAll(newEdges)
             faces.addAll(newFaces)
-
-            println("Załadowano model: ${vertices.size} wierzchołków, ${edges.size} krawędzi, ${faces.size} ścian.")
+            blushes.addAll(newBlushes)
+            faceTextures.putAll(newFaceTextures)
+            println("DEBUG: faceTextures po putAll: $faceTextures")
+            println("Załadowano model: ${vertices.size} wierzchołków, ${edges.size} krawędzi, ${faces.size} ścian, ${faceTextures.size} mapowań, ${blushes.size} blushes.")
 
         } catch (e: Exception) {
             println("KRYTYCZNY BŁĄD podczas parsowania modelu: ${e.message}")
@@ -804,36 +1137,53 @@ class ModelEditor : Application() {
 
     private fun draw(gc: GraphicsContext, w: Double, h: Double, mouseX: Double, mouseY: Double) {
         gc.fill = Color.BLACK; gc.fillRect(0.0, 0.0, w, h)
-        drawGrid(gc, w, h)
+        drawGrid(gc, w, h); drawBlushes(gc, w, h)
 
         if (angleY > PI * 2) angleY -= PI * 2
         if (angleY < -PI * 2) angleY += PI * 2
         if (angleX < -PI * 2) angleX += PI * 2
         if (angleX > PI * 2) angleX -= PI * 2
 
-        gc.globalAlpha = 0.2; gc.fill = Color.GRAY
-        val sortedFaces = try {
-            faces.sortedByDescending { f ->
+        val sortedFacesWithIndex = try {
+            faces.withIndex().sortedByDescending { (originalIndex, f) ->
                 if (f.indices.any { it >= vertices.size }) 0.0
                 else f.indices.map { getZInViewSpace(vertices[it]) }.average()
             }
         } catch (e: Exception) {
-            faces
+            faces.withIndex().toList()
         }
 
-        for (face in sortedFaces) {
+        val texturePalette = getEditorTexturePalette()
+
+        for ((originalFaceIndex, face) in sortedFacesWithIndex) {
             if (face.indices.any { it >= vertices.size }) continue
             val pts = face.indices.map { project(vertices[it], w, h) }
             if (pts.any { !it.first.isFinite() || !it.second.isFinite() }) continue
+
+            val textureName = faceTextures[originalFaceIndex]
+            val faceColor = if (textureName != null && texturePalette.containsKey(textureName)) {
+                texturePalette[textureName]!!
+            } else {
+                Color.GRAY
+            }
+            gc.globalAlpha = if (blushMode) 0.1 else 0.4
+            gc.fill = faceColor
+
             gc.beginPath()
             gc.moveTo(pts[0].first, pts[0].second)
             for (i in 1 until pts.size) gc.lineTo(pts[i].first, pts[i].second)
             gc.closePath(); gc.fill()
+
+            if (textureName != null) {
+                drawTextOnFace(gc, textureName, pts)
+            }
         }
+
         gc.globalAlpha = 1.0
 
         // Krawędzie
         gc.stroke = Color.LIME
+        gc.globalAlpha = if (blushMode) 0.2 else 1.0
         for (e in edges) {
             if (e.a >= vertices.size || e.b >= vertices.size) continue
             val p1 = project(vertices[e.a], w, h)
@@ -842,23 +1192,44 @@ class ModelEditor : Application() {
                 gc.strokeLine(p1.first, p1.second, p2.first, p2.second)
             }
         }
+        gc.globalAlpha = 1.0
 
         // Punkty
         for ((i, v) in vertices.withIndex()) {
             val p = project(v, w, h)
             if (p.first.isFinite() && p.second.isFinite()) {
-                gc.fill = when {
+                var pointColor = when {
                     groupSelectedVertices.contains(i) -> Color.PURPLE
                     selectedVertex == i -> Color.ORANGE
                     selectedForFace.contains(i) -> Color.CYAN
                     else -> Color.WHITE
                 }
+                if (blushMode) {
+                    pointColor = pointColor.desaturate().interpolate(Color.BLACK, 0.5)
+                }
+                gc.fill = pointColor
                 gc.fillOval(p.first - 4, p.second - 4, 8.0, 8.0)
             }
         }
         drawOrientationGizmo(gc, w, h)
         drawVertexInfo(gc, w, h)
         drawGizmo(gc, w, h)
+    }
+    private fun drawTextOnFace(gc: GraphicsContext, text: String, polygonPoints: List<Pair<Double, Double>>) {
+        if (polygonPoints.isEmpty()) return
+        val centerX = polygonPoints.map { it.first }.average()
+        val centerY = polygonPoints.map { it.second }.average()
+
+        gc.save()
+        gc.globalAlpha = 1.0
+        gc.font = javafx.scene.text.Font.font("Monospaced", 12.0)
+        gc.textAlign = javafx.scene.text.TextAlignment.CENTER
+        gc.textBaseline = javafx.geometry.VPos.CENTER
+        gc.stroke = Color.BLACK
+        gc.fill = Color.WHITE
+        gc.strokeText(text, centerX, centerY)
+        gc.fillText(text, centerX, centerY)
+        gc.restore()
     }
 
     private fun drawClippedLine(gc: GraphicsContext, p1World: Vector3d, p2World: Vector3d, w: Double, h: Double) {
@@ -916,6 +1287,37 @@ class ModelEditor : Application() {
             val p2x = Vector3d(gridSize, 0.0, i * step)
             drawClippedLine(gc, p1x, p2x, w, h)
         }
+    }
+
+    private fun drawBlushes(gc: GraphicsContext, w: Double, h: Double) {
+        if (!blushMode) return
+
+        blushes.forEachIndexed { index, aabb ->
+            gc.globalAlpha = 0.2
+            gc.lineWidth = 1.5
+            gc.stroke = if (index == selectedBlushIndex) Color.YELLOW else Color.ORANGE
+
+            val corners = aabb.getCorners()
+            val blushEdges = listOf(
+                0 to 1, 1 to 3, 3 to 2, 2 to 0, // Dolna podstawa
+                4 to 5, 5 to 7, 7 to 6, 6 to 4, // Górna podstawa
+                0 to 4, 1 to 5, 2 to 6, 3 to 7  // Krawędzie boczne
+            )
+            for ((i, j) in blushEdges) {
+                drawClippedLine(gc, corners[i], corners[j], w, h)
+            }
+
+            if (index == selectedBlushIndex) {
+                gc.globalAlpha = 1.0
+                val minP = project(aabb.min, w, h)
+                val maxP = project(aabb.max, w, h)
+                gc.fill = if (selectedBlushCorner == BlushCornerType.MIN) Color.WHITE else Color.RED
+                gc.fillOval(minP.first - 5, minP.second - 5, 10.0, 10.0)
+                gc.fill = if (selectedBlushCorner == BlushCornerType.MAX) Color.WHITE else Color.BLUE
+                gc.fillOval(maxP.first - 5, maxP.second - 5, 10.0, 10.0)
+            }
+        }
+        gc.globalAlpha = 1.0
     }
 
     private fun drawOrientationGizmo(gc: GraphicsContext, w: Double, h: Double) {
@@ -982,6 +1384,22 @@ class ModelEditor : Application() {
 
             gc.fillText(text, xPos, yPos)
         }
+
+        selectedBlushIndex?.let { index ->
+            val blush = blushes.getOrNull(index) ?: return
+            val min = blush.min
+            val max = blush.max
+            val text = String.format("B[%d]: MIN(%.2f, %.2f, %.2f)  MAX(%.2f, %.2f, %.2f)", index, min.x, min.y, min.z, max.x, max.y, max.z)
+
+            gc.font = javafx.scene.text.Font.font("Monospaced", 15.0)
+            gc.fill = Color.WHITE
+
+            val padding = 15.0
+            val xPos = padding
+            val yPos = h - padding
+
+            gc.fillText(text, xPos, yPos)
+        }
     }
 
     private fun project(v: Vector3d, w: Double, h: Double): Pair<Double, Double> {
@@ -1016,25 +1434,37 @@ class ModelEditor : Application() {
 
     private fun findClosestGizmoAxis(mouseX: Double, mouseY: Double, w: Double, h: Double): Char? {
         val gizmoOrigin = when {
+            blushMode && selectedBlushIndex != null && selectedBlushCorner != null -> {
+                val blush = blushes[selectedBlushIndex!!]
+                if (selectedBlushCorner == BlushCornerType.MIN) blush.min else blush.max
+            }
+            blushMode && selectedBlushIndex != null -> blushes.getOrNull(selectedBlushIndex!!)?.getCenter()
             groupSelectedVertices.isNotEmpty() -> groupGizmoPosition
             selectedVertex != null -> vertices.getOrNull(selectedVertex!!)
             else -> null
         } ?: return null
 
-        val origin = project(gizmoOrigin, w, h)
-        if (!origin.first.isFinite()) return null
-
         val clickThreshold = 10.0
 
         val axes = mapOf(
-            'X' to project(gizmoOrigin.copy(x = gizmoOrigin.x - gizmoSize), w, h),
-            'Y' to project(gizmoOrigin.copy(y = gizmoOrigin.y + gizmoSize), w, h),
-            'Z' to project(gizmoOrigin.copy(z = gizmoOrigin.z - gizmoSize), w, h)
+            'X' to Pair(
+                project(gizmoOrigin.copy(x = gizmoOrigin.x - gizmoStartOffset), w, h),
+                project(gizmoOrigin.copy(x = gizmoOrigin.x - gizmoEndOffset), w, h)
+            ),
+            'Y' to Pair(
+                project(gizmoOrigin.copy(y = gizmoOrigin.y + gizmoStartOffset), w, h),
+                project(gizmoOrigin.copy(y = gizmoOrigin.y + gizmoEndOffset), w, h)
+            ),
+            'Z' to Pair(
+                project(gizmoOrigin.copy(z = gizmoOrigin.z - gizmoStartOffset), w, h),
+                project(gizmoOrigin.copy(z = gizmoOrigin.z - gizmoEndOffset), w, h)
+            )
         )
 
-        for ((axis, endPoint) in axes) {
-            if (!endPoint.first.isFinite() || !endPoint.second.isFinite()) continue
-            val dist = pointToLineSegmentDistance(mouseX, mouseY, origin.first, origin.second, endPoint.first, endPoint.second)
+        for ((axis, points) in axes) {
+            val (startPoint, endPoint) = points
+            if (!startPoint.first.isFinite() || !startPoint.second.isFinite() || !endPoint.first.isFinite() || !endPoint.second.isFinite()) continue
+            val dist = pointToLineSegmentDistance(mouseX, mouseY, startPoint.first, startPoint.second, endPoint.first, endPoint.second)
             if (dist < clickThreshold) {
                 return axis
             }
@@ -1044,34 +1474,39 @@ class ModelEditor : Application() {
 
     private fun drawGizmo(gc: GraphicsContext, w: Double, h: Double) {
         val gizmoOrigin = when {
+            blushMode && selectedBlushIndex != null && selectedBlushCorner != null -> {
+                val blush = blushes[selectedBlushIndex!!]
+                if (selectedBlushCorner == BlushCornerType.MIN) blush.min else blush.max
+            }
+            blushMode && selectedBlushIndex != null -> blushes.getOrNull(selectedBlushIndex!!)?.getCenter()
             groupSelectedVertices.isNotEmpty() -> groupGizmoPosition
             selectedVertex != null -> vertices.getOrNull(selectedVertex!!)
             else -> null
         } ?: return
 
-        val origin = project(gizmoOrigin, w, h)
-        if (!origin.first.isFinite() || !origin.second.isFinite()) return
-
-        val xAxisEnd = project(gizmoOrigin.copy(x = gizmoOrigin.x - gizmoSize), w, h)
-        val yAxisEnd = project(gizmoOrigin.copy(y = gizmoOrigin.y + gizmoSize), w, h)
-        val zAxisEnd = project(gizmoOrigin.copy(z = gizmoOrigin.z - gizmoSize), w, h)
+        val xAxisStart = project(gizmoOrigin.copy(x = gizmoOrigin.x - gizmoStartOffset), w, h)
+        val xAxisEnd = project(gizmoOrigin.copy(x = gizmoOrigin.x - gizmoEndOffset), w, h)
+        val yAxisStart = project(gizmoOrigin.copy(y = gizmoOrigin.y + gizmoStartOffset), w, h)
+        val yAxisEnd = project(gizmoOrigin.copy(y = gizmoOrigin.y + gizmoEndOffset), w, h)
+        val zAxisStart = project(gizmoOrigin.copy(z = gizmoOrigin.z - gizmoStartOffset), w, h)
+        val zAxisEnd = project(gizmoOrigin.copy(z = gizmoOrigin.z - gizmoEndOffset), w, h)
 
         gc.stroke = Color.RED
         gc.lineWidth = if (gizmoAxis == 'X') 3.0 else 1.5
-        if (xAxisEnd.first.isFinite() && xAxisEnd.second.isFinite()) {
-            gc.strokeLine(origin.first, origin.second, xAxisEnd.first, xAxisEnd.second)
+        if (xAxisStart.first.isFinite() && xAxisStart.second.isFinite() && xAxisEnd.first.isFinite() && xAxisEnd.second.isFinite()) {
+            gc.strokeLine(xAxisStart.first, xAxisStart.second, xAxisEnd.first, xAxisEnd.second)
         }
 
         gc.stroke = Color.GREEN
         gc.lineWidth = if (gizmoAxis == 'Y') 3.0 else 1.5
-        if (yAxisEnd.first.isFinite() && yAxisEnd.second.isFinite()) {
-            gc.strokeLine(origin.first, origin.second, yAxisEnd.first, yAxisEnd.second)
+        if (yAxisStart.first.isFinite() && yAxisStart.second.isFinite() && yAxisEnd.first.isFinite() && yAxisEnd.second.isFinite()) {
+            gc.strokeLine(yAxisStart.first, yAxisStart.second, yAxisEnd.first, yAxisEnd.second)
         }
 
         gc.stroke = Color.BLUE
         gc.lineWidth = if (gizmoAxis == 'Z') 3.0 else 1.5
-        if (zAxisEnd.first.isFinite() && zAxisEnd.second.isFinite()) {
-            gc.strokeLine(origin.first, origin.second, zAxisEnd.first, zAxisEnd.second)
+        if (zAxisStart.first.isFinite() && zAxisStart.second.isFinite() && zAxisEnd.first.isFinite() && zAxisEnd.second.isFinite()) {
+            gc.strokeLine(zAxisStart.first, zAxisStart.second, zAxisEnd.first, zAxisEnd.second)
         }
         gc.lineWidth = 1.0
     }

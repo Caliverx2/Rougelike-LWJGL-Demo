@@ -283,13 +283,7 @@ fun createTankMesh(size: Double, color: Color): Mesh {
         Edge(a=8, b=13),
         Edge(a=13, b=11),
     )
-    val uvs: List<List<Vector3d>> = faces.map { face ->
-        when(face.size) {
-            3 -> listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))
-            4 -> listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0))
-            else -> face.map { Vector3d(0.0,0.0,0.0) }
-        }
-    }
+
     val textureMapping = mapOf(
         0 to "darkGreen",
         1 to "floor",
@@ -314,6 +308,13 @@ fun createTankMesh(size: Double, color: Color): Mesh {
         17 to "blackBricks",
     )
 
+    val uvs: List<List<Vector3d>> = faces.map { face ->
+        when(face.size) {
+            3 -> listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))
+            4 -> listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0))
+            else -> face.map { Vector3d(0.0,0.0,0.0) }
+        }
+    }
     return Mesh(vertices, faces, uvs, color, faceTextureNames = textureMapping)
 }
 
@@ -421,10 +422,32 @@ fun createStairMesh(size: Double, color: Color): Mesh {
         listOf(6, 1, 0, 7),
         listOf(4, 13, 12, 5),
     )
+    data class Edge(val a: Int, val b: Int)
+    val edges: List<Edge> = listOf(
+        Edge(a=13, b=4),
+        Edge(a=4, b=2),
+        Edge(a=2, b=9),
+        Edge(a=9, b=1),
+        Edge(a=1, b=6),
+        Edge(a=6, b=11),
+        Edge(a=11, b=13),
+        Edge(a=13, b=12),
+        Edge(a=12, b=5),
+        Edge(a=5, b=4),
+        Edge(a=12, b=10),
+        Edge(a=10, b=7),
+        Edge(a=7, b=6),
+        Edge(a=1, b=0),
+        Edge(a=0, b=8),
+        Edge(a=8, b=3),
+        Edge(a=3, b=5),
+        Edge(a=2, b=3),
+        Edge(a=10, b=11),
+        Edge(a=7, b=0),
+    )
     val textureMapping = mapOf(
-        1 to "floor",
-
         0 to "teal",
+        1 to "floor",
         2 to "teal",
         3 to "teal",
         4 to "teal",
@@ -434,6 +457,7 @@ fun createStairMesh(size: Double, color: Color): Mesh {
         8 to "teal",
         9 to "teal",
     )
+
     val uvs: List<List<Vector3d>> = faces.map { face ->
         when(face.size) {
             3 -> listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))
@@ -823,14 +847,6 @@ fun createMapMesh(size: Double, color: Color): Mesh {
         Edge(a=16, b=3),
     )
 
-    val uvs: List<List<Vector3d>> = faces.map { face ->
-        when(face.size) {
-            3 -> listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))
-            4 -> listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0))
-            else -> face.map { Vector3d(0.0,0.0,0.0) }
-        }
-    }
-
     val textureMapping = mapOf(
         0 to "floor",
         1 to "floor",
@@ -871,19 +887,18 @@ fun createMapMesh(size: Double, color: Color): Mesh {
     )
 
     val blushes = listOf(
-        AABB(
-            min = Vector3d(-29.0 * hs, 10.0 * hs, -5.0 * hs),
-            max = Vector3d(-21.0 * hs, 0.001 * hs , 5.0 * hs),
-        ),
-        AABB(
-            min = Vector3d(29.0 * hs, 10.0 * hs, -5.0 * hs),
-            max = Vector3d(21.9 * hs, 0.001 * hs , 5.0 * hs),
-        ),
-        AABB(
-            min = Vector3d(-80.0 * hs, 10.0 * hs, -7.5 * hs),
-            max = Vector3d(-70.0 * hs, 0.001 * hs , 7.5 * hs),
-        )
+        AABB(min = Vector3d(-29.0 * hs, 10.0 * hs, -5.0 * hs), max = Vector3d(-21.0 * hs, 0.001 * hs , 5.0 * hs),),
+        AABB(min = Vector3d(29.0 * hs, 10.0 * hs, -5.0 * hs), max = Vector3d(21.9 * hs, 0.001 * hs , 5.0 * hs),),
+        AABB(min = Vector3d(-80.0 * hs, 10.0 * hs, -7.5 * hs), max = Vector3d(-70.0 * hs, 0.001 * hs , 7.5 * hs),)
     )
+
+    val uvs: List<List<Vector3d>> = faces.map { face ->
+        when(face.size) {
+            3 -> listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))
+            4 -> listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0))
+            else -> face.map { Vector3d(0.0,0.0,0.0) }
+        }
+    }
 
     return Mesh(vertices, faces, uvs, color, blushes = blushes, faceTextureNames = textureMapping)
 }
