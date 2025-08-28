@@ -54,6 +54,7 @@ class ModelEditor : Application() {
     private val selectedForFace = mutableListOf<Int>()
     private var selectedBlushIndex: Int? = null
     private var selectedBlushCorner: BlushCornerType? = null
+    private var selectedFaceIndex: Int? = null
 
     private var dragStartVertex: Int? = null
 
@@ -157,6 +158,7 @@ class ModelEditor : Application() {
                 selectedBlushIndex = null
                 selectedBlushCorner = null
                 dragStartVertex = null
+                selectedFaceIndex = null
 
                 if (clickedVertex != null) {
                     selectedVertex = clickedVertex
@@ -169,7 +171,8 @@ class ModelEditor : Application() {
                     val edgeDepth = closestEdgeResult?.second ?: Double.MAX_VALUE
 
                     if (faceDepth < edgeDepth && faceDepth != Double.MAX_VALUE) {
-                        val face = faces[closestFaceResult!!.first]
+                        selectedFaceIndex = closestFaceResult!!.first
+                        val face = faces[selectedFaceIndex!!]
                         groupSelectedVertices.addAll(face.indices)
                     } else if (edgeDepth != Double.MAX_VALUE) {
                         val edge = edges[closestEdgeResult!!.first]
@@ -521,7 +524,11 @@ class ModelEditor : Application() {
             if (face.indices.any { it >= vertices.size }) return@forEachIndexed
             val pts = face.indices.map { project(vertices[it], w, h) }
             if (pts.any { !it.first.isFinite() || !it.second.isFinite() }) return@forEachIndexed
-
+            
+            if (calculateSignedPolygonArea(pts) > 0) {
+                return@forEachIndexed
+            }
+            
             if (pointInPolygon(mx, my, pts)) {
                 val avgZ = face.indices.map { getZInViewSpace(vertices[it]) }.average()
                 if (closestFace == null || avgZ < closestFace!!.second) {
@@ -530,6 +537,16 @@ class ModelEditor : Application() {
             }
         }
         return closestFace
+    }
+
+    private fun calculateSignedPolygonArea(polygon: List<Pair<Double, Double>>): Double {
+        var area = 0.0
+        for (i in polygon.indices) {
+            val p1 = polygon[i]
+            val p2 = polygon[(i + 1) % polygon.size]
+            area += (p1.first * p2.second - p2.first * p1.second)
+        }
+        return area / 2.0
     }
 
     private fun findBlushUnderCursor(mx: Double, my: Double, w: Double, h: Double): Int? {
@@ -859,7 +876,6 @@ class ModelEditor : Application() {
 
     private fun showTexturePalette(gc: GraphicsContext) {
         val paletteStage = Stage()
-        paletteStage.initModality(Modality.APPLICATION_MODAL)
         paletteStage.title = "Texture/Material Palette"
 
         val grid = GridPane()
@@ -876,9 +892,8 @@ class ModelEditor : Application() {
             nameLabel.textFill = Color.WHITE
             val assignButton = Button("Assign")
             assignButton.setOnAction {
-                val selectedFaceIndex = faces.indexOfFirst { it.indices.toSet() == groupSelectedVertices }
-                if (selectedFaceIndex != -1) {
-                    faceTextures[selectedFaceIndex] = name
+                if (this.selectedFaceIndex != null) {
+                    faceTextures[this.selectedFaceIndex!!] = name
                     draw(gc, gc.canvas.width, gc.canvas.height, 0.0, 0.0)
                 } else {
                     val alert = Alert(Alert.AlertType.WARNING, "No face selected to assign texture to.")
@@ -895,7 +910,12 @@ class ModelEditor : Application() {
         paletteStage.x = 1920/2.0 + 400
         paletteStage.y = 1080/2.0 - (((1080.0 * 2) / 2) - 240.0)/2
 
-        paletteStage.show()
+        paletteStage.focusedProperty().addListener { _, _, isFocused ->
+            if (!isFocused) {
+                paletteStage.close()
+            }
+        }
+        paletteStage.showAndWait()
     }
 
     private fun exportMeshFunction() {
@@ -923,7 +943,7 @@ class ModelEditor : Application() {
 
         println("\n    val blushes = listOf(")
         blushes.forEach { blush ->
-            println("        AABB(min = Vector3d(${blush.min.x} * hs, ${blush.min.y} * hs, ${blush.min.z} * hs), max = Vector3d(${blush.max.x}, ${blush.max.y}, ${blush.max.z})),")
+            println("        AABB(min = Vector3d(${blush.min.x} * hs, ${blush.min.y} * hs, ${blush.min.z} * hs), max = Vector3d(${blush.max.x} * hs, ${blush.max.y} * hs, ${blush.max.z} * hs)),")
         }
         println("    )")
 

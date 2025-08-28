@@ -851,45 +851,35 @@ fun createMapMesh(size: Double, color: Color): Mesh {
         0 to "floor",
         1 to "floor",
         2 to "floor",
-
         3 to "floor",
         4 to "floor",
         5 to "floor",
-
         6 to "ceiling",
         7 to "ceiling",
         8 to "ceiling",
-
         9 to "ceiling",
-
         10 to "ceiling",
         11 to "ceiling",
         12 to "ceiling",
-
         13 to "ceiling",
-
         14 to "bricks",
         15 to "bricks",
         16 to "bricks",
         17 to "bricks",
-
         18 to "blackBricks",
         19 to "blackBricks",
         20 to "blackBricks",
-
         21 to "blackBricks",
-
         22 to "blackBricks",
         23 to "blackBricks",
         24 to "blackBricks",
-
         25 to "blackBricks",
     )
 
     val blushes = listOf(
-        AABB(min = Vector3d(-29.0 * hs, 10.0 * hs, -5.0 * hs), max = Vector3d(-21.0 * hs, 0.001 * hs , 5.0 * hs),),
-        AABB(min = Vector3d(29.0 * hs, 10.0 * hs, -5.0 * hs), max = Vector3d(21.9 * hs, 0.001 * hs , 5.0 * hs),),
-        AABB(min = Vector3d(-80.0 * hs, 10.0 * hs, -7.5 * hs), max = Vector3d(-70.0 * hs, 0.001 * hs , 7.5 * hs),)
+        AABB(min = Vector3d(-29.0 * hs, 10.0 * hs, -5.0 * hs), max = Vector3d(-21.0 * hs, 0.001 * hs, 5.0 * hs)),
+        AABB(min = Vector3d(29.0 * hs, 10.0 * hs, -5.0 * hs), max = Vector3d(21.9 * hs, 0.001 * hs, 5.0 * hs)),
+        AABB(min = Vector3d(-80.0 * hs, 10.0 * hs, -7.5 * hs), max = Vector3d(-70.0 * hs, 0.001 * hs, 7.5 * hs)),
     )
 
     val uvs: List<List<Vector3d>> = faces.map { face ->
@@ -899,7 +889,6 @@ fun createMapMesh(size: Double, color: Color): Mesh {
             else -> face.map { Vector3d(0.0,0.0,0.0) }
         }
     }
-
     return Mesh(vertices, faces, uvs, color, blushes = blushes, faceTextureNames = textureMapping)
 }
 
