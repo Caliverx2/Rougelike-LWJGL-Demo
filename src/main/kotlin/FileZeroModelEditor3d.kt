@@ -1192,21 +1192,21 @@ class ModelEditor : Application() {
         if (angleX < -PI * 2) angleX += PI * 2
         if (angleX > PI * 2) angleX -= PI * 2
 
-        val sortedFacesWithIndex = try {
-            faces.withIndex().sortedByDescending { (originalIndex, f) ->
-                if (f.indices.any { it >= vertices.size }) 0.0
-                else f.indices.map { getZInViewSpace(vertices[it]) }.average()
-            }
-        } catch (e: Exception) {
-            faces.withIndex().toList()
+        val visibleFaces = faces.withIndex().filter { (_, f) ->
+            if (f.indices.any { it >= vertices.size }) return@filter false
+            val projectedPoints = f.indices.map { project(vertices[it], w, h) }
+            if (projectedPoints.any { !it.first.isFinite() || !it.second.isFinite() }) return@filter false
+            calculateSignedPolygonArea(projectedPoints) <= 0
+        }
+
+        val sortedFacesWithIndex = visibleFaces.sortedByDescending { (_, f) ->
+            f.indices.map { getZInViewSpace(vertices[it]) }.average()
         }
 
         val texturePalette = getEditorTexturePalette()
 
         for ((originalFaceIndex, face) in sortedFacesWithIndex) {
-            if (face.indices.any { it >= vertices.size }) continue
             val pts = face.indices.map { project(vertices[it], w, h) }
-            if (pts.any { !it.first.isFinite() || !it.second.isFinite() }) continue
 
             val textureName = faceTextures[originalFaceIndex]
             val faceColor = if (textureName != null && texturePalette.containsKey(textureName)) {
@@ -1214,7 +1214,7 @@ class ModelEditor : Application() {
             } else {
                 Color.GRAY
             }
-            gc.globalAlpha = if (blushMode) 0.1 else 0.4
+            gc.globalAlpha = if (blushMode) 0.2 else 0.8
             gc.fill = faceColor
 
             gc.beginPath()
@@ -1263,6 +1263,7 @@ class ModelEditor : Application() {
         drawVertexInfo(gc, w, h)
         drawGizmo(gc, w, h)
     }
+
     private fun drawTextOnFace(gc: GraphicsContext, text: String, polygonPoints: List<Pair<Double, Double>>) {
         if (polygonPoints.isEmpty()) return
         val centerX = polygonPoints.map { it.first }.average()
