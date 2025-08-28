@@ -53,9 +53,10 @@ class DrawingPanel : StackPane() {
     private val fogDensity = 0.5
 
     private val ambientIntensity = 0.5
-    private val ambientLightResolution = 8
+    private val ambientLightResolution = 16
     private val globalLightIntensity = 6.0
 
+    private var retroScanLineMode = false
     private val renderDownscaleFactor = 4
     private val baseResolutionWidth = 1920
     private val baseResolutionHeight = 1080
@@ -290,6 +291,10 @@ class DrawingPanel : StackPane() {
             debugNoclip = !debugNoclip
             println("debugNoclip: $debugNoclip")
         }
+        if (code == KeyCode.L) {
+            retroScanLineMode = !retroScanLineMode
+            println("CRT Monitor Mode: $retroScanLineMode")
+        }
     }
 
     private fun isCollidingAt(testPosition: Vector3d): Boolean {
@@ -459,6 +464,7 @@ class DrawingPanel : StackPane() {
         val gc = overlayCanvas.graphicsContext2D
         gc.clearRect(0.0, 0.0, overlayCanvas.width, overlayCanvas.height)
         gc.stroke = Color.WHITE
+        gc.strokeOval(overlayCanvas.width/2, overlayCanvas.height/2, 1.0, 1.0)
         for (x in 0..8) {
             for (y in 0..8) {
                 for (zLevel in 0 until 4) {
@@ -964,6 +970,41 @@ class DrawingPanel : StackPane() {
                             r = r * (1 - fogFactor) + fogR * fogFactor
                             g = g * (1 - fogFactor) + fogG * fogFactor
                             b = b * (1 - fogFactor) + fogB * fogFactor
+                        }
+
+                        if (retroScanLineMode) {
+                            val screenCenterY = screenHeight / 2.0
+                            val screenCenterX = screenWidth / 2.0
+                            val distFromCenterY = (py - screenCenterY) / screenCenterY
+                            val distFromCenterX = (px - screenCenterX) / screenCenterX
+                            val distSquared = distFromCenterX * distFromCenterX + distFromCenterY * distFromCenterY
+                            val vignetteFactor = 1.0 - distSquared * 0.15
+
+                            r *= vignetteFactor
+                            g *= vignetteFactor
+                            b *= vignetteFactor
+
+                            val rShiftFactor = 1.0 + distSquared * 0.05
+                            val bShiftFactor = 1.0 + distSquared * 0.05
+                            val tempR = r * rShiftFactor
+                            val tempB = b * bShiftFactor
+                            val scanlineFactor = 0.80
+                            val bloomFactor = 1.05
+
+                            when (py % 3) {
+                                0 -> {
+                                    r *= scanlineFactor; g *= scanlineFactor; b *= scanlineFactor
+                                }
+                                1 -> {
+                                    r *= bloomFactor; g *= bloomFactor; b *= bloomFactor
+                                }
+                            }
+
+                            val noise = (Math.random() * 0.05) - 0.025
+                            r += noise; g += noise; b += noise
+
+                            r = tempR
+                            b = tempB
                         }
 
                         pixelBuffer[pixelIndex] = (0xFF shl 24) or

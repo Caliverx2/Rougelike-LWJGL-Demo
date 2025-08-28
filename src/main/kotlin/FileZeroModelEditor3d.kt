@@ -6,6 +6,7 @@ import javafx.scene.Scene
 import javafx.scene.control.*
 import javafx.scene.canvas.Canvas
 import javafx.scene.canvas.GraphicsContext
+import javafx.scene.image.Image
 import javafx.scene.input.KeyCode
 import javafx.scene.input.MouseButton
 import javafx.scene.layout.GridPane
@@ -447,6 +448,7 @@ class ModelEditor : Application() {
         }
 
         stage.title = "FileZero.kt Model 3D Editor"
+        stage.icons.add(Image(ModelEditor::class.java.classLoader.getResourceAsStream("textures/icon.jpeg")))
         stage.scene = scene
         stage.show()
         draw(gc, canvas.width, canvas.height, 0.0, 0.0)
@@ -861,16 +863,42 @@ class ModelEditor : Application() {
             "ceiling" to Color.web("#C2C3C7"),
             "floor" to Color.web("#5F574F"),
             "skybox" to Color.web("#29ADFF"),
-            "red" to Color.RED, "darkRed" to Color.DARKRED, "blue" to Color.BLUE, "darkBlue" to Color.DARKBLUE,
-            "green" to Color.GREEN, "darkGreen" to Color.DARKGREEN, "gray" to Color.GRAY, "darkGray" to Color.DARKGRAY,
-            "orange" to Color.ORANGE, "darkOrange" to Color.DARKORANGE, "yellow" to Color.YELLOW, "darkGoldenrod" to Color.DARKGOLDENROD,
-            "cyan" to Color.CYAN, "darkCyan" to Color.DARKCYAN, "magenta" to Color.MAGENTA, "darkMagenta" to Color.DARKMAGENTA,
-            "brown" to Color.BROWN, "navy" to Color.NAVY, "purple" to Color.PURPLE, "darkViolet" to Color.DARKVIOLET,
-            "olive" to Color.OLIVE, "maroon" to Color.MAROON, "teal" to Color.TEAL, "black" to Color.web("#000000"),
-            "darkPurple" to Color.web("#7E2553"), "lightGray" to Color.web("#C2C3C7"), "white" to Color.web("#FFF1E8"),
-            "indigo" to Color.web("#83769C"), "pink" to Color.web("#FF77A8"), "peach" to Color.web("#FFCCAA"),
-            "silver" to Color.SILVER, "gold" to Color.GOLD, "mintCream" to Color.MINTCREAM, "salmon" to Color.SALMON,
-            "turquoise" to Color.TURQUOISE, "orchid" to Color.ORCHID
+            "red" to Color.RED,
+            "darkRed" to Color.DARKRED,
+            "pink" to Color.web("#FF77A8"),
+            "salmon" to Color.SALMON,
+            "maroon" to Color.MAROON,
+            "orange" to Color.ORANGE,
+            "darkOrange" to Color.DARKORANGE,
+            "peach" to Color.web("#FFCCAA"),
+            "brown" to Color.BROWN,
+            "yellow" to Color.YELLOW,
+            "darkGoldenrod" to Color.DARKGOLDENROD,
+            "gold" to Color.GOLD,
+            "green" to Color.GREEN,
+            "darkGreen" to Color.DARKGREEN,
+            "olive" to Color.OLIVE,
+            "teal" to Color.TEAL,
+            "mintCream" to Color.MINTCREAM,
+            "cyan" to Color.CYAN,
+            "darkCyan" to Color.DARKCYAN,
+            "turquoise" to Color.TURQUOISE,
+            "blue" to Color.BLUE,
+            "darkBlue" to Color.DARKBLUE,
+            "navy" to Color.NAVY,
+            "indigo" to Color.web("#83769C"),
+            "purple" to Color.PURPLE,
+            "darkViolet" to Color.DARKVIOLET,
+            "magenta" to Color.MAGENTA,
+            "darkMagenta" to Color.DARKMAGENTA,
+            "orchid" to Color.ORCHID,
+            "darkPurple" to Color.web("#7E2553"),
+            "white" to Color.web("#FFF1E8"),
+            "lightGray" to Color.web("#C2C3C7"),
+            "silver" to Color.SILVER,
+            "gray" to Color.GRAY,
+            "darkGray" to Color.DARKGRAY,
+            "black" to Color.web("#000000")
         )
     }
 
@@ -885,7 +913,7 @@ class ModelEditor : Application() {
 
         val texturePalette = getEditorTexturePalette()
         var row = 0
-        texturePalette.entries.sortedBy { it.key }.forEach { (name, color) ->
+        texturePalette.entries.forEach { (name, color) ->
             val swatch = javafx.scene.shape.Rectangle(20.0, 20.0, color)
             swatch.stroke = Color.WHITE
             val nameLabel = Label(name)

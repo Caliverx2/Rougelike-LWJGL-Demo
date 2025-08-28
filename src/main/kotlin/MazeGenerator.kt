@@ -15,7 +15,6 @@ data class Node(val r: Int, val c: Int, var dist: Int = Int.MAX_VALUE, var prev:
 }
 
 class MazePathfindingPanel : JPanel() {
-
     private val baseCols = 25
     private val baseRows = 17
     private val cellSize = 20
@@ -99,30 +98,50 @@ class MazePathfindingPanel : JPanel() {
             }
         } else {
             generating = false
+            addLoops()
         }
     }
 
     private fun getUnvisitedNeighbors(row: Int, col: Int): List<Pair<Int, Int>> {
         val neighbors = mutableListOf<Pair<Int, Int>>()
-
-        // Góra
         if (row > 0 && !visitedCells[row - 1][col]) {
             neighbors.add(Pair(row - 1, col))
         }
-        // Prawo
         if (col < baseCols - 1 && !visitedCells[row][col + 1]) {
             neighbors.add(Pair(row, col + 1))
         }
-        // Dół
         if (row < baseRows - 1 && !visitedCells[row + 1][col]) {
             neighbors.add(Pair(row + 1, col))
         }
-        // Lewo
         if (col > 0 && !visitedCells[row][col - 1]) {
             neighbors.add(Pair(row, col - 1))
         }
 
         return neighbors
+    }
+
+    private fun getPotentialLoopNeighbors(row: Int, col: Int): List<Pair<Int, Int>> {
+        val neighbors = mutableListOf<Pair<Int, Int>>()
+        if (row > 0) neighbors.add(Pair(row - 1, col))
+        if (col < baseCols - 1) neighbors.add(Pair(row, col + 1))
+        if (row < baseRows - 1) neighbors.add(Pair(row + 1, col))
+        if (col > 0) neighbors.add(Pair(row, col - 1))
+        return neighbors
+    }
+
+    private fun addLoops() {
+        val loopsToAdd = (baseRows * baseCols) / 8
+
+        repeat(loopsToAdd) {
+            val r = (0 until baseRows).random()
+            val c = (0 until baseCols).random()
+
+            val neighbors = getPotentialLoopNeighbors(r, c)
+            if (neighbors.isNotEmpty()) {
+                val (nextR, nextC) = neighbors.random()
+                removeWallInGridMap(r, c, nextR, nextC)
+            }
+        }
     }
 
     private fun removeWallInGridMap(r1: Int, c1: Int, r2: Int, c2: Int) {
