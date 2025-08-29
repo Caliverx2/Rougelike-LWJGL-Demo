@@ -304,6 +304,7 @@ class ModelEditor : Application() {
                     faceSelectMode = !faceSelectMode
                     blushMode = false
                     deleteMode = false
+                    selectedVertex = null
                     if (!faceSelectMode) {
                         selectedForFace.clear()
                     }
@@ -320,6 +321,25 @@ class ModelEditor : Application() {
                         blushes.removeAt(selectedBlushIndex!!)
                         selectedBlushIndex = null
                         selectedBlushCorner = null
+                    } else if (selectedFaceIndex != null) {
+                        val removedIndex = selectedFaceIndex
+                        faces.removeAt(removedIndex!!)
+
+                        val newFaceTextures = mutableMapOf<Int, String>()
+                        faceTextures.forEach { (index, name) ->
+                            if (index > removedIndex) {
+                                newFaceTextures[index - 1] = name
+                            } else if (index < removedIndex) {
+                                newFaceTextures[index] = name
+                            }
+                        }
+                        faceTextures.clear()
+                        faceTextures.putAll(newFaceTextures)
+
+                        selectedFaceIndex = null
+                        groupSelectedVertices.clear()
+                        groupGizmoPosition = null
+
                     } else if (selectedVertex != null) {
                         deleteSelectedVertex()
                     } else {
@@ -526,11 +546,11 @@ class ModelEditor : Application() {
             if (face.indices.any { it >= vertices.size }) return@forEachIndexed
             val pts = face.indices.map { project(vertices[it], w, h) }
             if (pts.any { !it.first.isFinite() || !it.second.isFinite() }) return@forEachIndexed
-            
+
             if (calculateSignedPolygonArea(pts) > 0) {
                 return@forEachIndexed
             }
-            
+
             if (pointInPolygon(mx, my, pts)) {
                 val avgZ = face.indices.map { getZInViewSpace(vertices[it]) }.average()
                 if (closestFace == null || avgZ < closestFace!!.second) {
@@ -1323,18 +1343,21 @@ class ModelEditor : Application() {
 
     private fun drawGrid(gc: GraphicsContext, w: Double, h: Double) {
         gc.stroke = Color.rgb(50, 50, 50)
-        val range = -8..8
+        val numLines = 8
         val step = 50.0
-        val gridSize = range.last * step + step
+        val gridSize = numLines * step
 
-        for (i in range) {
-            val p1z = Vector3d(i * step, 0.0, -gridSize)
-            val p2z = Vector3d(i * step, 0.0, gridSize)
-            drawClippedLine(gc, p1z, p2z, w, h)
-
-            val p1x = Vector3d(-gridSize, 0.0, i * step)
-            val p2x = Vector3d(gridSize, 0.0, i * step)
-            drawClippedLine(gc, p1x, p2x, w, h)
+        for (i in -numLines..numLines) {
+            val x = i * step
+            val p1 = Vector3d(x, 0.0, -gridSize)
+            val p2 = Vector3d(x, 0.0, gridSize)
+            drawClippedLine(gc, p1, p2, w, h)
+        }
+        for (i in -numLines..numLines) {
+            val z = i * step
+            val p1 = Vector3d(-gridSize, 0.0, z)
+            val p2 = Vector3d(gridSize, 0.0, z)
+            drawClippedLine(gc, p1, p2, w, h)
         }
     }
 

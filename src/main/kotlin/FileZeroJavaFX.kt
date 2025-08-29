@@ -1,7 +1,6 @@
 package org.lewapnoob.FileZero2
 
 import javafx.application.Application
-import javafx.geometry.Pos
 import javafx.scene.Scene
 import javafx.scene.image.Image
 import javafx.scene.paint.Color

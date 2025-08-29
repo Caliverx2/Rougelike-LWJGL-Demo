@@ -850,67 +850,70 @@ class DrawingPanel : StackPane() {
         val lookDirection = Vector3d(cos(cameraPitch) * sin(cameraYaw), sin(cameraPitch), cos(cameraPitch) * cos(cameraYaw)).normalize()
         val upVector = Vector3d(0.0, 1.0, 0.0)
         val viewMatrix = Matrix4x4.lookAt(cameraPosition, cameraPosition + lookDirection, upVector)
-        val projectionMatrix = Matrix4x4.perspective(dynamicFov, virtualWidth.toDouble() / virtualHeight.toDouble(), 0.1, 1.0)
+        val projectionMatrix = Matrix4x4.perspective(dynamicFov, virtualWidth.toDouble() / virtualHeight.toDouble(), 0.1, 48.0 * cubeSize)
         val combinedMatrix = projectionMatrix * viewMatrix
 
         val tasks = mutableListOf<Future<*>>()
 
         for (mesh in meshes) {
-            tasks.add(executor.submit {
-                val worldVertices = mesh.mesh.vertices.map { mesh.transformMatrix.transform(it) }
-                for (faceIndex in mesh.mesh.faces.indices) {
-                    val faceIndices = mesh.mesh.faces[faceIndex]
-                    if (faceIndices.size < 3) continue
+            val meshAABB = meshAABBs[mesh]
+            if (mesh.texture == texSkybox || meshAABB == null || !isAabbOutsideFrustum(meshAABB, combinedMatrix)) {
+                tasks.add(executor.submit {
+                    val worldVertices = mesh.mesh.vertices.map { mesh.transformMatrix.transform(it) }
+                    for (faceIndex in mesh.mesh.faces.indices) {
+                        val faceIndices = mesh.mesh.faces[faceIndex]
+                        if (faceIndices.size < 3) continue
 
-                    val p0View = viewMatrix.transform(worldVertices[faceIndices[0]])
-                    val p1View = viewMatrix.transform(worldVertices[faceIndices[1]])
-                    val p2View = viewMatrix.transform(worldVertices[faceIndices[2]])
+                        val p0View = viewMatrix.transform(worldVertices[faceIndices[0]])
+                        val p1View = viewMatrix.transform(worldVertices[faceIndices[1]])
+                        val p2View = viewMatrix.transform(worldVertices[faceIndices[2]])
 
-                    val normalView = (p1View - p0View).cross(p2View - p0View).normalize()
-                    val cameraRayView = (Vector3d(0.0, 0.0, 0.0) - p0View).normalize()
+                        val normalView = (p1View - p0View).cross(p2View - p0View).normalize()
+                        val cameraRayView = (Vector3d(0.0, 0.0, 0.0) - p0View).normalize()
 
-                    if (normalView.dot(cameraRayView) > 0) {
-                        val faceWorldVertices = faceIndices.map { worldVertices[it] }
-                        val faceTexCoords = mesh.mesh.faceUVs[faceIndex]
+                        if (normalView.dot(cameraRayView) > 0) {
+                            val faceWorldVertices = faceIndices.map { worldVertices[it] }
+                            val faceTexCoords = mesh.mesh.faceUVs[faceIndex]
 
-                        val triangles = if (faceIndices.size == 4) {
-                            listOf(
-                                Pair(listOf(faceWorldVertices[0], faceWorldVertices[1], faceWorldVertices[2]),
-                                    listOf(faceTexCoords[0], faceTexCoords[1], faceTexCoords[2])),
-                                Pair(listOf(faceWorldVertices[0], faceWorldVertices[2], faceWorldVertices[3]),
-                                    listOf(faceTexCoords[0], faceTexCoords[2], faceTexCoords[3]))
-                            )
-                        } else {
-                            listOf(Pair(faceWorldVertices, faceTexCoords))
-                        }
+                            val triangles = if (faceIndices.size == 4) {
+                                listOf(
+                                    Pair(listOf(faceWorldVertices[0], faceWorldVertices[1], faceWorldVertices[2]),
+                                        listOf(faceTexCoords[0], faceTexCoords[1], faceTexCoords[2])),
+                                    Pair(listOf(faceWorldVertices[0], faceWorldVertices[2], faceWorldVertices[3]),
+                                        listOf(faceTexCoords[0], faceTexCoords[2], faceTexCoords[3]))
+                                )
+                            } else {
+                                listOf(Pair(faceWorldVertices, faceTexCoords))
+                            }
 
-                        val lightGrid = faceLightGrids[Pair(mesh, faceIndex)]
-                        val worldBlushes = mesh.mesh.blushes.map { blush ->
-                            val transformedCorners = blush.getCorners().map { corner -> mesh.transformMatrix.transform(corner) }
-                            AABB.fromCube(transformedCorners)
-                        }
+                            val lightGrid = faceLightGrids[Pair(mesh, faceIndex)]
+                            val worldBlushes = mesh.mesh.blushes.map { blush ->
+                                val transformedCorners = blush.getCorners().map { corner -> mesh.transformMatrix.transform(corner) }
+                                AABB.fromCube(transformedCorners)
+                            }
 
-                        for ((triWorld, triUV) in triangles) {
-                            val clippedTriangles = clipTriangleAgainstNearPlane(triWorld, triUV, viewMatrix, 0.1)
-                            for ((clippedW, clippedUVs) in clippedTriangles) {
-                                val projectedVertices = mutableListOf<Vector3d>()
-                                val originalClipW = mutableListOf<Double>()
-                                for (vertex in clippedW) {
-                                    val projectedHomogeneous = combinedMatrix.transformHomogeneous(vertex)
-                                    val w = projectedHomogeneous.w
-                                    if (w.isCloseToZero()) continue
-                                    projectedVertices.add(Vector3d((projectedHomogeneous.x / w + 1) * virtualWidth / 2.0, (1 - projectedHomogeneous.y / w) * virtualHeight / 2.0, projectedHomogeneous.z / w))
-                                    originalClipW.add(w)
-                                }
-                                if (projectedVertices.size == 3) {
-                                    val faceTexture = mesh.faceTextures[faceIndex] ?: mesh.texture
-                                    renderQueue.add(RenderableFace(projectedVertices, originalClipW, clippedUVs, mesh.mesh.color, false, faceTexture, clippedW, lightGrid, worldBlushes))
+                            for ((triWorld, triUV) in triangles) {
+                                val clippedTriangles = clipTriangleAgainstNearPlane(triWorld, triUV, viewMatrix, 0.1)
+                                for ((clippedW, clippedUVs) in clippedTriangles) {
+                                    val projectedVertices = mutableListOf<Vector3d>()
+                                    val originalClipW = mutableListOf<Double>()
+                                    for (vertex in clippedW) {
+                                        val projectedHomogeneous = combinedMatrix.transformHomogeneous(vertex)
+                                        val w = projectedHomogeneous.w
+                                        if (w.isCloseToZero()) continue
+                                        projectedVertices.add(Vector3d((projectedHomogeneous.x / w + 1) * virtualWidth / 2.0, (1 - projectedHomogeneous.y / w) * virtualHeight / 2.0, projectedHomogeneous.z / w))
+                                        originalClipW.add(w)
+                                    }
+                                    if (projectedVertices.size == 3) {
+                                        val faceTexture = mesh.faceTextures[faceIndex] ?: mesh.texture
+                                        renderQueue.add(RenderableFace(projectedVertices, originalClipW, clippedUVs, mesh.mesh.color, false, faceTexture, clippedW, lightGrid, worldBlushes))
+                                    }
                                 }
                             }
                         }
                     }
-                }
-            })
+                })
+            }
         }
 
         for (task in tasks) { task.get() }
@@ -967,112 +970,150 @@ class DrawingPanel : StackPane() {
 
         val fogR = fogColor.red; val fogG = fogColor.green; val fogB = fogColor.blue
 
+        var bary_w0_row = A12 * minX + B12 * minY + C12_base
+        var bary_w1_row = A20 * minX + B20 * minY + C20_base
+        var bary_w2_row = A01 * minX + B01 * minY + C01_base
+
         for (py in minY..maxY) {
             val rowOffset = py * screenWidth
-            for (px in minX..maxX) {
-                val barycentric_w0 = A12 * px + B12 * py + C12_base
-                val barycentric_w1 = A20 * px + B20 * py + C20_base
-                val barycentric_w2 = A01 * px + B01 * py + C01_base
+            var barycentric_w0 = bary_w0_row
+            var barycentric_w1 = bary_w1_row
+            var barycentric_w2 = bary_w2_row
 
+            for (px in minX..maxX) {
                 if ((barycentric_w0 >= 0 && barycentric_w1 >= 0 && barycentric_w2 >= 0) || (barycentric_w0 <= 0 && barycentric_w1 <= 0 && barycentric_w2 <= 0)) {
                     val alpha = barycentric_w0 * invTotalArea
                     val beta = barycentric_w1 * invTotalArea
                     val gamma = 1.0 - alpha - beta
 
                     val interpolated_z_inv_prime = alpha * z0_inv_prime + beta * z1_inv_prime + gamma * z2_inv_prime
-                    if (interpolated_z_inv_prime < 1e-6) continue
-                    val inv_z_prime = 1.0 / interpolated_z_inv_prime
+                    if (interpolated_z_inv_prime >= 1e-6) {
+                        val inv_z_prime = 1.0 / interpolated_z_inv_prime
+                        val interpolatedWorldPos = (wVert0_prime * alpha + wVert1_prime * beta + wVert2_prime * gamma) * inv_z_prime
 
-                    val interpolatedWorldPos = (wVert0_prime * alpha + wVert1_prime * beta + wVert2_prime * gamma) * inv_z_prime
-                    if (blushes.any { it.contains(interpolatedWorldPos) }) {
-                        continue
-                    }
+                        if (!blushes.any { it.contains(interpolatedWorldPos) }) {
+                            val pixelIndex = px + rowOffset
+                            val interpolatedZ = alpha * v0.z + beta * v1.z + gamma * v2.z
 
-                    val pixelIndex = px + rowOffset
-                    val interpolatedZ = alpha * v0.z + beta * v1.z + gamma * v2.z
+                            if (interpolatedZ < depthBuffer[pixelIndex]) {
+                                val u = (alpha * u0_prime + beta * u1_prime + gamma * u2_prime) * inv_z_prime
+                                val v = (alpha * v0_prime + beta * v1_prime + gamma * v2_prime) * inv_z_prime
+                                val texX = (u * (texWidth - 1)).toInt().coerceIn(0, texWidth - 1)
+                                val texY = (v * (texHeight - 1)).toInt().coerceIn(0, texHeight - 1)
 
-                    if (interpolatedZ < depthBuffer[pixelIndex]) {
-                        val u = (alpha * u0_prime + beta * u1_prime + gamma * u2_prime) * inv_z_prime
-                        val v = (alpha * v0_prime + beta * v1_prime + gamma * v2_prime) * inv_z_prime
-                        val texX = (u * (texWidth - 1)).toInt().coerceIn(0, texWidth - 1)
-                        val texY = (v * (texHeight - 1)).toInt().coerceIn(0, texHeight - 1)
+                                val texColor = texReader.getColor(texX, texY)
 
-                        val texColor = texReader.getColor(texX, texY)
-
-                        val dynamicLight = if (lightGrid != null) {
-                            val gridX = (u * ambientLightResolution).toInt().coerceIn(0, ambientLightResolution-1)
-                            val gridY = ((1.0 - v) * ambientLightResolution).toInt().coerceIn(0, ambientLightResolution-1)
-                            lightGrid[gridX][gridY]
-                        } else {
-                            Color.BLACK
-                        }
-
-                        val ambientLitR = texColor.red * (ambientR * 2)
-                        val ambientLitG = texColor.green * (ambientG * 2)
-                        val ambientLitB = texColor.blue * (ambientB * 2)
-
-                        val dynamicLightR = dynamicLight.red * (ambientIntensity * globalLightIntensity)
-                        val dynamicLightG = dynamicLight.green * (ambientIntensity * globalLightIntensity)
-                        val dynamicLightB = dynamicLight.blue * (ambientIntensity * globalLightIntensity)
-
-                        var r = ambientLitR + dynamicLightR/4
-                        var g = ambientLitG + dynamicLightG/4
-                        var b = ambientLitB + dynamicLightB/4
-
-                        if (texture != this.texSkybox) {
-                            val distance = inv_z_prime
-                            val fogFactor = ((distance - fogStartDistance) / (fogEndDistance - fogStartDistance)).coerceIn(0.0, 1.0) * fogDensity
-
-                            r = r * (1 - fogFactor) + fogR * fogFactor
-                            g = g * (1 - fogFactor) + fogG * fogFactor
-                            b = b * (1 - fogFactor) + fogB * fogFactor
-                        }
-
-                        if (retroScanLineMode) {
-                            val screenCenterY = screenHeight / 2.0
-                            val screenCenterX = screenWidth / 2.0
-                            val distFromCenterY = (py - screenCenterY) / screenCenterY
-                            val distFromCenterX = (px - screenCenterX) / screenCenterX
-                            val distSquared = distFromCenterX * distFromCenterX + distFromCenterY * distFromCenterY
-                            val vignetteFactor = 1.0 - distSquared * 0.15
-
-                            r *= vignetteFactor
-                            g *= vignetteFactor
-                            b *= vignetteFactor
-
-                            val rShiftFactor = 1.0 + distSquared * 0.05
-                            val bShiftFactor = 1.0 + distSquared * 0.05
-                            val tempR = r * rShiftFactor
-                            val tempB = b * bShiftFactor
-                            val scanlineFactor = 0.80
-                            val bloomFactor = 1.05
-
-                            when (py % 3) {
-                                0 -> {
-                                    r *= scanlineFactor; g *= scanlineFactor; b *= scanlineFactor
+                                val dynamicLight = if (lightGrid != null) {
+                                    val gridX = (u * ambientLightResolution).toInt().coerceIn(0, ambientLightResolution - 1)
+                                    val gridY = ((1.0 - v) * ambientLightResolution).toInt().coerceIn(0, ambientLightResolution - 1)
+                                    lightGrid[gridX][gridY]
+                                } else {
+                                    Color.BLACK
                                 }
-                                1 -> {
-                                    r *= bloomFactor; g *= bloomFactor; b *= bloomFactor
+
+                                val ambientLitR = texColor.red * (ambientR * 2)
+                                val ambientLitG = texColor.green * (ambientG * 2)
+                                val ambientLitB = texColor.blue * (ambientB * 2)
+
+                                val dynamicLightR = dynamicLight.red * (ambientIntensity * globalLightIntensity)
+                                val dynamicLightG = dynamicLight.green * (ambientIntensity * globalLightIntensity)
+                                val dynamicLightB = dynamicLight.blue * (ambientIntensity * globalLightIntensity)
+
+                                var r = ambientLitR + dynamicLightR / 4
+                                var g = ambientLitG + dynamicLightG / 4
+                                var b = ambientLitB + dynamicLightB / 4
+
+                                if (texture != this.texSkybox) {
+                                    val distance = inv_z_prime
+                                    val fogFactor = ((distance - fogStartDistance) / (fogEndDistance - fogStartDistance)).coerceIn(0.0, 1.0) * fogDensity
+
+                                    r = r * (1 - fogFactor) + fogR * fogFactor
+                                    g = g * (1 - fogFactor) + fogG * fogFactor
+                                    b = b * (1 - fogFactor) + fogB * fogFactor
                                 }
+
+                                if (retroScanLineMode) {
+                                    val screenCenterY = screenHeight / 2.0
+                                    val screenCenterX = screenWidth / 2.0
+                                    val distFromCenterY = (py - screenCenterY) / screenCenterY
+                                    val distFromCenterX = (px - screenCenterX) / screenCenterX
+                                    val distSquared = distFromCenterX * distFromCenterX + distFromCenterY * distFromCenterY
+                                    val vignetteFactor = 1.0 - distSquared * 0.15
+
+                                    r *= vignetteFactor
+                                    g *= vignetteFactor
+                                    b *= vignetteFactor
+
+                                    val rShiftFactor = 1.0 + distSquared * 0.05
+                                    val bShiftFactor = 1.0 + distSquared * 0.05
+                                    val tempR = r * rShiftFactor
+                                    val tempB = b * bShiftFactor
+                                    val scanlineFactor = 0.80
+                                    val bloomFactor = 1.05
+
+                                    when (py % 3) {
+                                        0 -> {
+                                            r *= scanlineFactor; g *= scanlineFactor; b *= scanlineFactor
+                                        }
+                                        1 -> {
+                                            r *= bloomFactor; g *= bloomFactor; b *= bloomFactor
+                                        }
+                                    }
+
+                                    val noise = (Math.random() * 0.05) - 0.025
+                                    r += noise; g += noise; b += noise
+
+                                    r = tempR
+                                    b = tempB
+                                }
+
+                                pixelBuffer[pixelIndex] = (0xFF shl 24) or
+                                        ((r * 255).toInt().coerceIn(0, 255) shl 16) or
+                                        ((g * 255).toInt().coerceIn(0, 255) shl 8) or
+                                        ((b * 255).toInt().coerceIn(0, 255))
+                                depthBuffer[pixelIndex] = interpolatedZ
                             }
-
-                            val noise = (Math.random() * 0.05) - 0.025
-                            r += noise; g += noise; b += noise
-
-                            r = tempR
-                            b = tempB
                         }
-
-                        pixelBuffer[pixelIndex] = (0xFF shl 24) or
-                                ((r * 255).toInt().coerceIn(0, 255) shl 16) or
-                                ((g * 255).toInt().coerceIn(0, 255) shl 8) or
-                                ((b * 255).toInt().coerceIn(0, 255))
-                        depthBuffer[pixelIndex] = interpolatedZ
                     }
                 }
+                barycentric_w0 += A12
+                barycentric_w1 += A20
+                barycentric_w2 += A01
             }
+            bary_w0_row += B12
+            bary_w1_row += B20
+            bary_w2_row += B01
         }
     }
+
+    private fun isAabbOutsideFrustum(aabb: AABB, viewProjMatrix: Matrix4x4): Boolean {
+        val corners = aabb.getCorners()
+        val clipSpaceCorners = corners.map { viewProjMatrix.transformHomogeneous(it) }
+
+        for (i in 0..5) {
+            var allCornersOutside = true
+            for (corner in clipSpaceCorners) {
+                val isOutside = when (i) {
+                    0 -> corner.x < -corner.w // Lewa
+                    1 -> corner.x > corner.w  // Prawa
+                    2 -> corner.y < -corner.w // Dół
+                    3 -> corner.y > corner.w  // Góra
+                    4 -> corner.z < -corner.w // Bliska //0
+                    5 -> corner.z > corner.w  // Daleka
+                    else -> false
+                }
+                if (!isOutside) {
+                    allCornersOutside = false
+                    break
+                }
+            }
+            if (allCornersOutside) {
+                return true
+            }
+        }
+        return false
+    }
+
 
     private fun Color.interpolate(other: Color, t: Double): Color {
         val tClamped = t.coerceIn(0.0, 1.0)
