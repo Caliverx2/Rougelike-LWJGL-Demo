@@ -1044,7 +1044,7 @@ class ModelEditor : Application() {
                     inVerticesBlock = true; inFacesBlock = false; inEdgesBlock = false; inTextureMappingBlock = false; inBlushesBlock = false
                     continue
                 }
-                if (trimmedLine.startsWith("val faces")) {
+                if ((trimmedLine.startsWith("val faces")) or (trimmedLine.startsWith("var faces"))) {
                     println("Zakończono 'vertices'. Znaleziono: ${newVertices.size}.")
                     inVerticesBlock = false; inFacesBlock = true; inEdgesBlock = false; inTextureMappingBlock = false; inBlushesBlock = false
                     continue
