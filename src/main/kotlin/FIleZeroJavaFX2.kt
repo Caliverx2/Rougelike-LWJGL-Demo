@@ -529,6 +529,21 @@ class DrawingPanel : StackPane() {
         }
     }
 
+    private fun colorsAreSimilar(colors: List<Color>, threshold: Double = 0.1): Boolean {
+        if (colors.size < 2) return true
+        val first = colors.first()
+        for (i in 1 until colors.size) {
+            val other = colors[i]
+            val dr = abs(first.red - other.red)
+            val dg = abs(first.green - other.green)
+            val db = abs(first.blue - other.blue)
+            if (dr + dg + db > threshold) {
+                return false
+            }
+        }
+        return true
+    }
+
     private fun processLightingQueue() {
         val allMeshes = meshes.toList()
         val allLightSources = lightSources.toList()
@@ -573,45 +588,86 @@ class DrawingPanel : StackPane() {
                 }
 
                 if (light.type == LightType.RAYTRACED) {
-                    for (i_sub in 0 until subDivisions) {
-                        for (j_sub in 0 until subDivisions) {
-                            val u = (i_sub + 0.5) / subDivisions
-                            val v = (j_sub + 0.5) / subDivisions
+                    val cornerUVs = if (worldVerts.size == 4) listOf(Pair(0.0, 0.0), Pair(1.0, 0.0), Pair(1.0, 1.0), Pair(0.0, 1.0)) else listOf(Pair(0.0, 0.0), Pair(1.0, 0.0), Pair(0.0, 1.0))
+                    val cornerPoints = cornerUVs.map { (u, v) ->
+                        if (worldVerts.size == 4) {
+                            val p1 = worldVerts[0].lerp(worldVerts[1], u)
+                            val p2 = worldVerts[3].lerp(worldVerts[2], u)
+                            p1.lerp(p2, v)
+                        } else {
+                            worldVerts[0] * (1.0 - u - v) + worldVerts[1] * u + worldVerts[2] * v
+                        }
+                    }
+                    val cornerColors = cornerPoints.map { pointOnFace ->
+                        val rayOrigin = light.position
+                        val rayTarget = pointOnFace
+                        val rayVector = rayTarget - rayOrigin
+                        val dist = rayVector.length()
+                        if (dist > light.radius || isOccluded(rayOrigin, rayTarget, mesh, faceIndex)) {
+                            Color.BLACK
+                        } else {
+                            val attenuation = 1.0 - (dist / light.radius).coerceIn(0.0, 10.0)
+                            val influence = light.intensity * attenuation
+                            Color(
+                                (light.color.red * influence).coerceIn(0.0, 1.0),
+                                (light.color.green * influence).coerceIn(0.0, 1.0),
+                                (light.color.blue * influence).coerceIn(0.0, 1.0),
+                                1.0
+                            )
+                        }
+                    }
 
-                            val pointOnFace = if (worldVerts.size == 4) {
-                                val p1 = worldVerts[0].lerp(worldVerts[1], u)
-                                val p2 = worldVerts[3].lerp(worldVerts[2], u)
-                                p1.lerp(p2, v)
-                            } else {
-                                var u_bary = u
-                                var v_bary = v
-                                if (u_bary + v_bary > 1.0) {
-                                    u_bary = 1.0 - u_bary
-                                    v_bary = 1.0 - v_bary
-                                }
-                                worldVerts[0] * (1.0 - u_bary - v_bary) + worldVerts[1] * u_bary + worldVerts[2] * v_bary
-                            }
-
-                            val rayOrigin = light.position
-                            val rayTarget = pointOnFace
-                            val rayVector = rayTarget - rayOrigin
-                            val dist = rayVector.length()
-
-                            if (dist > light.radius) continue
-
-                            if (!isOccluded(rayOrigin, rayTarget, mesh, faceIndex)) {
-                                val attenuation = 1.0 - (dist / light.radius).coerceIn(0.0, 10.0)
-                                val influence = light.intensity * attenuation
+                    if (worldVerts.size == 4 && colorsAreSimilar(cornerColors)) {
+                        val c00 = cornerColors[0]; val c10 = cornerColors[1]; val c11 = cornerColors[2]; val c01 = cornerColors[3]
+                        for (i_sub in 0 until subDivisions) {
+                            for (j_sub in 0 until subDivisions) {
+                                val u = i_sub.toDouble() / (subDivisions - 1)
+                                val v = j_sub.toDouble() / (subDivisions - 1)
+                                val top = c00.interpolate(c10, u)
+                                val bottom = c01.interpolate(c11, u)
+                                val finalColor = top.interpolate(bottom, v)
 
                                 val existingColor = finalLightGrid[i_sub][j_sub]
-                                val lightColor = light.color
-
-                                val newR = (existingColor.red + lightColor.red * influence).coerceIn(0.0, 1.0)
-                                val newG = (existingColor.green + lightColor.green * influence).coerceIn(0.0, 1.0)
-                                val newB = (existingColor.blue + lightColor.blue * influence).coerceIn(0.0, 1.0)
-
+                                val newR = (existingColor.red + finalColor.red).coerceIn(0.0, 1.0)
+                                val newG = (existingColor.green + finalColor.green).coerceIn(0.0, 1.0)
+                                val newB = (existingColor.blue + finalColor.blue).coerceIn(0.0, 1.0)
                                 finalLightGrid[i_sub][j_sub] = Color(newR, newG, newB, 1.0)
-                                isFaceLitAtAll = true
+                            }
+                        }
+                        isFaceLitAtAll = true
+                    } else {
+                        for (i_sub in 0 until subDivisions) {
+                            for (j_sub in 0 until subDivisions) {
+                                val u = (i_sub + 0.5) / subDivisions
+                                val v = (j_sub + 0.5) / subDivisions
+
+                                val pointOnFace = if (worldVerts.size == 4) {
+                                    val p1 = worldVerts[0].lerp(worldVerts[1], u)
+                                    val p2 = worldVerts[3].lerp(worldVerts[2], u)
+                                    p1.lerp(p2, v)
+                                } else {
+                                    var u_bary = u; var v_bary = v
+                                    if (u_bary + v_bary > 1.0) { u_bary = 1.0 - u_bary; v_bary = 1.0 - v_bary }
+                                    worldVerts[0] * (1.0 - u_bary - v_bary) + worldVerts[1] * u_bary + worldVerts[2] * v_bary
+                                }
+
+                                val rayOrigin = light.position
+                                val rayTarget = pointOnFace
+                                val dist = (rayTarget - rayOrigin).length()
+
+                                if (dist > light.radius) continue
+
+                                if (!isOccluded(rayOrigin, rayTarget, mesh, faceIndex)) {
+                                    val attenuation = 1.0 - (dist / light.radius).coerceIn(0.0, 10.0)
+                                    val influence = light.intensity * attenuation
+                                    val existingColor = finalLightGrid[i_sub][j_sub]
+                                    val lightColor = light.color
+                                    val newR = (existingColor.red + lightColor.red * influence).coerceIn(0.0, 1.0)
+                                    val newG = (existingColor.green + lightColor.green * influence).coerceIn(0.0, 1.0)
+                                    val newB = (existingColor.blue + lightColor.blue * influence).coerceIn(0.0, 1.0)
+                                    finalLightGrid[i_sub][j_sub] = Color(newR, newG, newB, 1.0)
+                                    isFaceLitAtAll = true
+                                }
                             }
                         }
                     }
@@ -1016,6 +1072,17 @@ class DrawingPanel : StackPane() {
                 }
             }
         }
+    }
+
+    private fun Color.interpolate(other: Color, t: Double): Color {
+        val tClamped = t.coerceIn(0.0, 1.0)
+        val invT = 1.0 - tClamped
+        return Color(
+            this.red * invT + other.red * tClamped,
+            this.green * invT + other.green * tClamped,
+            this.blue * invT + other.blue * tClamped,
+            this.opacity * invT + other.opacity * tClamped
+        )
     }
 
     private fun colorToInt(c: Color): Int {
