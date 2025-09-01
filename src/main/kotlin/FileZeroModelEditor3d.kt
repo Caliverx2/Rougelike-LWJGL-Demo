@@ -259,6 +259,41 @@ class ModelEditor : Application() {
         }
 
         canvas.setOnMouseReleased { e ->
+            if (gizmoAxis != null) {
+                if (blushMode && selectedBlushIndex != null && selectedBlushCorner != null) {
+                    val corner = if (selectedBlushCorner == BlushCornerType.MIN) blushes[selectedBlushIndex!!].min else blushes[selectedBlushIndex!!].max
+                    corner.x = round(corner.x)
+                    corner.y = round(corner.y)
+                    corner.z = round(corner.z)
+                } else if (blushMode && selectedBlushIndex != null) {
+                    blushes.getOrNull(selectedBlushIndex!!)?.let { blush ->
+                        blush.min.x = round(blush.min.x)
+                        blush.min.y = round(blush.min.y)
+                        blush.min.z = round(blush.min.z)
+                        blush.max.x = round(blush.max.x)
+                        blush.max.y = round(blush.max.y)
+                        blush.max.z = round(blush.max.z)
+                    }
+                } else if (groupSelectedVertices.isNotEmpty()) {
+                    groupSelectedVertices.forEach { index ->
+                        vertices.getOrNull(index)?.let { v ->
+                            v.x = round(v.x)
+                            v.y = round(v.y)
+                            v.z = round(v.z)
+                        }
+                    }
+                    groupGizmoPosition?.let {
+                        it.x = round(it.x)
+                        it.y = round(it.y)
+                        it.z = round(it.z)
+                    }
+                } else if (selectedVertex != null) {
+                    vertices.getOrNull(selectedVertex!!)?.let { v ->
+                        v.x = round(v.x); v.y = round(v.y); v.z = round(v.z)
+                    }
+                }
+            }
+
             gizmoAxis = null
             dragStartVertexPos = null
             dragStartGroupPositions = null
