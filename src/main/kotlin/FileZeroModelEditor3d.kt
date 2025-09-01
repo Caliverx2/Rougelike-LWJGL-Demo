@@ -465,20 +465,6 @@ class ModelEditor : Application() {
                     if (blushMode && selectedBlushIndex != null) {
                         if (selectedBlushCorner != null) {
                             val corner = if (selectedBlushCorner == BlushCornerType.MIN) blushes[selectedBlushIndex!!].min else blushes[selectedBlushIndex!!].max
-                            corner.y -= 10.0
-                        } else {
-                            blushes[selectedBlushIndex!!].translate(Vector3d(0.0, -10.0, 0.0))
-                        }
-                    } else {
-                        val verticesToTransform = if (groupSelectedVertices.isNotEmpty()) groupSelectedVertices else selectedVertex?.let { setOf(it) } ?: emptySet()
-                        verticesToTransform.forEach { index -> vertices[index].y -= 10.0 }
-                        groupGizmoPosition?.let { it.y -= 10.0 }
-                    }
-                }
-                KeyCode.MINUS -> {
-                    if (blushMode && selectedBlushIndex != null) {
-                        if (selectedBlushCorner != null) {
-                            val corner = if (selectedBlushCorner == BlushCornerType.MIN) blushes[selectedBlushIndex!!].min else blushes[selectedBlushIndex!!].max
                             corner.y += 10.0
                         } else {
                             blushes[selectedBlushIndex!!].translate(Vector3d(0.0, 10.0, 0.0))
@@ -487,6 +473,20 @@ class ModelEditor : Application() {
                         val verticesToTransform = if (groupSelectedVertices.isNotEmpty()) groupSelectedVertices else selectedVertex?.let { setOf(it) } ?: emptySet()
                         verticesToTransform.forEach { index -> vertices[index].y += 10.0 }
                         groupGizmoPosition?.let { it.y += 10.0 }
+                    }
+                }
+                KeyCode.MINUS -> {
+                    if (blushMode && selectedBlushIndex != null) {
+                        if (selectedBlushCorner != null) {
+                            val corner = if (selectedBlushCorner == BlushCornerType.MIN) blushes[selectedBlushIndex!!].min else blushes[selectedBlushIndex!!].max
+                            corner.y -= 10.0
+                        } else {
+                            blushes[selectedBlushIndex!!].translate(Vector3d(0.0, -10.0, 0.0))
+                        }
+                    } else {
+                        val verticesToTransform = if (groupSelectedVertices.isNotEmpty()) groupSelectedVertices else selectedVertex?.let { setOf(it) } ?: emptySet()
+                        verticesToTransform.forEach { index -> vertices[index].y -= 10.0 }
+                        groupGizmoPosition?.let { it.y -= 10.0 }
                     }
                 }
 
