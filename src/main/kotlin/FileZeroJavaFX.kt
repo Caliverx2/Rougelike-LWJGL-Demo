@@ -415,18 +415,18 @@ val GRID_4 = arrayOf(
 
 val GRID_MAP: Array<Array<Array<Int>>> = Array(18) { Array(18) { Array(18) { 0 } } }
 
-enum class LightType {
-    RAYTRACED,
-    VERTEX
-}
+enum class LightType { RAYTRACED, VERTEX }
 
-data class LightSource(
+class LightSource(
     val position: Vector3d,
     val radius: Double,
     val color: Color,
     val intensity: Double = 1.0,
     val type: LightType = LightType.RAYTRACED
-)
+) {
+    var lastKnownMeshStateHash: Int = 0
+    var needsUpdate: Boolean = true
+}
 
 class MainApp : Application() {
     override fun start(primaryStage: Stage) {

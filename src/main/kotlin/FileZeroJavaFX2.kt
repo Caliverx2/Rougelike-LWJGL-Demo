@@ -3,12 +3,12 @@ package org.lewapnoob.FileZero2
 import javafx.animation.AnimationTimer
 import javafx.embed.swing.SwingFXUtils
 import javafx.scene.canvas.Canvas
+import javafx.scene.paint.Color
 import javafx.scene.image.Image
 import javafx.scene.image.ImageView
 import javafx.scene.image.WritableImage
 import javafx.scene.input.KeyCode
 import javafx.scene.layout.StackPane
-import javafx.scene.paint.Color
 import javafx.scene.image.PixelFormat
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
@@ -22,7 +22,7 @@ class DrawingPanel : StackPane() {
     private var lastUpdateTime = System.nanoTime()
     private val isRendering = java.util.concurrent.atomic.AtomicBoolean(false)
     private val meshes = mutableListOf<PlacedMesh>()
-    private var lightSources = mutableListOf<LightSource>()
+    private val lightSources = Collections.synchronizedList(mutableListOf<LightSource>())
 
     private val faceLightGrids = ConcurrentHashMap<Pair<PlacedMesh, Int>, Array<Array<Color>>>()
     private val lightingUpdateQueue = ConcurrentLinkedQueue<Pair<PlacedMesh, Int>>()
@@ -82,6 +82,9 @@ class DrawingPanel : StackPane() {
     private val executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
     private val bvh = BVH()
     private val renderQueue = ConcurrentLinkedQueue<RenderableFace>()
+
+    private var lastLightCheckTime = 0L
+    private val lightCheckInterval = (1_000_000_000.0 / 30.0).toLong() // 30 Hz
 
     init {
         sceneProperty().addListener { _, LightSource_, newScene ->
@@ -258,10 +261,12 @@ class DrawingPanel : StackPane() {
             }
         }
 
-        meshes.filter { it.collision }.forEach { mesh ->
+        meshes.forEach { mesh ->
             val aabb = AABB.fromCube(mesh.getTransformedVertices())
-            collisionGrid.add(mesh, aabb)
             meshAABBs[mesh] = aabb
+            if (mesh.collision) {
+                collisionGrid.add(mesh, aabb)
+            }
         }
 
         bvh.build(meshes)
@@ -271,8 +276,9 @@ class DrawingPanel : StackPane() {
                 val deltaTime = (now - lastUpdateTime) / 1_000_000_000.0
                 lastUpdateTime = now
 
-                if (lightingFuture == null || lightingFuture!!.isDone) {
-                    lightingFuture = scheduleLightingUpdate()
+                if (now - lastLightCheckTime > lightCheckInterval) {
+                    lastLightCheckTime = now
+                    updateDynamicLights()
                 }
 
                 updateCameraPosition(deltaTime)
@@ -430,16 +436,16 @@ class DrawingPanel : StackPane() {
             val newMesh = PlacedMesh(cubeMeshGray, transformMatrix = translationMatrix, texture = loadImage("textures/black_bricks.png"), collisionPos = initialPos)
             meshes.add(newMesh)
 
-            if (newMesh.collision) {
-                val aabb = AABB.fromCube(newMesh.getTransformedVertices())
-                meshAABBs[newMesh] = aabb
+            val aabb = AABB.fromCube(newMesh.getTransformedVertices())
+            meshAABBs[newMesh] = aabb
 
+            if (newMesh.collision) {
                 collisionGrid.clear()
                 meshes.filter { it.collision }.forEach { mesh ->
                     collisionGrid.add(mesh, meshAABBs[mesh]!!)
                 }
-                bvh.build(meshes)
             }
+            bvh.build(meshes)
             pressedKeys.remove(KeyCode.R)
         }
         if (pressedKeys.contains(KeyCode.O)) {
@@ -453,7 +459,8 @@ class DrawingPanel : StackPane() {
             pressedKeys.remove(KeyCode.P)
         }
         if (pressedKeys.contains(KeyCode.X)) {
-            lightSources = mutableListOf<LightSource>()
+            lightSources.clear()
+            faceLightGrids.clear()
         }
 
         if (cameraYaw > 2 * PI) cameraYaw -= 2 * PI
@@ -507,22 +514,66 @@ class DrawingPanel : StackPane() {
         }
     }
 
-    private fun scheduleLightingUpdate(): Future<*> {
-        if (lightSources.isEmpty()) {
-            if (faceLightGrids.isNotEmpty()) {
-                faceLightGrids.clear()
-            }
-            return lightingExecutor.submit { }
-        }
+    private fun updateDynamicLights() {
+        var anyLightNeedsUpdate = false
+        synchronized(lightSources) {
+            for (light in lightSources) {
+                val radiusVec = Vector3d(light.radius, light.radius, light.radius)
+                val lightAABB = AABB(light.position - radiusVec, light.position + radiusVec)
+                val meshesInRadius = collisionGrid.query(lightAABB)
 
-        lightingUpdateQueue.clear()
-        for (mesh in meshes) {
-            if (mesh.mesh.faces.isNotEmpty() && mesh.texture != texSkybox) {
-                for (faceIndex in mesh.mesh.faces.indices) {
-                    lightingUpdateQueue.add(Pair(mesh, faceIndex))
+                var currentStateHash = 1
+                // Sort for consistent hash order
+                meshesInRadius.sortedBy { System.identityHashCode(it) }.forEach { mesh ->
+                    currentStateHash = 31 * currentStateHash + System.identityHashCode(mesh)
+                    currentStateHash = 31 * currentStateHash + mesh.transformMatrix.hashCode()
+                }
+
+                if (currentStateHash != light.lastKnownMeshStateHash) {
+                    light.needsUpdate = true
+                    light.lastKnownMeshStateHash = currentStateHash
+                    anyLightNeedsUpdate = true
                 }
             }
         }
+
+        if (anyLightNeedsUpdate) {
+            if (lightingFuture == null || lightingFuture!!.isDone) {
+                lightingFuture = scheduleLightingUpdate()
+            }
+        }
+    }
+
+    private fun scheduleLightingUpdate(): Future<*> {
+        val lightsToUpdate = synchronized(lightSources) {
+            lightSources.filter { it.needsUpdate }
+        }
+
+        if (lightsToUpdate.isEmpty()) {
+            return lightingExecutor.submit { } // No work to do
+        }
+
+        val facesToUpdate = ConcurrentHashMap.newKeySet<Pair<PlacedMesh, Int>>()
+
+        for (light in lightsToUpdate) {
+            val radiusVec = Vector3d(light.radius, light.radius, light.radius)
+            val lightAABB = AABB(light.position - radiusVec, light.position + radiusVec)
+            val meshesInRadius = meshes.filter { mesh ->
+                val meshAABB = meshAABBs[mesh] ?: return@filter false
+                lightAABB.intersects(meshAABB)
+            }
+
+            for (mesh in meshesInRadius) {
+                if (mesh.mesh.faces.isNotEmpty() && mesh.texture != texSkybox) {
+                    (0 until mesh.mesh.faces.size).forEach { faceIndex -> facesToUpdate.add(Pair(mesh, faceIndex)) }
+                }
+            }
+        }
+
+        lightingUpdateQueue.clear()
+        lightingUpdateQueue.addAll(facesToUpdate)
+
+        synchronized(lightSources) { lightsToUpdate.forEach { it.needsUpdate = false } }
 
         return lightingExecutor.submit {
             processLightingQueue()
@@ -546,7 +597,7 @@ class DrawingPanel : StackPane() {
 
     private fun processLightingQueue() {
         val allMeshes = meshes.toList()
-        val allLightSources = lightSources.toList()
+        val allLightSources = synchronized(lightSources) { lightSources.toList() }
 
         val itemsToProcess = mutableListOf<Pair<PlacedMesh, Int>>()
         while(lightingUpdateQueue.isNotEmpty()) {
