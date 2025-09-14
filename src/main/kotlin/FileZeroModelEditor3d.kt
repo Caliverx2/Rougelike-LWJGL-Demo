@@ -49,6 +49,15 @@ class ModelEditor : Application() {
     private val faceTextures = mutableMapOf<Int, String>()
     private val blushes = mutableListOf<AABB>()
 
+    private data class CopiedModelPart(
+        val vertices: List<Vector3d>,
+        val edges: List<Edge>,
+        val faces: List<Face>,
+        val faceTextures: Map<Int, String>
+    )
+    private var clipboardModelPart: CopiedModelPart? = null
+    private var clipboardBlush: AABB? = null
+
     private var selectedVertex: Int? = null
     private val groupSelectedVertices = mutableSetOf<Int>()
     private var groupGizmoPosition: Vector3d? = null
@@ -492,6 +501,16 @@ class ModelEditor : Application() {
 
                 KeyCode.E -> exportMeshFunction()
                 KeyCode.I -> showImportDialog(gc)
+                KeyCode.C -> {
+                    if (e.isControlDown) {
+                        copySelection()
+                    }
+                }
+                KeyCode.V -> {
+                    if (e.isControlDown) {
+                        pasteSelection()
+                    }
+                }
                 KeyCode.G -> println("$angleX $angleY")
                 else -> {}
             }
@@ -1235,6 +1254,120 @@ class ModelEditor : Application() {
         } catch (e: Exception) {
             println("KRYTYCZNY BŁĄD podczas parsowania modelu: ${e.message}")
             e.printStackTrace()
+        }
+    }
+
+    private fun copySelection() {
+        clipboardModelPart = null
+        clipboardBlush = null
+
+        if (blushMode && selectedBlushIndex != null) {
+            val blushToCopy = blushes.getOrNull(selectedBlushIndex!!) ?: return
+            clipboardBlush = blushToCopy.copy(
+                min = blushToCopy.min.copy(),
+                max = blushToCopy.max.copy()
+            )
+            println("Skopiowano blush $selectedBlushIndex.")
+            return
+        }
+
+        val indicesToCopy: Set<Int> = when {
+            selectedFaceIndex != null && groupSelectedVertices.isNotEmpty() -> groupSelectedVertices
+            groupSelectedVertices.isNotEmpty() -> groupSelectedVertices
+            selectedVertex != null -> setOf(selectedVertex!!)
+            else -> emptySet()
+        }
+
+        if (indicesToCopy.isEmpty()) return
+
+        val copiedVerts = indicesToCopy.mapNotNull { vertices.getOrNull(it)?.copy() }
+        val oldToNewIndexMap = indicesToCopy.toList().withIndex().associate { (newIdx, oldIdx) -> oldIdx to newIdx }
+
+        val copiedEdges = edges.mapNotNull { edge ->
+            if (edge.a in oldToNewIndexMap && edge.b in oldToNewIndexMap) {
+                Edge(oldToNewIndexMap[edge.a]!!, oldToNewIndexMap[edge.b]!!)
+            } else {
+                null
+            }
+        }
+
+        val copiedFaces = mutableListOf<Face>()
+        val copiedFaceTextures = mutableMapOf<Int, String>()
+        faces.withIndex().forEach { (originalFaceIndex, face) ->
+            if (face.indices.all { it in oldToNewIndexMap }) {
+                val newRelativeFace = Face(face.indices.map { oldToNewIndexMap[it]!! })
+                copiedFaces.add(newRelativeFace)
+
+                faceTextures[originalFaceIndex]?.let { textureName ->
+                    val newRelativeFaceIndex = copiedFaces.lastIndex
+                    copiedFaceTextures[newRelativeFaceIndex] = textureName
+                }
+            }
+        }
+
+        clipboardModelPart = CopiedModelPart(copiedVerts, copiedEdges, copiedFaces, copiedFaceTextures)
+        println("Skopiowano ${copiedVerts.size} wierzchołków, ${copiedEdges.size} krawędzi, ${copiedFaces.size} ścian (w tym ${copiedFaceTextures.size} z teksturami).")
+    }
+
+    private fun pasteSelection() {
+        if (clipboardBlush != null) {
+            val newBlush = clipboardBlush!!.copy(
+                min = clipboardBlush!!.min.copy(),
+                max = clipboardBlush!!.max.copy()
+            )
+            blushes.add(newBlush)
+
+            selectedBlushIndex = blushes.lastIndex
+            selectedBlushCorner = null
+            selectedVertex = null
+            groupSelectedVertices.clear()
+            groupGizmoPosition = null
+            selectedFaceIndex = null
+
+            println("Wklejono blush. Nowa ilość: ${blushes.size}")
+            return
+        }
+
+        clipboardModelPart?.let { part ->
+            if (part.vertices.isEmpty()) return
+
+            val vertexBaseIndex = vertices.size
+            val faceBaseIndex = faces.size
+
+            val newVertices = part.vertices.map { it.copy() }
+            vertices.addAll(newVertices)
+
+            val newEdges = part.edges.map { Edge(it.a + vertexBaseIndex, it.b + vertexBaseIndex) }
+            edges.addAll(newEdges)
+
+            val newFaces = part.faces.map { Face(it.indices.map { idx -> idx + vertexBaseIndex }) }
+            faces.addAll(newFaces)
+
+            part.faceTextures.forEach { (relativeFaceIndex, textureName) ->
+                val newGlobalFaceIndex = faceBaseIndex + relativeFaceIndex
+                faceTextures[newGlobalFaceIndex] = textureName
+            }
+
+            updateSelectionForPastedPart(vertexBaseIndex)
+
+            println("Wklejono część modelu. Nowe sumy: ${vertices.size}V, ${edges.size}E, ${faces.size}F")
+        }
+    }
+
+    private fun updateSelectionForPastedPart(baseIndex: Int) {
+        selectedVertex = null; groupSelectedVertices.clear(); groupGizmoPosition = null
+        selectedFaceIndex = null; selectedBlushIndex = null; selectedBlushCorner = null
+        blushMode = false
+
+        val newIndices = (baseIndex until vertices.size).toList()
+        if (newIndices.size == 1) {
+            selectedVertex = newIndices.first()
+        } else if (newIndices.isNotEmpty()) {
+            groupSelectedVertices.addAll(newIndices)
+            var sumX = 0.0; var sumY = 0.0; var sumZ = 0.0
+            groupSelectedVertices.forEach { val v = vertices[it]; sumX += v.x; sumY += v.y; sumZ += v.z }
+            val count = groupSelectedVertices.size
+            groupGizmoPosition = Vector3d(sumX / count, sumY / count, sumZ / count)
         }
     }
 
