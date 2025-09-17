@@ -18,6 +18,20 @@ import javafx.stage.Stage
 import kotlin.math.*
 
 data class Vector3d(var x: Double, var y: Double, var z: Double)
+fun Vector3d.subtract(other: Vector3d) = Vector3d(this.x - other.x, this.y - other.y, this.z - other.z)
+fun Vector3d.add(other: Vector3d) = Vector3d(this.x + other.x, this.y + other.y, this.z + other.z)
+fun Vector3d.scale(factor: Double) = Vector3d(this.x * factor, this.y * factor, this.z * factor)
+fun Vector3d.cross(other: Vector3d): Vector3d = Vector3d(
+    this.y * other.z - this.z * other.y,
+    this.z * other.x - this.x * other.z,
+    this.x * other.y - this.y * other.x
+)
+fun Vector3d.length(): Double = sqrt(x*x + y*y + z*z)
+fun Vector3d.normalize(): Vector3d {
+    val len = this.length()
+    return if (len > 0.00001) Vector3d(x / len, y / len, z / len) else Vector3d(0.0, 0.0, 0.0)
+}
+
 data class Edge(val a: Int, val b: Int)
 data class Face(val indices: List<Int>)
 data class Mesh(val vertices: List<Vector3d>, val faces: List<List<Int>>, val faceUVs: List<List<Vector3d>>, val color: Color)
@@ -499,7 +513,15 @@ class ModelEditor : Application() {
                     }
                 }
 
-                KeyCode.E -> exportMeshFunction()
+                KeyCode.E -> {
+                    if (e.isControlDown) {
+                        exportMeshFunction()
+                    } else {
+                        if (selectedFaceIndex != null) {
+                            extrudeSelectedFace(10.0)
+                        }
+                    }
+                }
                 KeyCode.I -> showImportDialog(gc)
                 KeyCode.C -> {
                     if (e.isControlDown) {
@@ -526,6 +548,50 @@ class ModelEditor : Application() {
         stage.scene = scene
         stage.show()
         draw(gc, canvas.width, canvas.height, 0.0, 0.0)
+    }
+
+    private fun extrudeSelectedFace(distance: Double) {
+        val faceIndex = selectedFaceIndex ?: return
+        val faceToExtrude = faces.getOrNull(faceIndex) ?: return
+        if (faceToExtrude.indices.size < 3) return
+
+        val v0 = vertices[faceToExtrude.indices[0]]
+        val v1 = vertices[faceToExtrude.indices[1]]
+        val v2 = vertices[faceToExtrude.indices[2]]
+        val normal = (v1.subtract(v0)).cross(v2.subtract(v0)).normalize()
+        val extrudeVector = normal.scale(distance)
+
+        val oldToNewVertexMap = mutableMapOf<Int, Int>()
+        val newVertexIndices = faceToExtrude.indices.map { oldIndex ->
+            val oldVertex = vertices[oldIndex]
+            val newVertex = oldVertex.add(extrudeVector)
+            val newIndex = vertices.size
+            vertices.add(newVertex)
+            oldToNewVertexMap[oldIndex] = newIndex
+            edges.add(Edge(oldIndex, newIndex))
+
+            newIndex
+        }
+
+        for (i in faceToExtrude.indices.indices) {
+            val p1Old = faceToExtrude.indices[i]
+            val p2Old = faceToExtrude.indices[(i + 1) % faceToExtrude.indices.size]
+            val p1New = oldToNewVertexMap[p1Old]!!
+            val p2New = oldToNewVertexMap[p2Old]!!
+            faces.add(Face(listOf(p1Old, p2Old, p2New, p1New)))
+        }
+
+        for (i in newVertexIndices.indices) {
+            edges.add(Edge(newVertexIndices[i], newVertexIndices[(i + 1) % newVertexIndices.size]))
+        }
+
+        faces[faceIndex] = Face(newVertexIndices)
+
+        selectedVertex = null
+        groupSelectedVertices.clear()
+        groupSelectedVertices.addAll(newVertexIndices)
+        val count = groupSelectedVertices.size
+        groupGizmoPosition = newVertexIndices.map { vertices[it] }.fold(Vector3d(0.0,0.0,0.0)) { acc, v -> acc.add(v) }.scale(1.0/count)
     }
 
     private fun deleteSelectedVertex() {
