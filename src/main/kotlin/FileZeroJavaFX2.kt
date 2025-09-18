@@ -234,7 +234,7 @@ class DrawingPanel : StackPane() {
         val pos8 = Vector3d(19.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(sphere,Matrix4x4.translation(pos8.x, pos8.y, pos8.z), texture = texCeiling))
 
-        val pos9 = Vector3d(31.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        val pos9 = Vector3d(31.0 * cubeSize, -4.0 * cubeSize, 0 * cubeSize)
         meshes.add(PlacedMesh(mapMesh,Matrix4x4.translation(pos9.x, pos9.y, pos9.z), faceTextures = placedTextures(mapMesh)))
 
         val pos10 = Vector3d(50.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)

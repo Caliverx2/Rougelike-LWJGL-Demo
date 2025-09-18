@@ -533,6 +533,9 @@ class ModelEditor : Application() {
                         pasteSelection()
                     }
                 }
+                KeyCode.U -> {
+                    subdivideSelection()
+                }
                 KeyCode.G -> println("$angleX $angleY")
                 else -> {}
             }
@@ -1435,6 +1438,136 @@ class ModelEditor : Application() {
             val count = groupSelectedVertices.size
             groupGizmoPosition = Vector3d(sumX / count, sumY / count, sumZ / count)
         }
+    }
+
+    private fun rebuildEdgesFromFaces() {
+        val allEdges = mutableSetOf<Pair<Int, Int>>()
+        for (face in faces) {
+            for (i in face.indices.indices) {
+                if (face.indices[i] >= vertices.size || face.indices[(i + 1) % face.indices.size] >= vertices.size) continue
+                val idx1 = face.indices[i]
+                val idx2 = face.indices[(i + 1) % face.indices.size]
+                val edgeKey = if (idx1 < idx2) Pair(idx1, idx2) else Pair(idx2, idx1)
+                allEdges.add(edgeKey)
+            }
+        }
+        edges.clear()
+        edges.addAll(allEdges.map { Edge(it.first, it.second) })
+    }
+
+    private fun subdivideSelection() {
+        val facesToSubdivideIndices = if (selectedFaceIndex != null) {
+            val initialSet = mutableSetOf(selectedFaceIndex!!)
+
+            val selectedFace = faces.getOrNull(selectedFaceIndex!!)
+            if (selectedFace != null) {
+                val selectedIndicesSet = selectedFace.indices.toSet()
+
+                faces.withIndex()
+                    .find { (index, face) ->
+                        index != selectedFaceIndex!! &&
+                        face.indices.size == selectedFace.indices.size &&
+                        face.indices.toSet() == selectedIndicesSet
+                    }?.let { (oppositeIndex, _) ->
+                        initialSet.add(oppositeIndex)
+                    }
+            }
+            initialSet
+        } else if (groupSelectedVertices.isNotEmpty()) {
+            faces.withIndex()
+                .filter { (_, face) -> face.indices.all { it in groupSelectedVertices } }
+                .map { it.index }
+                .toSet()
+        } else {
+            faces.indices.toSet()
+        }
+
+        if (facesToSubdivideIndices.isEmpty()) {
+            println("No faces selected to subdivide.")
+            return
+        }
+
+        val edgeMidpointCache = mutableMapOf<Pair<Int, Int>, Int>()
+
+        fun getOrCreateMidpoint(idx1: Int, idx2: Int): Int {
+            val edgeKey = if (idx1 < idx2) Pair(idx1, idx2) else Pair(idx2, idx1)
+            return edgeMidpointCache.getOrPut(edgeKey) {
+                val v1 = vertices[idx1]
+                val v2 = vertices[idx2]
+                val midpoint = v1.add(v2).scale(0.5)
+                vertices.add(midpoint)
+                vertices.lastIndex
+            }
+        }
+
+        val facesToKeepWithTextures = faces.withIndex()
+            .filter { it.index !in facesToSubdivideIndices }
+            .map { it.value to faceTextures[it.index] }
+
+        val newFacesWithTextures = mutableListOf<Pair<Face, String?>>()
+
+        for (faceIndex in facesToSubdivideIndices) {
+            val face = faces[faceIndex]
+            val originalTexture = faceTextures[faceIndex]
+
+            val indices = face.indices
+            if (indices.size < 3) continue
+
+            val centerPos = indices.map { vertices[it] }
+                .fold(Vector3d(0.0, 0.0, 0.0)) { acc, v -> acc.add(v) }
+                .scale(1.0 / indices.size)
+            vertices.add(centerPos)
+            val centerIndex = vertices.lastIndex
+
+            val midpoints = indices.mapIndexed { i, _ ->
+                val idx1 = indices[i]
+                val idx2 = indices[(i + 1) % indices.size]
+                getOrCreateMidpoint(idx1, idx2)
+            }
+
+            for (i in indices.indices) {
+                val currentVertexIndex = indices[i]
+                val nextMidpointIndex = midpoints[i]
+                val prevMidpointIndex = midpoints[(i + indices.size - 1) % indices.size]
+
+                val baseOrder = listOf(nextMidpointIndex, centerIndex, prevMidpointIndex, currentVertexIndex)
+
+                val shiftAmount = if (indices.size == 4) (3 - i + 4) % 4 else 0
+
+                val finalOrder = if (shiftAmount > 0) {
+                    List(baseOrder.size) { j -> baseOrder[(j + shiftAmount) % baseOrder.size] }
+                } else {
+                    baseOrder
+                }
+                newFacesWithTextures.add(Face(finalOrder) to originalTexture)
+            }
+        }
+
+        faces.clear()
+        faceTextures.clear()
+
+        facesToKeepWithTextures.forEach { (face, texture) ->
+            val newIndex = faces.size
+            faces.add(face)
+            if (texture != null) {
+                faceTextures[newIndex] = texture
+            }
+        }
+
+        newFacesWithTextures.forEach { (face, texture) ->
+            val newIndex = faces.size
+            faces.add(face)
+            if (texture != null) {
+                faceTextures[newIndex] = texture
+            }
+        }
+
+        rebuildEdgesFromFaces()
+
+        selectedVertex = null; selectedFaceIndex = null; groupSelectedVertices.clear(); groupGizmoPosition = null
+        selectedBlushIndex = null; selectedBlushCorner = null; selectedForFace.clear()
+
+        println("Subdivided ${facesToSubdivideIndices.size} faces. New total: ${vertices.size}V, ${edges.size}E, ${faces.size}F")
     }
 
     private fun draw(gc: GraphicsContext, w: Double, h: Double, mouseX: Double, mouseY: Double) {
