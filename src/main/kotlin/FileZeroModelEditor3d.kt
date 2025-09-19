@@ -100,6 +100,12 @@ class ModelEditor : Application() {
     private val gizmoStartOffset = 10.0
     private val gizmoEndOffset = 30.0
 
+    private var isBoxSelecting = false
+    private var boxSelectStartX = 0.0
+    private var boxSelectStartY = 0.0
+    private var boxSelectCurrentX = 0.0
+    private var boxSelectCurrentY = 0.0
+
     override fun start(stage: Stage) {
         val canvas = Canvas((1920.0 * 2) / 3, (1080.0 * 2) / 3)
         val gc = canvas.graphicsContext2D
@@ -210,8 +216,11 @@ class ModelEditor : Application() {
                         val count = groupSelectedVertices.size
                         groupGizmoPosition = Vector3d(sumX / count, sumY / count, sumZ / count)
                     } else {
-                        vertices.add(Vector3d(0.0, 0.0, 0.0))
-                        selectedVertex = vertices.size - 1
+                        isBoxSelecting = true
+                        boxSelectStartX = e.x
+                        boxSelectStartY = e.y
+                        boxSelectCurrentX = e.x
+                        boxSelectCurrentY = e.y
                     }
                 }
             }
@@ -278,6 +287,10 @@ class ModelEditor : Application() {
                 }
 
                 draw(gc, canvas.width, canvas.height, e.x, e.y)
+            } else if (isBoxSelecting) {
+                boxSelectCurrentX = e.x
+                boxSelectCurrentY = e.y
+                draw(gc, canvas.width, canvas.height, e.x, e.y)
             }
         }
 
@@ -313,6 +326,42 @@ class ModelEditor : Application() {
                 } else if (selectedVertex != null) {
                     vertices.getOrNull(selectedVertex!!)?.let { v ->
                         v.x = round(v.x); v.y = round(v.y); v.z = round(v.z)
+                    }
+                }
+            } else if (isBoxSelecting) {
+                isBoxSelecting = false
+                val dragDistance = hypot(e.x - boxSelectStartX, e.y - boxSelectStartY)
+                val clickThreshold = 5.0
+
+                if (dragDistance < clickThreshold) {
+                    vertices.add(Vector3d(0.0, 0.0, 0.0))
+                    selectedVertex = vertices.size - 1
+                    groupSelectedVertices.clear()
+                    groupGizmoPosition = null
+                    selectedFaceIndex = null
+                } else {
+                    val x1 = min(boxSelectStartX, boxSelectCurrentX)
+                    val y1 = min(boxSelectStartY, boxSelectCurrentY)
+                    val x2 = max(boxSelectStartX, boxSelectCurrentX)
+                    val y2 = max(boxSelectStartY, boxSelectCurrentY)
+
+                    val w = canvas.width
+                    val h = canvas.height
+
+                    val selectedInBox = vertices.withIndex().filter { (_, v) ->
+                        val p = project(v, w, h)
+                        p.first.isFinite() && p.second.isFinite() &&
+                                p.first >= x1 && p.first <= x2 &&
+                                p.second >= y1 && p.second <= y2
+                    }.map { it.index }
+
+                    groupSelectedVertices.addAll(selectedInBox)
+
+                    if (groupSelectedVertices.isNotEmpty()) {
+                        var sumX = 0.0; var sumY = 0.0; var sumZ = 0.0
+                        groupSelectedVertices.forEach { val v = vertices[it]; sumX += v.x; sumY += v.y; sumZ += v.z }
+                        val count = groupSelectedVertices.size
+                        groupGizmoPosition = Vector3d(sumX / count, sumY / count, sumZ / count)
                     }
                 }
             }
