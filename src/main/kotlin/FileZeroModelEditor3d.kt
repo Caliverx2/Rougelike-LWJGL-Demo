@@ -1695,6 +1695,21 @@ class ModelEditor : Application() {
                 gc.fillOval(p.first - 4, p.second - 4, 8.0, 8.0)
             }
         }
+        if (isBoxSelecting) {
+            val x = min(boxSelectStartX, boxSelectCurrentX)
+            val y = min(boxSelectStartY, boxSelectCurrentY)
+            val width = abs(boxSelectStartX - boxSelectCurrentX)
+            val height = abs(boxSelectStartY - boxSelectCurrentY)
+
+            gc.fill = Color.CYAN.deriveColor(0.0, 1.0, 1.0, 0.3)
+            gc.fillRect(x, y, width, height)
+
+            gc.stroke = Color.WHITE
+            gc.lineWidth = 1.0
+            gc.setLineDashes(4.0, 4.0)
+            gc.strokeRect(x, y, width, height)
+            gc.setLineDashes(0.0, 0.0)
+        }
         drawOrientationGizmo(gc, w, h)
         drawVertexInfo(gc, w, h)
         drawGizmo(gc, w, h)
