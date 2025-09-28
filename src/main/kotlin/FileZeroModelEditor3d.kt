@@ -1515,8 +1515,8 @@ class ModelEditor : Application() {
                 faces.withIndex()
                     .find { (index, face) ->
                         index != selectedFaceIndex!! &&
-                        face.indices.size == selectedFace.indices.size &&
-                        face.indices.toSet() == selectedIndicesSet
+                                face.indices.size == selectedFace.indices.size &&
+                                face.indices.toSet() == selectedIndicesSet
                     }?.let { (oppositeIndex, _) ->
                         initialSet.add(oppositeIndex)
                     }
@@ -1708,7 +1708,7 @@ class ModelEditor : Application() {
             gc.lineWidth = 1.0
             gc.setLineDashes(4.0, 4.0)
             gc.strokeRect(x, y, width, height)
-            gc.setLineDashes(0.0, 0.0)
+            gc.setLineDashes()
         }
         drawOrientationGizmo(gc, w, h)
         drawVertexInfo(gc, w, h)
