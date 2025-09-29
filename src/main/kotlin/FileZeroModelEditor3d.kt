@@ -105,6 +105,7 @@ class ModelEditor : Application() {
     private var boxSelectStartY = 0.0
     private var boxSelectCurrentX = 0.0
     private var boxSelectCurrentY = 0.0
+    private var lastSubdivideTime = 0L
 
     override fun start(stage: Stage) {
         val canvas = Canvas((1920.0 * 2) / 3, (1080.0 * 2) / 3)
@@ -1505,6 +1506,12 @@ class ModelEditor : Application() {
     }
 
     private fun subdivideSelection() {
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastSubdivideTime < 500) { // 500ms delay
+            return
+        }
+        lastSubdivideTime = currentTime
+
         val facesToSubdivideIndices = if (selectedFaceIndex != null) {
             val initialSet = mutableSetOf(selectedFaceIndex!!)
 
@@ -1528,7 +1535,7 @@ class ModelEditor : Application() {
                 .map { it.index }
                 .toSet()
         } else {
-            faces.indices.toSet()
+            emptySet<Int>()
         }
 
         if (facesToSubdivideIndices.isEmpty()) {
