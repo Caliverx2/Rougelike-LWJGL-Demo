@@ -470,13 +470,21 @@ class DrawingPanel : StackPane() {
     private fun drawOverlay() {
         val gc = overlayCanvas.graphicsContext2D
         gc.clearRect(0.0, 0.0, overlayCanvas.width, overlayCanvas.height)
-        gc.stroke = Color.WHITE
-        gc.strokeOval(overlayCanvas.width/2, overlayCanvas.height/2, 1.0, 1.0)
-        for (x in 0..8) {
-            for (y in 0..8) {
+
+        val mapScale = min(overlayCanvas.width, overlayCanvas.height) / 100.0
+        val cursorSize = mapScale/5 * 2.5
+        val mapOffsetX = 10.0
+        val mapOffsetY = 10.0
+
+        gc.stroke = Color.WHITE // cursor
+        gc.strokeLine(overlayCanvas.width/2-cursorSize, overlayCanvas.height/2, overlayCanvas.width/2+cursorSize, overlayCanvas.height/2)
+        gc.strokeLine(overlayCanvas.width/2, overlayCanvas.height/2-cursorSize, overlayCanvas.width/2, overlayCanvas.height/2+cursorSize)
+
+        for (x in 0 until gridDimension) {
+            for (z in 0 until gridDimension) {
                 for (zLevel in 0 until 4) {
-                    if (GRID_MAP[x][zLevel][y] == 1) {
-                        gc.strokeOval(x * 10.0, y * 10.0 + zLevel * 90 + zLevel * 10, 10.0, 10.0)
+                    if (GRID_MAP[x][zLevel][z] == 1) {
+                        gc.strokeOval(mapOffsetX + z * mapScale, mapOffsetY + x * mapScale + zLevel * (gridDimension + 2) * mapScale, mapScale, mapScale)
                     }
                 }
             }
@@ -943,6 +951,18 @@ class DrawingPanel : StackPane() {
                                 AABB.fromCube(transformedCorners)
                             }
 
+                            val blushContainerAABB = if (worldBlushes.isNotEmpty()) {
+                                var min = worldBlushes.first().min.copy()
+                                var max = worldBlushes.first().max.copy()
+                                worldBlushes.forEach {
+                                    min = Vector3d(min(min.x, it.min.x), min(min.y, it.min.y), min(min.z, it.min.z))
+                                    max = Vector3d(max(max.x, it.max.x), max(max.y, it.max.y), max(max.z, it.max.z))
+                                }
+                                AABB(min, max)
+                            } else {
+                                null
+                            }
+
                             for ((triWorld, triUV) in triangles) {
                                 val clippedTriangles = clipTriangleAgainstNearPlane(triWorld, triUV, viewMatrix, 0.1)
                                 for ((clippedW, clippedUVs) in clippedTriangles) {
@@ -957,7 +977,7 @@ class DrawingPanel : StackPane() {
                                     }
                                     if (projectedVertices.size == 3) {
                                         val faceTexture = mesh.faceTextures[faceIndex] ?: mesh.texture
-                                        renderQueue.add(RenderableFace(projectedVertices, originalClipW, clippedUVs, mesh.mesh.color, false, faceTexture, clippedW, lightGrid, worldBlushes))
+                                        renderQueue.add(RenderableFace(projectedVertices, originalClipW, clippedUVs, mesh.mesh.color, false, faceTexture, clippedW, lightGrid, worldBlushes, blushContainerAABB))
                                     }
                                 }
                             }
@@ -981,15 +1001,13 @@ class DrawingPanel : StackPane() {
     }
 
     private fun rasterizeTexturedTriangle(pixelBuffer: IntArray, renderableFace: RenderableFace, screenWidth: Int, screenHeight: Int) {
-        val (screenVertices, originalClipW, textureVertices, color, _, texture, worldVertices, lightGrid, blushes) = renderableFace
-        if (screenVertices.size != 3 || textureVertices.size != 3 || originalClipW.size != 3 || texture == null) return
+        val (screenVertices, originalClipW, textureVertices, color, _, texture, worldVertices, lightGrid, blushes, blushContainerAABB) = renderableFace
+        if (screenVertices.size != 3 || textureVertices.size != 3 || originalClipW.size != 3) return
 
         val v0 = screenVertices[0]; val v1 = screenVertices[1]; val v2 = screenVertices[2]
         val wVert0 = worldVertices[0]; val wVert1 = worldVertices[1]; val wVert2 = worldVertices[2]
         val uv0 = textureVertices[0]; val uv1 = textureVertices[1]; val uv2 = textureVertices[2]
         val w0 = originalClipW[0]; val w1 = originalClipW[1]; val w2 = originalClipW[2]
-        val texReader = texture.pixelReader
-        val texWidth = texture.width.toInt(); val texHeight = texture.height.toInt()
 
         val minX = max(0, minOf(v0.x.toInt(), v1.x.toInt(), v2.x.toInt()))
         val maxX = min(screenWidth - 1, maxOf(v0.x.toInt(), v1.x.toInt(), v2.x.toInt()))
@@ -1042,11 +1060,19 @@ class DrawingPanel : StackPane() {
                         val inv_z_prime = 1.0 / interpolated_z_inv_prime
                         val interpolatedWorldPos = (wVert0_prime * alpha + wVert1_prime * beta + wVert2_prime * gamma) * inv_z_prime
 
-                        if (!blushes.any { it.contains(interpolatedWorldPos) }) {
+                        val isInBlush = if (blushContainerAABB != null && blushContainerAABB.contains(interpolatedWorldPos)) {
+                            blushes.any { it.contains(interpolatedWorldPos) }
+                        } else false
+
+                        if (!isInBlush) {
                             val pixelIndex = px + rowOffset
                             val interpolatedZ = alpha * v0.z + beta * v1.z + gamma * v2.z
 
                             if (interpolatedZ < depthBuffer[pixelIndex]) {
+                                if (texture == null) return
+                                val texReader = texture.pixelReader
+                                val texWidth = texture.width.toInt(); val texHeight = texture.height.toInt()
+
                                 val u = (alpha * u0_prime + beta * u1_prime + gamma * u2_prime) * inv_z_prime
                                 val v = (alpha * v0_prime + beta * v1_prime + gamma * v2_prime) * inv_z_prime
                                 val texX = (u * (texWidth - 1)).toInt().coerceIn(0, texWidth - 1)

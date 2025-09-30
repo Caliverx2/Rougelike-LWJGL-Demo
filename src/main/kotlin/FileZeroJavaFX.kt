@@ -166,11 +166,12 @@ data class RenderableFace(
     val originalClipW: List<Double>,
     val textureVertices: List<Vector3d>,
     val color: Color,
-    val isEdge: Boolean,
+    val isTransparent: Boolean,
     val texture: Image? = null,
     val worldVertices: List<Vector3d> = listOf(),
     val lightGrid: Array<Array<Color>>? = null,
-    val blushes: List<AABB> = emptyList()
+    val blushes: List<AABB> = emptyList(),
+    val blushContainerAABB: AABB?
 )
 
 data class Mesh(
