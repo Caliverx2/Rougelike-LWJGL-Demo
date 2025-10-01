@@ -30,6 +30,7 @@ class DrawingPanel : StackPane() {
     private val faceLightGrids = ConcurrentHashMap<Pair<PlacedMesh, Int>, Array<Array<Color>>>()
     private val lightingUpdateQueue = ConcurrentLinkedQueue<Pair<PlacedMesh, Int>>()
     private val lightingExecutor = Executors.newSingleThreadExecutor()
+    private val lightingUpdateJobQueue = ConcurrentLinkedQueue<LightSource>()
     private var lightingFuture: Future<*>? = null
 
     private val cubeSize = 100.0
@@ -576,86 +577,67 @@ class DrawingPanel : StackPane() {
     }
 
     private fun updateDynamicLights() {
-        var anyLightNeedsUpdate = false
         synchronized(lightSources) {
             for (light in lightSources) {
                 val isMoving = orbitingLights.any { it.light === light }
 
-                val radiusVec = Vector3d(light.radius, light.radius, light.radius)
-                val lightAABB = AABB(light.position - radiusVec, light.position + radiusVec)
-                val meshesInRadius = collisionGrid.query(lightAABB)
-
                 var currentStateHash = 1
-                meshesInRadius.sortedBy { System.identityHashCode(it) }.forEach { mesh ->
-                    currentStateHash = 31 * currentStateHash + System.identityHashCode(mesh)
-                    currentStateHash = 31 * currentStateHash + mesh.transformMatrix.hashCode()
+                if (!isMoving) {
+                    val radiusVec = Vector3d(light.radius, light.radius, light.radius)
+                    val lightAABB = AABB(light.position - radiusVec, light.position + radiusVec)
+                    val meshesInRadius = collisionGrid.query(lightAABB)
+                    meshesInRadius.sortedBy { System.identityHashCode(it) }.forEach { mesh ->
+                        currentStateHash = 31 * currentStateHash + System.identityHashCode(mesh)
+                        currentStateHash = 31 * currentStateHash + mesh.transformMatrix.hashCode()
+                    }
                 }
 
                 if (isMoving || currentStateHash != light.lastKnownMeshStateHash) {
-                    light.needsUpdate = true
                     light.lastKnownMeshStateHash = currentStateHash
-                    anyLightNeedsUpdate = true
+                    if (!lightingUpdateJobQueue.contains(light)) {
+                        lightingUpdateJobQueue.add(light)
+                    }
                 }
             }
         }
 
-        if (anyLightNeedsUpdate) {
-            if (lightingFuture == null || lightingFuture!!.isDone) {
-                val isAnyLightMoving = synchronized(lightSources) {
-                    lightSources.any { light -> light.needsUpdate && orbitingLights.any { it.light === light } }
-                }
-                val resolution = if (isAnyLightMoving) LOW_QualityRes else HIGH_QualityRes
-
-                lightingFuture = scheduleLightingUpdate(resolution)
-            }
+        if ((lightingFuture == null || lightingFuture!!.isDone) && lightingUpdateJobQueue.isNotEmpty()) {
+            val nextLightToProcess = lightingUpdateJobQueue.poll()
+            val isMoving = orbitingLights.any { it.light === nextLightToProcess }
+            val resolution = if (isMoving) LOW_QualityRes else HIGH_QualityRes
+            lightingFuture = scheduleLightingUpdate(nextLightToProcess, resolution)
         }
     }
 
-    private fun scheduleLightingUpdate(resolution: Int): Future<*> {
-        val lightsToUpdateSnapshots: List<LightSource>
-        val originalLightsToMark: List<LightSource>
-
-        synchronized(lightSources) {
-            originalLightsToMark = lightSources.filter { it.needsUpdate }
-            lightsToUpdateSnapshots = originalLightsToMark.map { lightToCopy ->
-                LightSource(
-                    position = lightToCopy.position.copy(),
-                    radius = lightToCopy.radius,
-                    color = lightToCopy.color,
-                    intensity = lightToCopy.intensity,
-                    type = lightToCopy.type
-                )
-            }
-        }
-
-        if (lightsToUpdateSnapshots.isEmpty()) {
-            return lightingExecutor.submit { } // No work to do
-        }
+    private fun scheduleLightingUpdate(lightToProcess: LightSource, resolution: Int): Future<*> {
+        val lightSnapshot = LightSource(
+            position = lightToProcess.position.copy(),
+            radius = lightToProcess.radius,
+            color = lightToProcess.color,
+            intensity = lightToProcess.intensity,
+            type = lightToProcess.type
+        )
 
         val facesToUpdate = ConcurrentHashMap.newKeySet<Pair<PlacedMesh, Int>>()
 
-        for (light in lightsToUpdateSnapshots) {
-            val radiusVec = Vector3d(light.radius, light.radius, light.radius)
-            val lightAABB = AABB(light.position - radiusVec, light.position + radiusVec)
-            val meshesInRadius = meshes.filter { mesh ->
-                val meshAABB = meshAABBs[mesh] ?: return@filter false
-                lightAABB.intersects(meshAABB)
-            }
+        val radiusVec = Vector3d(lightSnapshot.radius, lightSnapshot.radius, lightSnapshot.radius)
+        val lightAABB = AABB(lightSnapshot.position - radiusVec, lightSnapshot.position + radiusVec)
+        val meshesInRadius = meshes.filter { mesh ->
+            val meshAABB = meshAABBs[mesh] ?: return@filter false
+            lightAABB.intersects(meshAABB)
+        }
 
-            for (mesh in meshesInRadius) {
-                if (mesh.mesh.faces.isNotEmpty() && mesh.texture != texSkybox) {
-                    (0 until mesh.mesh.faces.size).forEach { faceIndex -> facesToUpdate.add(Pair(mesh, faceIndex)) }
-                }
+        for (mesh in meshesInRadius) {
+            if (mesh.mesh.faces.isNotEmpty() && mesh.texture != texSkybox) {
+                (0 until mesh.mesh.faces.size).forEach { faceIndex -> facesToUpdate.add(Pair(mesh, faceIndex)) }
             }
         }
 
         lightingUpdateQueue.clear()
         lightingUpdateQueue.addAll(facesToUpdate)
 
-        originalLightsToMark.forEach { it.needsUpdate = false }
-
         return lightingExecutor.submit {
-            processLightingQueue(lightsToUpdateSnapshots, resolution)
+            processLightingQueue(resolution)
         }
     }
 
@@ -674,17 +656,14 @@ class DrawingPanel : StackPane() {
         return true
     }
 
-    private fun processLightingQueue(lightSnapshots: List<LightSource>, resolution: Int) {
-        val itemsToProcess = mutableListOf<Pair<PlacedMesh, Int>>()
+    private fun processLightingQueue(resolution: Int) {
+        val itemsToProcess = lightingUpdateQueue.toList()
+        lightingUpdateQueue.clear()
 
         val allLightsSnapshot = synchronized(lightSources) {
             lightSources.map { lightToCopy ->
                 LightSource(lightToCopy.position.copy(), lightToCopy.radius, lightToCopy.color, lightToCopy.intensity, lightToCopy.type)
             }
-        }
-
-        while(lightingUpdateQueue.isNotEmpty()) {
-            itemsToProcess.add(lightingUpdateQueue.poll())
         }
 
         val sortedItems = itemsToProcess.sortedBy { (mesh, faceIndex) ->
