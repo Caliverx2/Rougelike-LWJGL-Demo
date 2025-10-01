@@ -22,7 +22,10 @@ class DrawingPanel : StackPane() {
     private var lastUpdateTime = System.nanoTime()
     private val isRendering = java.util.concurrent.atomic.AtomicBoolean(false)
     private val meshes = mutableListOf<PlacedMesh>()
+    private val lightGizmoMeshes = Collections.synchronizedList(mutableListOf<PlacedMesh>())
     private val lightSources = Collections.synchronizedList(mutableListOf<LightSource>())
+    private data class OrbitingLight(val light: LightSource, val center: Vector3d, var angle: Double = 0.0)
+    private val orbitingLights = Collections.synchronizedList(mutableListOf<OrbitingLight>())
 
     private val faceLightGrids = ConcurrentHashMap<Pair<PlacedMesh, Int>, Array<Array<Color>>>()
     private val lightingUpdateQueue = ConcurrentLinkedQueue<Pair<PlacedMesh, Int>>()
@@ -53,7 +56,8 @@ class DrawingPanel : StackPane() {
     private val fogDensity = 0.5
 
     private val ambientIntensity = 0.5
-    private val ambientLightResolution = 16
+    private val HIGH_QualityRes = 16
+    private val LOW_QualityRes = 4
     private val globalLightIntensity = 6.0
 
     private var retroScanLineMode = false
@@ -282,7 +286,7 @@ class DrawingPanel : StackPane() {
                 }
 
                 updateCameraPosition(deltaTime)
-                updateGameLogic()
+                updateGameLogic(deltaTime)
                 requestRender()
             }
         }.start()
@@ -458,6 +462,29 @@ class DrawingPanel : StackPane() {
             lightSources.add(LightSource(Vector3d(cameraPosition.x, cameraPosition.y, cameraPosition.z), lightRadius, Color.rgb(0, 255, 0), type = LightType.VERTEX))
             pressedKeys.remove(KeyCode.P)
         }
+        if (pressedKeys.contains(KeyCode.COMMA)) { // ','
+            val lightRadius = 6.0 * cubeSize
+            val initialPos = cameraPosition.copy()
+            val newLight = LightSource(
+                position = initialPos.copy(),
+                radius = lightRadius,
+                color = Color.CYAN,
+                type = LightType.VERTEX
+            )
+            lightSources.add(newLight)
+            orbitingLights.add(OrbitingLight(newLight, initialPos))
+            pressedKeys.remove(KeyCode.COMMA)
+        }
+        if (pressedKeys.contains(KeyCode.PERIOD)) { // '.'
+            val lightRadius = 6.0 * cubeSize
+            val initialPos = cameraPosition.copy()
+            val newLight = LightSource(
+                position = initialPos.copy(), radius = lightRadius, color = Color.FUCHSIA, type = LightType.RAYTRACED
+            )
+            lightSources.add(newLight)
+            orbitingLights.add(OrbitingLight(newLight, initialPos))
+            pressedKeys.remove(KeyCode.PERIOD)
+        }
         if (pressedKeys.contains(KeyCode.X)) {
             lightSources.clear()
             faceLightGrids.clear()
@@ -491,7 +518,7 @@ class DrawingPanel : StackPane() {
         }
     }
 
-    private fun updateGameLogic() {
+    private fun updateGameLogic(deltaTime: Double) {
         val playerGridPos = worldToGridCoords(cameraPosition)
         val gridX = playerGridPos.x.toInt()
         val gridY = playerGridPos.y.toInt()
@@ -520,24 +547,51 @@ class DrawingPanel : StackPane() {
                 GRID_MAP[gridX][gridY][gridZ] = 0
             }
         }
+
+        // Update orbiting lights
+        val orbitSpeed = 0.5 * cubeSize
+        val orbitRadius = 2.5 * cubeSize
+        val angularVelocity = orbitSpeed / orbitRadius // v = ω * r  => ω = v / r
+
+        synchronized(orbitingLights) {
+            for (orbitingLight in orbitingLights) {
+                orbitingLight.angle += angularVelocity * deltaTime
+                val offsetX = sin(orbitingLight.angle) * orbitRadius
+                val offsetZ = cos(orbitingLight.angle) * orbitRadius
+                orbitingLight.light.position = orbitingLight.center.copy(x = orbitingLight.center.x + offsetX, z = orbitingLight.center.z + offsetZ)
+            }
+        }
+
+        // Update light gizmos
+        lightGizmoMeshes.clear()
+        val lightGizmoBaseMesh = createCubeMesh(0.1 * cubeSize, Color.WHITE)
+        val currentLightSources = synchronized(lightSources) { lightSources.toList() }
+        for (light in currentLightSources) {
+            val gizmoTransform = Matrix4x4.translation(light.position.x, light.position.y, light.position.z)
+            val coloredGizmoMesh = lightGizmoBaseMesh.copy(color = light.color)
+            val placedGizmo = PlacedMesh(coloredGizmoMesh, gizmoTransform, collision = false)
+            meshAABBs[placedGizmo] = AABB.fromCube(placedGizmo.getTransformedVertices())
+            lightGizmoMeshes.add(placedGizmo)
+        }
     }
 
     private fun updateDynamicLights() {
         var anyLightNeedsUpdate = false
         synchronized(lightSources) {
             for (light in lightSources) {
+                val isMoving = orbitingLights.any { it.light === light }
+
                 val radiusVec = Vector3d(light.radius, light.radius, light.radius)
                 val lightAABB = AABB(light.position - radiusVec, light.position + radiusVec)
                 val meshesInRadius = collisionGrid.query(lightAABB)
 
                 var currentStateHash = 1
-                // Sort for consistent hash order
                 meshesInRadius.sortedBy { System.identityHashCode(it) }.forEach { mesh ->
                     currentStateHash = 31 * currentStateHash + System.identityHashCode(mesh)
                     currentStateHash = 31 * currentStateHash + mesh.transformMatrix.hashCode()
                 }
 
-                if (currentStateHash != light.lastKnownMeshStateHash) {
+                if (isMoving || currentStateHash != light.lastKnownMeshStateHash) {
                     light.needsUpdate = true
                     light.lastKnownMeshStateHash = currentStateHash
                     anyLightNeedsUpdate = true
@@ -547,23 +601,40 @@ class DrawingPanel : StackPane() {
 
         if (anyLightNeedsUpdate) {
             if (lightingFuture == null || lightingFuture!!.isDone) {
-                lightingFuture = scheduleLightingUpdate()
+                val isAnyLightMoving = synchronized(lightSources) {
+                    lightSources.any { light -> light.needsUpdate && orbitingLights.any { it.light === light } }
+                }
+                val resolution = if (isAnyLightMoving) LOW_QualityRes else HIGH_QualityRes
+
+                lightingFuture = scheduleLightingUpdate(resolution)
             }
         }
     }
 
-    private fun scheduleLightingUpdate(): Future<*> {
-        val lightsToUpdate = synchronized(lightSources) {
-            lightSources.filter { it.needsUpdate }
+    private fun scheduleLightingUpdate(resolution: Int): Future<*> {
+        val lightsToUpdateSnapshots: List<LightSource>
+        val originalLightsToMark: List<LightSource>
+
+        synchronized(lightSources) {
+            originalLightsToMark = lightSources.filter { it.needsUpdate }
+            lightsToUpdateSnapshots = originalLightsToMark.map { lightToCopy ->
+                LightSource(
+                    position = lightToCopy.position.copy(),
+                    radius = lightToCopy.radius,
+                    color = lightToCopy.color,
+                    intensity = lightToCopy.intensity,
+                    type = lightToCopy.type
+                )
+            }
         }
 
-        if (lightsToUpdate.isEmpty()) {
+        if (lightsToUpdateSnapshots.isEmpty()) {
             return lightingExecutor.submit { } // No work to do
         }
 
         val facesToUpdate = ConcurrentHashMap.newKeySet<Pair<PlacedMesh, Int>>()
 
-        for (light in lightsToUpdate) {
+        for (light in lightsToUpdateSnapshots) {
             val radiusVec = Vector3d(light.radius, light.radius, light.radius)
             val lightAABB = AABB(light.position - radiusVec, light.position + radiusVec)
             val meshesInRadius = meshes.filter { mesh ->
@@ -581,10 +652,10 @@ class DrawingPanel : StackPane() {
         lightingUpdateQueue.clear()
         lightingUpdateQueue.addAll(facesToUpdate)
 
-        synchronized(lightSources) { lightsToUpdate.forEach { it.needsUpdate = false } }
+        originalLightsToMark.forEach { it.needsUpdate = false }
 
         return lightingExecutor.submit {
-            processLightingQueue()
+            processLightingQueue(lightsToUpdateSnapshots, resolution)
         }
     }
 
@@ -603,11 +674,15 @@ class DrawingPanel : StackPane() {
         return true
     }
 
-    private fun processLightingQueue() {
-        val allMeshes = meshes.toList()
-        val allLightSources = synchronized(lightSources) { lightSources.toList() }
-
+    private fun processLightingQueue(lightSnapshots: List<LightSource>, resolution: Int) {
         val itemsToProcess = mutableListOf<Pair<PlacedMesh, Int>>()
+
+        val allLightsSnapshot = synchronized(lightSources) {
+            lightSources.map { lightToCopy ->
+                LightSource(lightToCopy.position.copy(), lightToCopy.radius, lightToCopy.color, lightToCopy.intensity, lightToCopy.type)
+            }
+        }
+
         while(lightingUpdateQueue.isNotEmpty()) {
             itemsToProcess.add(lightingUpdateQueue.poll())
         }
@@ -636,11 +711,11 @@ class DrawingPanel : StackPane() {
             val faceNormal = (v1 - v0).cross(v2 - v0).normalize()
             val faceCenter = worldVerts.reduce { acc, vec -> acc + vec } / worldVerts.size.toDouble()
 
-            val subDivisions = ambientLightResolution
+            val subDivisions = resolution
             val finalLightGrid = Array(subDivisions) { Array(subDivisions) { Color.BLACK } }
             var isFaceLitAtAll = false
 
-            for (light in allLightSources) {
+            for (light in allLightsSnapshot) {
                 val toLightDirForNormal = (light.position - faceCenter).normalize()
                 if (faceNormal.dot(toLightDirForNormal) <= 0) {
                     continue
@@ -912,9 +987,11 @@ class DrawingPanel : StackPane() {
         val projectionMatrix = Matrix4x4.perspective(dynamicFov, virtualWidth.toDouble() / virtualHeight.toDouble(), 0.1, 48.0 * cubeSize)
         val combinedMatrix = projectionMatrix * viewMatrix
 
+        val allMeshesToRender = meshes + lightGizmoMeshes
+
         val tasks = mutableListOf<Future<*>>()
 
-        for (mesh in meshes) {
+        for (mesh in allMeshesToRender) {
             val meshAABB = meshAABBs[mesh]
             if (mesh.texture == texSkybox || meshAABB == null || !isAabbOutsideFrustum(meshAABB, combinedMatrix)) {
                 tasks.add(executor.submit {
@@ -1069,8 +1146,14 @@ class DrawingPanel : StackPane() {
                             val interpolatedZ = alpha * v0.z + beta * v1.z + gamma * v2.z
 
                             if (interpolatedZ < depthBuffer[pixelIndex]) {
-                                if (texture == null) return
-                                val texReader = texture.pixelReader
+                                if (texture == null) { // This is a gizmo or untextured face
+                                    val finalColor = colorToInt(color)
+                                    pixelBuffer[pixelIndex] = finalColor
+                                    depthBuffer[pixelIndex] = interpolatedZ
+                                    continue
+                                }
+
+                                val texReader = texture.pixelReader // This will now only be called if texture is not null
                                 val texWidth = texture.width.toInt(); val texHeight = texture.height.toInt()
 
                                 val u = (alpha * u0_prime + beta * u1_prime + gamma * u2_prime) * inv_z_prime
@@ -1081,8 +1164,9 @@ class DrawingPanel : StackPane() {
                                 val texColor = texReader.getColor(texX, texY)
 
                                 val dynamicLight = if (lightGrid != null) {
-                                    val gridX = (u * ambientLightResolution).toInt().coerceIn(0, ambientLightResolution - 1)
-                                    val gridY = ((1.0 - v) * ambientLightResolution).toInt().coerceIn(0, ambientLightResolution - 1)
+                                    val lightGridResolution = lightGrid.size
+                                    val gridX = (u * lightGridResolution).toInt().coerceIn(0, lightGridResolution - 1)
+                                    val gridY = ((1.0 - v) * lightGridResolution).toInt().coerceIn(0, lightGridResolution - 1)
                                     lightGrid[gridX][gridY]
                                 } else {
                                     Color.BLACK
