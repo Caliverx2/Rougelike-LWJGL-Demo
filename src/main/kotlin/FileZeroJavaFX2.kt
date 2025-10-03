@@ -58,7 +58,7 @@ class DrawingPanel : StackPane() {
 
     private val ambientIntensity = 0.5
     private val HIGH_QualityRes = 16
-    private val LOW_QualityRes = 4
+    private val LOW_QualityRes = 8
     private val globalLightIntensity = 6.0
 
     private var retroScanLineMode = false
@@ -469,7 +469,7 @@ class DrawingPanel : StackPane() {
             val newLight = LightSource(
                 position = initialPos.copy(),
                 radius = lightRadius,
-                color = Color.CYAN,
+                color = Color.YELLOW,
                 type = LightType.VERTEX
             )
             lightSources.add(newLight)
@@ -480,7 +480,7 @@ class DrawingPanel : StackPane() {
             val lightRadius = 6.0 * cubeSize
             val initialPos = cameraPosition.copy()
             val newLight = LightSource(
-                position = initialPos.copy(), radius = lightRadius, color = Color.FUCHSIA, type = LightType.RAYTRACED
+                position = initialPos.copy(), radius = lightRadius, color = Color.rgb(0, 0, 255), type = LightType.RAYTRACED
             )
             lightSources.add(newLight)
             orbitingLights.add(OrbitingLight(newLight, initialPos))
