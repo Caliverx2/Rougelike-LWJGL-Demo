@@ -1,12 +1,14 @@
 package org.lewapnoob.FileZeroModel3DEditor
 
 import javafx.application.Application
+import javafx.stage.FileChooser
 import javafx.geometry.Insets
 import javafx.scene.Scene
 import javafx.scene.control.*
 import javafx.scene.canvas.Canvas
 import javafx.scene.canvas.GraphicsContext
 import javafx.scene.image.Image
+import javafx.scene.image.WritableImage
 import javafx.scene.input.KeyCode
 import javafx.scene.input.MouseButton
 import javafx.scene.layout.GridPane
@@ -15,6 +17,7 @@ import javafx.scene.layout.StackPane
 import javafx.scene.paint.Color
 import javafx.stage.Modality
 import javafx.stage.Stage
+import javafx.scene.image.PixelFormat
 import kotlin.math.*
 
 data class Vector3d(var x: Double, var y: Double, var z: Double)
@@ -60,14 +63,17 @@ class ModelEditor : Application() {
     private val vertices = mutableListOf<Vector3d>()
     private val edges = mutableListOf<Edge>()
     private val faces = mutableListOf<Face>()
-    private val faceTextures = mutableMapOf<Int, String>()
+    private val faceTextureNames = mutableMapOf<Int, String>()
+    private val customTextures = mutableListOf<List<Int>>()
     private val blushes = mutableListOf<AABB>()
+    private val textureImageCache = mutableMapOf<Int, Image>()
 
     private data class CopiedModelPart(
         val vertices: List<Vector3d>,
         val edges: List<Edge>,
         val faces: List<Face>,
-        val faceTextures: Map<Int, String>
+        val faceTextureNames: Map<Int, String>,
+        val customTextures: List<List<Int>>
     )
     private var clipboardModelPart: CopiedModelPart? = null
     private var clipboardBlush: AABB? = null
@@ -434,15 +440,15 @@ class ModelEditor : Application() {
                         faces.removeAt(removedIndex!!)
 
                         val newFaceTextures = mutableMapOf<Int, String>()
-                        faceTextures.forEach { (index, name) ->
+                        faceTextureNames.forEach { (index, name) ->
                             if (index > removedIndex) {
                                 newFaceTextures[index - 1] = name
                             } else if (index < removedIndex) {
                                 newFaceTextures[index] = name
                             }
                         }
-                        faceTextures.clear()
-                        faceTextures.putAll(newFaceTextures)
+                        faceTextureNames.clear()
+                        faceTextureNames.putAll(newFaceTextures)
 
                         selectedFaceIndex = null
                         groupSelectedVertices.clear()
@@ -572,6 +578,11 @@ class ModelEditor : Application() {
                         }
                     }
                 }
+                KeyCode.H -> {
+                    if (selectedFaceIndex != null) {
+                        showTextureEditor(gc)
+                    }
+                }
                 KeyCode.I -> showImportDialog(gc)
                 KeyCode.C -> {
                     if (e.isControlDown) {
@@ -601,6 +612,103 @@ class ModelEditor : Application() {
         stage.scene = scene
         stage.show()
         draw(gc, canvas.width, canvas.height, 0.0, 0.0)
+    }
+
+    private fun showTextureEditor(mainGc: GraphicsContext) {
+        val faceIndex = selectedFaceIndex ?: return
+
+        val editorStage = Stage()
+        editorStage.initModality(Modality.APPLICATION_MODAL)
+        editorStage.title = "Edytor Tekstury dla Ściany $faceIndex"
+
+        val textureSize = 16
+        val pixelSize = 20.0
+
+        val gridPane = GridPane()
+        val colorPicker = ColorPicker(Color.WHITE)
+        val pixelRects = Array(textureSize) { Array(textureSize) { javafx.scene.shape.Rectangle(pixelSize, pixelSize) } }
+
+        val currentTexture = faceTextureNames[faceIndex]?.let { name ->
+            if (name.startsWith("custom_")) {
+                val textureId = name.substringAfter("custom_").toIntOrNull()
+                textureId?.let { customTextures.getOrNull(it) }
+            } else null
+        } ?: List(textureSize * textureSize) { 0xFFFFFFFF.toInt() }
+
+
+        for (y in 0 until textureSize) {
+            for (x in 0 until textureSize) {
+                val rect = pixelRects[y][x]
+                val hexColor = currentTexture[y * textureSize + x]
+                rect.fill = Color.rgb((hexColor shr 16) and 0xFF, (hexColor shr 8) and 0xFF, hexColor and 0xFF)
+
+                rect.setOnMousePressed { event->
+                    if (event.isPrimaryButtonDown) {
+                        rect.fill = colorPicker.value
+                    }
+                }
+
+                rect.setOnDragDetected {
+                    rect.startFullDrag()
+                }
+
+                rect.setOnMouseDragOver {
+                    rect.fill = colorPicker.value
+                }
+                gridPane.add(rect, x, y)
+            }
+        }
+
+        val saveButton = Button("Zapisz")
+        saveButton.setOnAction {
+            val newTextureData = mutableListOf<Int>()
+            for (y in 0 until textureSize) {
+                for (x in 0 until textureSize) {
+                    val color = pixelRects[y][x].fill as Color
+                    val r = (color.red * 255).toInt()
+                    val g = (color.green * 255).toInt()
+                    val b = (color.blue * 255).toInt()
+                    newTextureData.add((0xFF shl 24) or (r shl 16) or (g shl 8) or b)
+                }
+            }
+            val newTextureId = customTextures.size
+            customTextures.add(newTextureData)
+            faceTextureNames[faceIndex] = "custom_$newTextureId"
+            textureImageCache.remove(newTextureId)
+            editorStage.close()
+            draw(mainGc, mainGc.canvas.width, mainGc.canvas.height, 0.0, 0.0)
+        }
+
+        val importButton = Button("Importuj PNG (16x16)")
+        importButton.setOnAction {
+            val fileChooser = FileChooser()
+            fileChooser.title = "Wybierz teksturę 16x16 PNG"
+            fileChooser.extensionFilters.add(FileChooser.ExtensionFilter("PNG Images", "*.png"))
+            val selectedFile = fileChooser.showOpenDialog(editorStage.owner)
+
+            if (selectedFile != null) {
+                val image = Image(selectedFile.toURI().toString())
+                if (image.width != 16.0 || image.height != 16.0) {
+                    val alert = Alert(Alert.AlertType.ERROR, "Wybrany obraz musi mieć rozdzielczość 16x16 pikseli.")
+                    alert.showAndWait()
+                } else {
+                    val pixelReader = image.pixelReader
+                    for (y in 0 until textureSize) {
+                        for (x in 0 until textureSize) {
+                            val color = pixelReader.getColor(x, y)
+                            pixelRects[y][x].fill = color
+                        }
+                    }
+                }
+            }
+        }
+
+        val rightPane = VBox(10.0, colorPicker, saveButton, importButton)
+        rightPane.padding = Insets(10.0)
+
+        val root = javafx.scene.layout.HBox(gridPane, rightPane)
+        editorStage.scene = Scene(root)
+        editorStage.showAndWait()
     }
 
     private fun extrudeSelectedFace(distance: Double) {
@@ -1114,7 +1222,7 @@ class ModelEditor : Application() {
             val assignButton = Button("Assign")
             assignButton.setOnAction {
                 if (this.selectedFaceIndex != null) {
-                    faceTextures[this.selectedFaceIndex!!] = name
+                    faceTextureNames[this.selectedFaceIndex!!] = name
                     draw(gc, gc.canvas.width, gc.canvas.height, 0.0, 0.0)
                 } else {
                     val alert = Alert(Alert.AlertType.WARNING, "No face selected to assign texture to.")
@@ -1156,17 +1264,26 @@ class ModelEditor : Application() {
         for (e in edges) println("        $e,")
         println("    )")
 
+        println("\n    val customTextures = mapOf(")
+        customTextures.withIndex().forEach { (id, data) ->
+            val dataString = data.joinToString(", ") { "0x%08X".format(it) }
+            println("        $id to listOf($dataString).map { it.toInt() },")
+        }
+        println("    )")
+
         println("\n    val textureMapping = mapOf(")
-        faceTextures.entries.sortedBy { it.key }.forEach { (index, name) ->
+        faceTextureNames.entries.sortedBy { it.key }.forEach { (index, name) ->
             println("        $index to \"$name\",")
         }
         println("    )")
 
-        println("\n    val blushes = listOf(")
-        blushes.forEach { blush ->
-            println("        AABB(min = Vector3d(${blush.min.x} * hs, ${blush.min.y} * hs, ${blush.min.z} * hs), max = Vector3d(${blush.max.x} * hs, ${blush.max.y} * hs, ${blush.max.z} * hs)),")
+        if (blushes.size > 0) {
+            println("\n    val blushes = listOf(")
+            blushes.forEach { blush ->
+                println("        AABB(min = Vector3d(${blush.min.x} * hs, ${blush.min.y} * hs, ${blush.min.z} * hs), max = Vector3d(${blush.max.x} * hs, ${blush.max.y} * hs, ${blush.max.z} * hs)),")
+            }
+            println("    )")
         }
-        println("    )")
 
         println("\n    val uvs: List<List<Vector3d>> = faces.map { face ->")
         println("        when(face.size) {")
@@ -1174,7 +1291,11 @@ class ModelEditor : Application() {
         println("            4 -> listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0))")
         println("            else -> face.map { Vector3d(0.0,0.0,0.0) }")
         println("        }")
-        println("    }\n    return Mesh(vertices, faces, uvs, color, blushes = blushes, faceTextureNames = textureMapping)")
+        if (blushes.size > 0) {
+            println("    }\n    return Mesh(vertices, faces, uvs, color, blushes = blushes, faceTextureNames = textureMapping, customTextures = customTextures)")
+        } else {
+            println("    }\n    return Mesh(vertices, faces, uvs, color, faceTextureNames = textureMapping, customTextures = customTextures)")
+        }
         println("}")
         println("\n")
     }
@@ -1220,6 +1341,7 @@ class ModelEditor : Application() {
             val newFaces = mutableListOf<Face>()
             val newEdges = mutableListOf<Edge>()
             val newFaceTextures = mutableMapOf<Int, String>()
+            val newCustomTextures = mutableMapOf<Int, List<Int>>()
             val newBlushes = mutableListOf<AABB>()
             var blushBuffer = ""
 
@@ -1227,6 +1349,7 @@ class ModelEditor : Application() {
             var inFacesBlock = false
             var inEdgesBlock = false
             var inTextureMappingBlock = false
+            var inCustomTexturesBlock = false
             var inBlushesBlock = false
 
             for (line in code.lines()) {
@@ -1234,29 +1357,37 @@ class ModelEditor : Application() {
 
                 if (trimmedLine.startsWith("val vertices")) {
                     println("Znaleziono blok 'vertices'.")
-                    inVerticesBlock = true; inFacesBlock = false; inEdgesBlock = false; inTextureMappingBlock = false; inBlushesBlock = false
+                    inVerticesBlock = true; inFacesBlock = false; inEdgesBlock = false; inTextureMappingBlock = false; inCustomTexturesBlock = false; inBlushesBlock = false
                     continue
                 }
-                if ((trimmedLine.startsWith("val faces")) or (trimmedLine.startsWith("var faces"))) {
+                if ((trimmedLine.startsWith("val faces")) || (trimmedLine.startsWith("var faces"))) {
                     println("Zakończono 'vertices'. Znaleziono: ${newVertices.size}.")
-                    inVerticesBlock = false; inFacesBlock = true; inEdgesBlock = false; inTextureMappingBlock = false; inBlushesBlock = false
+                    inVerticesBlock = false; inFacesBlock = true; inEdgesBlock = false; inTextureMappingBlock = false; inCustomTexturesBlock = false; inBlushesBlock = false
                     continue
                 }
                 if (trimmedLine.startsWith("val edges")) {
                     println("Zakończono 'faces'. Znaleziono: ${newFaces.size}.")
-                    inVerticesBlock = false; inFacesBlock = false; inEdgesBlock = true; inTextureMappingBlock = false; inBlushesBlock = false
+                    inVerticesBlock = false; inFacesBlock = false; inEdgesBlock = true; inTextureMappingBlock = false; inCustomTexturesBlock = false; inBlushesBlock = false
+                    continue
+                }
+                if (trimmedLine.startsWith("val customTextures")) {
+                    if (inEdgesBlock) println("Zakończono 'edges'. Znaleziono: ${newEdges.size}.")
+                    inVerticesBlock = false; inFacesBlock = false; inEdgesBlock = false; inTextureMappingBlock = false; inCustomTexturesBlock = true; inBlushesBlock = false
+                    println("DEBUG: Rozpoczęto parsowanie bloku 'customTextures'.")
                     continue
                 }
                 if (trimmedLine.startsWith("val textureMapping")) {
-                    if (inEdgesBlock) println("Zakończono 'edges'. Znaleziono: ${newEdges.size}.")
-                    inVerticesBlock = false; inFacesBlock = false; inEdgesBlock = false; inTextureMappingBlock = true; inBlushesBlock = false
+                    if (inCustomTexturesBlock) println("Zakończono 'customTextures'. Znaleziono: ${newCustomTextures.size}.")
+                    else if (inEdgesBlock) println("Zakończono 'edges'. Znaleziono: ${newEdges.size}.")
+                    inVerticesBlock = false; inFacesBlock = false; inEdgesBlock = false; inTextureMappingBlock = true; inCustomTexturesBlock = false; inBlushesBlock = false
                     println("DEBUG: Rozpoczęto parsowanie bloku 'textureMapping'.")
                     continue
                 }
                 if (trimmedLine.startsWith("val blushes")) {
                     if (inTextureMappingBlock) println("Zakończono 'textureMapping'. Znaleziono: ${newFaceTextures.size}.")
+                    else if (inCustomTexturesBlock) println("Zakończono 'customTextures'. Znaleziono: ${newCustomTextures.size}.")
                     else if (inEdgesBlock) println("Zakończono 'edges'. Znaleziono: ${newEdges.size}.")
-                    inVerticesBlock = false; inFacesBlock = false; inEdgesBlock = false; inTextureMappingBlock = false; inBlushesBlock = true
+                    inVerticesBlock = false; inFacesBlock = false; inEdgesBlock = false; inTextureMappingBlock = false; inCustomTexturesBlock = false; inBlushesBlock = true
                     blushBuffer = ""
                     println("Znaleziono blok 'blushes'.")
                     continue
@@ -1265,8 +1396,9 @@ class ModelEditor : Application() {
                 if (trimmedLine.startsWith("val uvs") || trimmedLine.startsWith("return Mesh") || trimmedLine.startsWith("}")) {
                     if (inEdgesBlock) println("Zakończono 'edges'. Znaleziono: ${newEdges.size}.")
                     if (inTextureMappingBlock) println("Zakończono 'textureMapping'. Znaleziono: ${newFaceTextures.size}.")
+                    if (inCustomTexturesBlock) println("Zakończono 'customTextures'. Znaleziono: ${newCustomTextures.size}.")
                     if (inBlushesBlock) println("Zakończono 'blushes'. Znaleziono: ${newBlushes.size}.")
-                    inVerticesBlock = false; inFacesBlock = false; inEdgesBlock = false; inTextureMappingBlock = false; inBlushesBlock = false
+                    inVerticesBlock = false; inFacesBlock = false; inEdgesBlock = false; inTextureMappingBlock = false; inCustomTexturesBlock = false; inBlushesBlock = false
                 }
 
                 if (inVerticesBlock && trimmedLine.contains("Vector3d(")) {
@@ -1304,6 +1436,21 @@ class ModelEditor : Application() {
                         if (faceIndex != null) {
                             newFaceTextures[faceIndex] = textureName
                             println("DEBUG: Sparsowano mapowanie: $faceIndex -> \"$textureName\"")
+                        }
+                    }
+                } else if (inCustomTexturesBlock && trimmedLine.contains(" to listOf(")) {
+                    val idMatch = Regex("""^(\d+)\s*to""").find(trimmedLine)
+                    val dataMatch = Regex("""listOf\(([^)]+)\)""").find(trimmedLine)
+
+                    if (idMatch != null && dataMatch != null) {
+                        val textureId = idMatch.groupValues[1].toIntOrNull()
+                        val dataString = dataMatch.groupValues[1]
+                        val hexValues = dataString.split(',')
+                            .mapNotNull { it.trim().removePrefix("0x").toLongOrNull(16)?.toInt() }
+
+                        if (textureId != null && hexValues.isNotEmpty()) {
+                            newCustomTextures[textureId] = hexValues
+                            println("DEBUG: Sparsowano teksturę niestandardową: ID $textureId, ${hexValues.size} pikseli.")
                         }
                     }
                 } else if (inBlushesBlock) {
@@ -1354,7 +1501,11 @@ class ModelEditor : Application() {
             edges.clear()
             faces.clear()
             blushes.clear()
-            faceTextures.clear()
+            faceTextureNames.clear()
+            customTextures.clear()
+            newCustomTextures.entries.sortedBy { it.key }.forEach { customTextures.add(it.value) }
+            textureImageCache.clear()
+
             selectedForFace.clear()
             selectedVertex = null
             groupSelectedVertices.clear()
@@ -1366,9 +1517,9 @@ class ModelEditor : Application() {
             edges.addAll(newEdges)
             faces.addAll(newFaces)
             blushes.addAll(newBlushes)
-            faceTextures.putAll(newFaceTextures)
-            println("DEBUG: faceTextures po putAll: $faceTextures")
-            println("Załadowano model: ${vertices.size} wierzchołków, ${edges.size} krawędzi, ${faces.size} ścian, ${faceTextures.size} mapowań, ${blushes.size} blushes.")
+            faceTextureNames.putAll(newFaceTextures)
+            println("DEBUG: faceTextures po putAll: $faceTextureNames")
+            println("Załadowano model: ${vertices.size} wierzchołków, ${edges.size} krawędzi, ${faces.size} ścian, ${faceTextureNames.size} mapowań, ${blushes.size} blushes, ${customTextures.size} tekstur niestandardowych.")
 
         } catch (e: Exception) {
             println("KRYTYCZNY BŁĄD podczas parsowania modelu: ${e.message}")
@@ -1417,14 +1568,14 @@ class ModelEditor : Application() {
                 val newRelativeFace = Face(face.indices.map { oldToNewIndexMap[it]!! })
                 copiedFaces.add(newRelativeFace)
 
-                faceTextures[originalFaceIndex]?.let { textureName ->
+                faceTextureNames[originalFaceIndex]?.let { textureName ->
                     val newRelativeFaceIndex = copiedFaces.lastIndex
                     copiedFaceTextures[newRelativeFaceIndex] = textureName
                 }
             }
         }
 
-        clipboardModelPart = CopiedModelPart(copiedVerts, copiedEdges, copiedFaces, copiedFaceTextures)
+        clipboardModelPart = CopiedModelPart(copiedVerts, copiedEdges, copiedFaces, copiedFaceTextures, customTextures)
         println("Skopiowano ${copiedVerts.size} wierzchołków, ${copiedEdges.size} krawędzi, ${copiedFaces.size} ścian (w tym ${copiedFaceTextures.size} z teksturami).")
     }
 
@@ -1462,9 +1613,9 @@ class ModelEditor : Application() {
             val newFaces = part.faces.map { Face(it.indices.map { idx -> idx + vertexBaseIndex }) }
             faces.addAll(newFaces)
 
-            part.faceTextures.forEach { (relativeFaceIndex, textureName) ->
+            part.faceTextureNames.forEach { (relativeFaceIndex, textureName) ->
                 val newGlobalFaceIndex = faceBaseIndex + relativeFaceIndex
-                faceTextures[newGlobalFaceIndex] = textureName
+                faceTextureNames[newGlobalFaceIndex] = textureName
             }
 
             updateSelectionForPastedPart(vertexBaseIndex)
@@ -1558,13 +1709,13 @@ class ModelEditor : Application() {
 
         val facesToKeepWithTextures = faces.withIndex()
             .filter { it.index !in facesToSubdivideIndices }
-            .map { it.value to faceTextures[it.index] }
+            .map { it.value to faceTextureNames[it.index] }
 
         val newFacesWithTextures = mutableListOf<Pair<Face, String?>>()
 
         for (faceIndex in facesToSubdivideIndices) {
             val face = faces[faceIndex]
-            val originalTexture = faceTextures[faceIndex]
+            val originalTexture = faceTextureNames[faceIndex]
 
             val indices = face.indices
             if (indices.size < 3) continue
@@ -1600,13 +1751,13 @@ class ModelEditor : Application() {
         }
 
         faces.clear()
-        faceTextures.clear()
+        faceTextureNames.clear()
 
         facesToKeepWithTextures.forEach { (face, texture) ->
             val newIndex = faces.size
             faces.add(face)
             if (texture != null) {
-                faceTextures[newIndex] = texture
+                faceTextureNames[newIndex] = texture
             }
         }
 
@@ -1614,7 +1765,7 @@ class ModelEditor : Application() {
             val newIndex = faces.size
             faces.add(face)
             if (texture != null) {
-                faceTextures[newIndex] = texture
+                faceTextureNames[newIndex] = texture
             }
         }
 
@@ -1651,19 +1802,32 @@ class ModelEditor : Application() {
         for ((originalFaceIndex, face) in sortedFacesWithIndex) {
             val pts = face.indices.map { project(vertices[it], w, h) }
 
-            val textureName = faceTextures[originalFaceIndex]
-            val faceColor = if (textureName != null && texturePalette.containsKey(textureName)) {
-                texturePalette[textureName]!!
-            } else {
-                Color.GRAY
-            }
-            gc.globalAlpha = if (blushMode) 0.2 else 0.8
-            gc.fill = faceColor
+            val textureName = faceTextureNames.get(originalFaceIndex)
+            val isCustomTexture = textureName != null && textureName.startsWith("custom_")
 
-            gc.beginPath()
-            gc.moveTo(pts[0].first, pts[0].second)
-            for (i in 1 until pts.size) gc.lineTo(pts[i].first, pts[i].second)
-            gc.closePath(); gc.fill()
+            if (isCustomTexture) {
+                val textureId = textureName.substringAfter("custom_").toIntOrNull()
+                if (textureId != null) {
+                    val textureImage = textureImageCache.getOrPut(textureId) {
+                        createTextureFromHexData(customTextures.getOrNull(textureId))
+                    }
+                    val worldVerticesForFace = face.indices.map { vertices[it] }
+                    rasterizeFaceWithTexture(gc, pts, worldVerticesForFace, textureImage, w, h)
+                }
+            } else {
+                val faceColor = if (textureName != null && texturePalette.containsKey(textureName)) {
+                    texturePalette[textureName]!!
+                } else {
+                    Color.GRAY
+                }
+                gc.globalAlpha = if (blushMode) 0.2 else 0.8
+                gc.fill = faceColor
+
+                gc.beginPath()
+                gc.moveTo(pts[0].first, pts[0].second)
+                for (i in 1 until pts.size) gc.lineTo(pts[i].first, pts[i].second)
+                gc.closePath(); gc.fill()
+            }
 
             if (textureName != null) {
                 drawTextOnFace(gc, textureName, pts)
@@ -1720,6 +1884,83 @@ class ModelEditor : Application() {
         drawOrientationGizmo(gc, w, h)
         drawVertexInfo(gc, w, h)
         drawGizmo(gc, w, h)
+    }
+
+    private fun createTextureFromHexData(hexData: List<Int>?): Image {
+        val width = 16
+        val height = 16
+        if (hexData == null || hexData.size != width * height) {
+            val errorImage = WritableImage(width, height)
+            val writer = errorImage.pixelWriter
+            for (y in 0 until height) {
+                for (x in 0 until width) {
+                    writer.setColor(x, y, if ((x / 4 + y / 4) % 2 == 0) Color.MAGENTA else Color.BLACK)
+                }
+            }
+            return errorImage
+        }
+        val image = WritableImage(width, height)
+        val pixelWriter = image.pixelWriter
+        pixelWriter.setPixels(0, 0, width, height, PixelFormat.getIntArgbInstance(), hexData.toIntArray(), 0, width)
+        return image
+    }
+
+    private fun rasterizeFaceWithTexture(gc: GraphicsContext, screenVertices: List<Pair<Double, Double>>, worldVertices: List<Vector3d>, texture: Image, screenWidth: Double, screenHeight: Double) {
+        if (screenVertices.size < 3) return
+
+        val pixelWriter = gc.pixelWriter
+        val texReader = texture.pixelReader
+        val texWidth = texture.width.toInt()
+        val texHeight = texture.height.toInt()
+
+        val uvs = if (screenVertices.size == 4) {
+            listOf(Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(0.0, 1.0, 0.0))
+        } else {
+            listOf(Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.5, 1.0, 0.0))
+        }
+
+        val triangles = if (screenVertices.size == 4) {
+            listOf(
+                Pair(
+                    listOf(screenVertices[0], screenVertices[1], screenVertices[2]),
+                    listOf(uvs[0], uvs[1], uvs[2])
+                ),
+                Pair(
+                    listOf(screenVertices[0], screenVertices[2], screenVertices[3]),
+                    listOf(uvs[0], uvs[2], uvs[3])
+                )
+            )
+        } else {
+            listOf(Pair(screenVertices, uvs))
+        }
+
+        for ((triVertices, triUVs) in triangles) {
+            val (v0, v1, v2) = triVertices
+            val (uv0, uv1, uv2) = triUVs
+
+            val minX = max(0.0, minOf(v0.first, v1.first, v2.first)).toInt()
+            val maxX = min(screenWidth - 1, maxOf(v0.first, v1.first, v2.first)).toInt()
+            val minY = max(0.0, minOf(v0.second, v1.second, v2.second)).toInt()
+            val maxY = min(screenHeight - 1, maxOf(v0.second, v1.second, v2.second)).toInt()
+
+            for (py in minY..maxY) {
+                for (px in minX..maxX) {
+                    val w0 = ((v1.second - v2.second) * (px - v2.first) + (v2.first - v1.first) * (py - v2.second)) / ((v1.second - v2.second) * (v0.first - v2.first) + (v2.first - v1.first) * (v0.second - v2.second))
+                    val w1 = ((v2.second - v0.second) * (px - v2.first) + (v0.first - v2.first) * (py - v2.second)) / ((v1.second - v2.second) * (v0.first - v2.first) + (v2.first - v1.first) * (v0.second - v2.second))
+                    val w2 = 1.0 - w0 - w1
+
+                    if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
+                        val u = uv0.x * w0 + uv1.x * w1 + uv2.x * w2
+                        val v = uv0.y * w0 + uv1.y * w1 + uv2.y * w2
+
+                        val texX = (u * (texWidth - 1)).toInt().coerceIn(0, texWidth - 1)
+                        val texY = (v * (texHeight - 1)).toInt().coerceIn(0, texHeight - 1)
+
+                        pixelWriter.setColor(px, py, texReader.getColor(texX, texY))
+                    }
+                }
+            }
+        }
     }
 
     private fun drawTextOnFace(gc: GraphicsContext, text: String, polygonPoints: List<Pair<Double, Double>>) {

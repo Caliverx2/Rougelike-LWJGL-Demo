@@ -8,6 +8,7 @@ import javafx.scene.image.Image
 import javafx.scene.image.ImageView
 import javafx.scene.image.WritableImage
 import javafx.scene.input.KeyCode
+import javafx.scene.input.MouseEvent
 import javafx.scene.layout.StackPane
 import javafx.scene.image.PixelFormat
 import java.util.Collections
@@ -16,6 +17,8 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import javax.imageio.ImageIO
+import java.awt.Robot
+import javafx.scene.Cursor
 import kotlin.math.*
 
 class DrawingPanel : StackPane() {
@@ -63,6 +66,7 @@ class DrawingPanel : StackPane() {
 
     private var retroScanLineMode = false
     private val renderDownscaleFactor = 4
+    private val renderDistanceBlocks = 24.0 * cubeSize
     private val baseResolutionWidth = 1920
     private val baseResolutionHeight = 1080
     private val virtualWidth = baseResolutionWidth / renderDownscaleFactor
@@ -79,6 +83,15 @@ class DrawingPanel : StackPane() {
     lateinit var texBricks: Image
     lateinit var texCeiling: Image
     lateinit var texFloor: Image
+    private val dynamicTextures = ConcurrentHashMap<Int, Image>()
+
+    private var isMouseCaptured = false
+    private val mouseSensitivity = 0.003
+    private var accumulatedMouseDeltaX = 0.0
+    private var accumulatedMouseDeltaY = 0.0
+
+    private val robot: Robot by lazy { Robot() }
+    private var isRobotCentering = false
 
     val pressedKeys = Collections.synchronizedSet(mutableSetOf<KeyCode>())
 
@@ -92,7 +105,7 @@ class DrawingPanel : StackPane() {
     private val lightCheckInterval = (1_000_000_000.0 / 30.0).toLong() // 30 Hz
 
     init {
-        sceneProperty().addListener { _, LightSource_, newScene ->
+        sceneProperty().addListener { _, _, newScene ->
             if (newScene != null) {
                 newScene.windowProperty().addListener { _, _, newWindow ->
                     if (newWindow != null) {
@@ -119,6 +132,41 @@ class DrawingPanel : StackPane() {
         overlayCanvas.heightProperty().bind(this.heightProperty())
         overlayCanvas.graphicsContext2D.isImageSmoothing = false
 
+        setOnMouseClicked {
+            if (!isMouseCaptured) {
+                requestFocus()
+                scene.cursor = Cursor.NONE
+                isMouseCaptured = true
+            }
+        }
+
+        setOnMouseMoved { event: MouseEvent ->
+            if (isMouseCaptured) {
+                if (isRobotCentering) {
+                    isRobotCentering = false
+                    return@setOnMouseMoved
+                }
+
+                val window = scene.window
+                val centerX = window.x + window.width / 2
+                val centerY = window.y + window.height / 2
+
+                val deltaX = event.screenX - centerX
+                val deltaY = event.screenY - centerY
+
+                if (deltaX == 0.0 && deltaY == 0.0) {
+                    return@setOnMouseMoved
+                }
+
+                accumulatedMouseDeltaX += deltaX
+                accumulatedMouseDeltaY += deltaY
+
+                // Center the mouse
+                isRobotCentering = true
+                robot.mouseMove(centerX.toInt(), centerY.toInt())
+            }
+        }
+
         children.addAll(imageView, overlayCanvas)
 
         cameraPosition = Vector3d(-2.5 * cubeSize, (-3.97 * cubeSize) + playerHeight, 1.5 * cubeSize)
@@ -141,30 +189,116 @@ class DrawingPanel : StackPane() {
         texFloor = loadImage("textures/floor.jpg")
         texSkybox = loadImage("textures/skybox.png")
 
-        //
-        val cubeMesh = createCubeMesh(cubeSize, Color.GRAY)
-        val cubeMeshRed = createCubeMesh(cubeSize, Color.RED)
-        val cubeMeshGates = createCubeMesh(cubeSize, Color.rgb(40,255,40))
+        val modelRegistry = mapOf(
+            "cube" to createCubeMesh(cubeSize, Color.GRAY),
+            "cubeRed" to createCubeMesh(cubeSize, Color.RED),
+            "cubeGates" to createCubeMesh(cubeSize, Color.rgb(40, 255, 40)),
+            "skybox" to createCubeMesh(1000.0 * cubeSize, Color.rgb(80, 80, 80), inverted = true),
+            "pyramid" to createPyramidMesh(cubeSize, Color.RED),
+            "invertedPyramid" to createInvertedPyramidMesh(cubeSize, Color.DEEPSKYBLUE),
+            "tower" to createTowerMesh(cubeSize, Color.WHITE),
+            "kotlin" to createKotlinModelMesh(cubeSize, Color.GRAY),
+            "tank" to createTankMesh(cubeSize, Color.GREEN),
+            "offroadCar" to createOffroadCarMesh(cubeSize, Color.GRAY),
+            "stair" to createStairMesh(cubeSize, Color.WHITE),
+            "sphere" to createCapsuleMesh(cubeSize, Color.WHITE),
+            "map" to createMapMesh(cubeSize, Color.WHITE),
+            "colorPalette" to createColorPaletteMesh(cubeSize, Color.WHITE)
+        )
 
-        val skyboxMesh = createCubeMesh(1000.0 * cubeSize, Color.rgb(80,80,80), inverted = true)
-        val pyramidMesh = createPyramidMesh(cubeSize, Color.RED)
-        val invertedPyramidMesh = createInvertedPyramidMesh(cubeSize, Color.DEEPSKYBLUE)
-        val towerMesh = createTowerMesh(cubeSize, Color.WHITE)
-        val kotlinModel = createKotlinModelMesh(cubeSize, Color.GRAY)
-        val tank = createTankMesh(cubeSize, Color.GREEN)
-        val offroadCar = createOffroadCarMesh(cubeSize, Color.GRAY)
-        val stair = createStairMesh(cubeSize, Color.WHITE)
-        val sphere = createCapsuleMesh(cubeSize, Color.WHITE)
-        val mapMesh = createMapMesh(cubeSize, Color.WHITE)
-        val colorPalette = createColorPaletteMesh(cubeSize, Color.WHITE)
+        modelRegistry.values.forEach { mesh ->
+            mesh.customTextures.forEach { (id, hexData) ->
+                dynamicTextures.computeIfAbsent(id) { createTextureFromHexData(hexData) }
+            }
+        }
 
+        val pos0 = Vector3d(0.0, 0.0, 0.0)
+        meshes.add(PlacedMesh(modelRegistry["skybox"]!!, Matrix4x4.translation(pos0.x, pos0.y, pos0.z), texture = texSkybox, collision=false))
+
+        val pos1 = Vector3d(5.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(modelRegistry["pyramid"]!!, Matrix4x4.translation(pos1.x, pos1.y, pos1.z), faceTextures = placedTextures(modelRegistry["pyramid"]!!)))
+
+        val pos2 = Vector3d(7.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(modelRegistry["invertedPyramid"]!!, Matrix4x4.translation(pos2.x, pos2.y, pos2.z), faceTextures = placedTextures(modelRegistry["invertedPyramid"]!!)))
+
+        val pos3 = Vector3d(9.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(modelRegistry["tower"]!!, Matrix4x4.translation(pos3.x, pos3.y, pos3.z), texture = texBricks))
+
+        val pos4 = Vector3d(11.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(modelRegistry["kotlin"]!!, Matrix4x4.translation(pos4.x, pos4.y, pos4.z), texture = texFloor))
+
+        val pos5 = Vector3d(13.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(modelRegistry["tank"]!!, Matrix4x4.translation(pos5.x, pos5.y, pos5.z), faceTextures = placedTextures(modelRegistry["tank"]!!)))
+
+        val pos6 = Vector3d(15.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(modelRegistry["offroadCar"]!!, Matrix4x4.translation(pos6.x, pos6.y, pos6.z), texture = texBlackBricks))
+
+        val pos7 = Vector3d(17.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(modelRegistry["stair"]!!, Matrix4x4.translation(pos7.x, pos7.y, pos7.z), texture = texCeiling, faceTextures = placedTextures(modelRegistry["stair"]!!)))
+
+        val pos8 = Vector3d(19.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(modelRegistry["sphere"]!!, Matrix4x4.translation(pos8.x, pos8.y, pos8.z), texture = texCeiling))
+
+        val pos9 = Vector3d(31.0 * cubeSize, -4.0 * cubeSize, 0 * cubeSize)
+        meshes.add(PlacedMesh(modelRegistry["map"]!!, Matrix4x4.translation(pos9.x, pos9.y, pos9.z), faceTextures = placedTextures(modelRegistry["map"]!!)))
+
+        val pos10 = Vector3d(50.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(modelRegistry["colorPalette"]!!, Matrix4x4.translation(pos10.x, pos10.y, pos10.z), faceTextures = placedTextures(modelRegistry["colorPalette"]!!)))
+
+        for (x in 0 until gridDimension) {
+            for (y in 0 until gridDimension) {
+                for (z in 0 until gridDimension) {
+                    val offset = (gridDimension) / 2.0
+                    val pos = Vector3d(
+                        (x - offset) * cubeSize,
+                        (y - offset) * cubeSize,
+                        (z - offset) * cubeSize
+                    )
+                    val mat = Matrix4x4.translation(pos.x, pos.y, pos.z)
+                    when (GRID_MAP[x][y][z]) {
+                        1 -> meshes.add(PlacedMesh(modelRegistry["cube"]!!, mat, texBlackBricks, collisionPos = pos))
+                        2 -> meshes.add(PlacedMesh(modelRegistry["cubeRed"]!!, mat, texBlackBricks, collisionPos = pos))
+                        3 -> {meshes.add(PlacedMesh(modelRegistry["cubeGates"]!!, mat, texBricks, collision=false, collisionPos = pos))
+                            println("${pos.x} ${pos.y} ${pos.z}")}
+                    }
+                }
+            }
+        }
+
+        meshes.forEach { mesh ->
+            val aabb = AABB.fromCube(mesh.getTransformedVertices())
+            meshAABBs[mesh] = aabb
+            if (mesh.collision) {
+                collisionGrid.add(mesh, aabb)
+            }
+        }
+
+        bvh.build(meshes)
+
+        object : AnimationTimer() {
+            override fun handle(now: Long) {
+                val deltaTime = (now - lastUpdateTime) / 1_000_000_000.0
+                lastUpdateTime = now
+
+                if (now - lastLightCheckTime > lightCheckInterval) {
+                    lastLightCheckTime = now
+                    updateDynamicLights()
+                }
+
+                updateCameraPosition(deltaTime)
+                updateGameLogic(deltaTime)
+                requestRender()
+            }
+        }.start()
+    }
+
+    private fun placedTextures(mesh: Mesh): Map<Int, Image> {
         val loadedTextures = mapOf(
             "blackBricks" to texBlackBricks,
             "bricks" to texBricks,
             "ceiling" to texCeiling,
             "floor" to texFloor,
             "skybox" to texSkybox,
-
             "red" to createColorTexture(Color.RED),
             "darkRed" to createColorTexture(Color.DARKRED),
             "blue" to createColorTexture(Color.BLUE),
@@ -202,95 +336,11 @@ class DrawingPanel : StackPane() {
             "turquoise" to createColorTexture(Color.TURQUOISE),
             "orchid" to createColorTexture(Color.ORCHID)
         )
-
-        fun placedTextures(mesh: Mesh): Map<Int, Image> {
-            return mesh.faceTextureNames.mapValues { (faceIndex, textureName) ->
-                loadedTextures[textureName] ?: run {
-                    println("missing texture $textureName for face $faceIndex")
-                    texSkybox
-                }
-            }
+        return mesh.faceTextureNames.mapValues { (_, textureName) ->
+            loadedTextures[textureName]
+                ?: dynamicTextures[textureName.substringAfter("custom_").toIntOrNull()]
+                ?: texSkybox
         }
-
-        val pos0 = Vector3d(0.0, 0.0, 0.0)
-        meshes.add(PlacedMesh(skyboxMesh, Matrix4x4.translation(pos0.x, pos0.y, pos0.z), texture = texSkybox, collision=false))
-
-        val pos1 = Vector3d(5.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(pyramidMesh, Matrix4x4.translation(pos1.x, pos1.y, pos1.z), faceTextures = placedTextures(pyramidMesh)))
-
-        val pos2 = Vector3d(7.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(invertedPyramidMesh, Matrix4x4.translation(pos2.x, pos2.y, pos2.z), faceTextures = placedTextures(invertedPyramidMesh)))
-
-        val pos3 = Vector3d(9.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(towerMesh,Matrix4x4.translation(pos3.x, pos3.y, pos3.z), texture = texBricks))
-
-        val pos4 = Vector3d(11.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(kotlinModel,Matrix4x4.translation(pos4.x, pos4.y, pos4.z), texture = texFloor))
-
-        val pos5 = Vector3d(13.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(tank,Matrix4x4.translation(pos5.x, pos5.y, pos5.z), faceTextures = placedTextures(tank)))
-
-        val pos6 = Vector3d(15.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(offroadCar,Matrix4x4.translation(pos6.x, pos6.y, pos6.z), texture = texBlackBricks))
-
-        val pos7 = Vector3d(17.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(stair,Matrix4x4.translation(pos7.x, pos7.y, pos7.z), texture = texCeiling, faceTextures = placedTextures(stair)))
-
-        val pos8 = Vector3d(19.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(sphere,Matrix4x4.translation(pos8.x, pos8.y, pos8.z), texture = texCeiling))
-
-        val pos9 = Vector3d(31.0 * cubeSize, -4.0 * cubeSize, 0 * cubeSize)
-        meshes.add(PlacedMesh(mapMesh,Matrix4x4.translation(pos9.x, pos9.y, pos9.z), faceTextures = placedTextures(mapMesh)))
-
-        val pos10 = Vector3d(50.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(colorPalette,Matrix4x4.translation(pos10.x, pos10.y, pos10.z), faceTextures = placedTextures(colorPalette)))
-        //
-
-        for (x in 0 until gridDimension) {
-            for (y in 0 until gridDimension) {
-                for (z in 0 until gridDimension) {
-                    val offset = (gridDimension) / 2.0
-                    val pos = Vector3d(
-                        (x - offset) * cubeSize,
-                        (y - offset) * cubeSize,
-                        (z - offset) * cubeSize
-                    )
-                    val mat = Matrix4x4.translation(pos.x, pos.y, pos.z)
-                    when (GRID_MAP[x][y][z]) {
-                        1 -> meshes.add(PlacedMesh(cubeMesh, mat, texBlackBricks, collisionPos = pos))
-                        2 -> meshes.add(PlacedMesh(cubeMeshRed, mat, texBlackBricks, collisionPos = pos))
-                        3 -> {meshes.add(PlacedMesh(cubeMeshGates, mat, texBricks, collision=false, collisionPos = pos))
-                            println("${pos.x} ${pos.y} ${pos.z}")}
-                    }
-                }
-            }
-        }
-
-        meshes.forEach { mesh ->
-            val aabb = AABB.fromCube(mesh.getTransformedVertices())
-            meshAABBs[mesh] = aabb
-            if (mesh.collision) {
-                collisionGrid.add(mesh, aabb)
-            }
-        }
-
-        bvh.build(meshes)
-
-        object : AnimationTimer() {
-            override fun handle(now: Long) {
-                val deltaTime = (now - lastUpdateTime) / 1_000_000_000.0
-                lastUpdateTime = now
-
-                if (now - lastLightCheckTime > lightCheckInterval) {
-                    lastLightCheckTime = now
-                    updateDynamicLights()
-                }
-
-                updateCameraPosition(deltaTime)
-                updateGameLogic(deltaTime)
-                requestRender()
-            }
-        }.start()
     }
 
     fun handleKeyRelease(code: KeyCode) {
@@ -305,6 +355,10 @@ class DrawingPanel : StackPane() {
         if (code == KeyCode.L) {
             retroScanLineMode = !retroScanLineMode
             println("CRT Monitor Mode: $retroScanLineMode")
+        }
+        if (code == KeyCode.ESCAPE) {
+            isMouseCaptured = false
+            scene.cursor = Cursor.DEFAULT
         }
     }
 
@@ -398,6 +452,16 @@ class DrawingPanel : StackPane() {
             }
 
             cameraPosition = resolvedPosition
+        }
+
+        if (isMouseCaptured) {
+            val rotationSpeed = 1.0
+            cameraYaw -= accumulatedMouseDeltaX * mouseSensitivity * rotationSpeed * deltaTime * 60
+            cameraPitch -= accumulatedMouseDeltaY * mouseSensitivity * rotationSpeed * deltaTime * 60
+            cameraPitch = cameraPitch.coerceIn(-1.5, 1.5)
+
+            accumulatedMouseDeltaX = 0.0
+            accumulatedMouseDeltaY = 0.0
         }
 
         val currentRotationSpeed = 4.0
@@ -963,7 +1027,7 @@ class DrawingPanel : StackPane() {
         val lookDirection = Vector3d(cos(cameraPitch) * sin(cameraYaw), sin(cameraPitch), cos(cameraPitch) * cos(cameraYaw)).normalize()
         val upVector = Vector3d(0.0, 1.0, 0.0)
         val viewMatrix = Matrix4x4.lookAt(cameraPosition, cameraPosition + lookDirection, upVector)
-        val projectionMatrix = Matrix4x4.perspective(dynamicFov, virtualWidth.toDouble() / virtualHeight.toDouble(), 0.1, 48.0 * cubeSize)
+        val projectionMatrix = Matrix4x4.perspective(dynamicFov, virtualWidth.toDouble() / virtualHeight.toDouble(), 0.1, renderDistanceBlocks)
         val combinedMatrix = projectionMatrix * viewMatrix
 
         val allMeshesToRender = meshes + lightGizmoMeshes
@@ -1032,7 +1096,17 @@ class DrawingPanel : StackPane() {
                                         originalClipW.add(w)
                                     }
                                     if (projectedVertices.size == 3) {
-                                        val faceTexture = mesh.faceTextures[faceIndex] ?: mesh.texture
+                                        val textureName = mesh.mesh.faceTextureNames[faceIndex]
+                                        val faceTexture = if (textureName != null && textureName.startsWith("custom_")) {
+                                            val textureId = textureName.substringAfter("custom_").toIntOrNull()
+                                            if (textureId != null) {
+                                                dynamicTextures[textureId]
+                                            } else {
+                                                mesh.faceTextures[faceIndex] ?: mesh.texture
+                                            }
+                                        } else {
+                                            mesh.faceTextures[faceIndex] ?: mesh.texture
+                                        }
                                         renderQueue.add(RenderableFace(projectedVertices, originalClipW, clippedUVs, mesh.mesh.color, false, faceTexture, clippedW, lightGrid, worldBlushes, blushContainerAABB))
                                     }
                                 }
@@ -1305,5 +1379,18 @@ class DrawingPanel : StackPane() {
         val stream = DrawingPanel::class.java.classLoader.getResourceAsStream(path)
         val bufferedImage = ImageIO.read(stream)
         return SwingFXUtils.toFXImage(bufferedImage, null)
+    }
+
+    private fun createTextureFromHexData(hexData: List<Int>): WritableImage {
+        val width = 16
+        val height = 16
+        if (hexData.size != width * height) {
+            println("Warning: Custom texture data has incorrect size. Expected ${width * height}, got ${hexData.size}")
+            return createColorTexture(Color.MAGENTA)
+        }
+        val image = WritableImage(width, height)
+        val pixelWriter = image.pixelWriter
+        pixelWriter.setPixels(0, 0, width, height, PixelFormat.getIntArgbInstance(), hexData.toIntArray(), 0, width)
+        return image
     }
 }

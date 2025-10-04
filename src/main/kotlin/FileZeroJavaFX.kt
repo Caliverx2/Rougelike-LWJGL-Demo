@@ -180,7 +180,8 @@ data class Mesh(
     val faceUVs: List<List<Vector3d>>,
     val color: Color,
     val faceTextureNames: Map<Int, String> = emptyMap(),
-    val blushes: List<AABB> = emptyList()
+    val blushes: List<AABB> = emptyList(),
+    val customTextures: Map<Int, List<Int>> = emptyMap()
 )
 
 class PlacedMesh(
