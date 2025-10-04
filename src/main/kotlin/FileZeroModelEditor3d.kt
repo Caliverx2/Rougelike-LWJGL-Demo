@@ -755,6 +755,11 @@ class ModelEditor : Application() {
         groupGizmoPosition = newVertexIndices.map { vertices[it] }.fold(Vector3d(0.0,0.0,0.0)) { acc, v -> acc.add(v) }.scale(1.0/count)
     }
 
+    private fun Double.roundTo(decimals: Int): Double {
+        val factor = 10.0.pow(decimals)
+        return (this * factor).roundToInt() / factor
+    }
+
     private fun deleteSelectedVertex() {
         selectedVertex?.let { index ->
             edges.removeIf { it.a == index || it.b == index }
@@ -1022,12 +1027,12 @@ class ModelEditor : Application() {
         for (j in 1 until rings) {
             val phi = PI / 2.0 * (1.0 - j.toDouble() / rings)
             val y = height / 2 + radius * sin(phi) + yOffset
-            val ringRadius = radius * cos(phi)
+            val ringRadius = radius * cos(phi) 
             for (i in 0 until segments) {
                 val theta = 2.0 * PI * i / segments
-                val x = ringRadius * cos(theta)
-                val z = ringRadius * sin(theta)
-                newVertices.add(Vector3d(x, y, z))
+                val x = (ringRadius * cos(theta)).roundTo(3)
+                val z = (ringRadius * sin(theta)).roundTo(3)
+                newVertices.add(Vector3d(x, y.roundTo(3), z))
             }
         }
 
@@ -1035,26 +1040,30 @@ class ModelEditor : Application() {
         val topCylinderRingStartIndex = newVertices.size
         for (i in 0 until segments) {
             val angle = 2.0 * PI * i / segments
-            newVertices.add(Vector3d(radius * cos(angle), height / 2 + yOffset, radius * sin(angle)))
+            val x = (radius * cos(angle)).roundTo(3)
+            val z = (radius * sin(angle)).roundTo(3)
+            newVertices.add(Vector3d(x, (height / 2 + yOffset).roundTo(3), z))
         }
 
         // Pierścień na styku z cylindrem (dolny)
         val bottomCylinderRingStartIndex = newVertices.size
         for (i in 0 until segments) {
             val angle = 2.0 * PI * i / segments
-            newVertices.add(Vector3d(radius * cos(angle), -height / 2 + yOffset, radius * sin(angle)))
+            val x = (radius * cos(angle)).roundTo(3)
+            val z = (radius * sin(angle)).roundTo(3)
+            newVertices.add(Vector3d(x, (-height / 2 + yOffset).roundTo(3), z))
         }
 
         // Pierścienie dolnej półsfery (dolne)
         for (j in 1 until rings) {
             val phi = -PI / 2.0 * (j.toDouble() / rings)
             val y = -height / 2 + radius * sin(phi) + yOffset
-            val ringRadius = radius * cos(phi)
+            val ringRadius = radius * cos(phi) 
             for (i in 0 until segments) {
                 val theta = 2.0 * PI * i / segments
                 val x = ringRadius * cos(theta)
-                val z = ringRadius * sin(theta)
-                newVertices.add(Vector3d(x, y, z))
+                val z = ringRadius * sin(theta) 
+                newVertices.add(Vector3d(x.roundTo(3), y.roundTo(3), z.roundTo(3)))
             }
         }
 
