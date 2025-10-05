@@ -84,7 +84,7 @@ class ModelEditor : Application() {
     private val selectedForFace = mutableListOf<Int>()
     private var selectedBlushIndex: Int? = null
     private var selectedBlushCorner: BlushCornerType? = null
-    private var selectedFaceIndex: Int? = null
+    private var selectedFaceIndices = mutableSetOf<Int>()
 
     private var dragStartVertex: Int? = null
 
@@ -189,27 +189,32 @@ class ModelEditor : Application() {
             }
 
             if (e.button == MouseButton.PRIMARY) {
-                selectedVertex = null
-                groupSelectedVertices.clear()
-                groupGizmoPosition = null
-                selectedBlushIndex = null
-                selectedBlushCorner = null
-                dragStartVertex = null
-                selectedFaceIndex = null
+                if (!e.isControlDown) {
+                    selectedVertex = null
+                    groupSelectedVertices.clear()
+                    groupGizmoPosition = null
+                    selectedBlushIndex = null
+                    selectedBlushCorner = null
+                    dragStartVertex = null
+                    selectedFaceIndices.clear()
+                }
 
                 if (clickedVertex != null) {
-                    selectedVertex = clickedVertex
-                    dragStartVertex = clickedVertex
+                    if (!e.isControlDown) {
+                        selectedVertex = clickedVertex
+                        dragStartVertex = clickedVertex
+                    }
                 } else {
                     val closestFaceResult = findFaceUnderCursor(e.x, e.y, w, h)
                     val closestEdgeResult = findClosestEdge(e.x, e.y, w, h)
 
                     val faceDepth = closestFaceResult?.second ?: Double.MAX_VALUE
                     val edgeDepth = closestEdgeResult?.second ?: Double.MAX_VALUE
+                    val clickedFaceIndex = closestFaceResult?.first
 
-                    if (faceDepth < edgeDepth && faceDepth != Double.MAX_VALUE) {
-                        selectedFaceIndex = closestFaceResult!!.first
-                        val face = faces[selectedFaceIndex!!]
+                    if (clickedFaceIndex != null && faceDepth < edgeDepth) {
+                        selectedFaceIndices.add(clickedFaceIndex)
+                        val face = faces[clickedFaceIndex]
                         groupSelectedVertices.addAll(face.indices)
                     } else if (edgeDepth != Double.MAX_VALUE) {
                         val edge = edges[closestEdgeResult!!.first]
@@ -217,11 +222,13 @@ class ModelEditor : Application() {
                         groupSelectedVertices.add(edge.b)
                     }
 
-                    if (groupSelectedVertices.isNotEmpty()) {
-                        var sumX = 0.0; var sumY = 0.0; var sumZ = 0.0
-                        groupSelectedVertices.forEach { val v = vertices[it]; sumX += v.x; sumY += v.y; sumZ += v.z }
-                        val count = groupSelectedVertices.size
-                        groupGizmoPosition = Vector3d(sumX / count, sumY / count, sumZ / count)
+                    if (groupSelectedVertices.isNotEmpty() && !e.isControlDown) {
+                        if (groupSelectedVertices.isNotEmpty()) {
+                            var sumX = 0.0; var sumY = 0.0; var sumZ = 0.0
+                            groupSelectedVertices.forEach { val v = vertices[it]; sumX += v.x; sumY += v.y; sumZ += v.z }
+                            val count = groupSelectedVertices.size
+                            groupGizmoPosition = Vector3d(sumX / count, sumY / count, sumZ / count)
+                        }
                     } else {
                         isBoxSelecting = true
                         boxSelectStartX = e.x
@@ -340,12 +347,12 @@ class ModelEditor : Application() {
                 val dragDistance = hypot(e.x - boxSelectStartX, e.y - boxSelectStartY)
                 val clickThreshold = 5.0
 
-                if (dragDistance < clickThreshold) {
+                if (dragDistance < clickThreshold && !e.isControlDown) {
                     vertices.add(Vector3d(0.0, 0.0, 0.0))
                     selectedVertex = vertices.size - 1
                     groupSelectedVertices.clear()
                     groupGizmoPosition = null
-                    selectedFaceIndex = null
+                    selectedFaceIndices.clear()
                 } else {
                     val x1 = min(boxSelectStartX, boxSelectCurrentX)
                     val y1 = min(boxSelectStartY, boxSelectCurrentY)
@@ -435,22 +442,24 @@ class ModelEditor : Application() {
                         blushes.removeAt(selectedBlushIndex!!)
                         selectedBlushIndex = null
                         selectedBlushCorner = null
-                    } else if (selectedFaceIndex != null) {
-                        val removedIndex = selectedFaceIndex
-                        faces.removeAt(removedIndex!!)
+                    } else if (selectedFaceIndices.isNotEmpty()) {
+                        val indicesToRemove = selectedFaceIndices.sortedDescending()
+                        indicesToRemove.forEach { removedIndex ->
+                            faces.removeAt(removedIndex)
 
-                        val newFaceTextures = mutableMapOf<Int, String>()
-                        faceTextureNames.forEach { (index, name) ->
-                            if (index > removedIndex) {
-                                newFaceTextures[index - 1] = name
-                            } else if (index < removedIndex) {
-                                newFaceTextures[index] = name
+                            val newFaceTextures = mutableMapOf<Int, String>()
+                            faceTextureNames.forEach { (index, name) ->
+                                if (index > removedIndex) {
+                                    newFaceTextures[index - 1] = name
+                                } else if (index < removedIndex) {
+                                    newFaceTextures[index] = name
+                                }
                             }
+                            faceTextureNames.clear()
+                            faceTextureNames.putAll(newFaceTextures)
                         }
-                        faceTextureNames.clear()
-                        faceTextureNames.putAll(newFaceTextures)
 
-                        selectedFaceIndex = null
+                        selectedFaceIndices.clear()
                         groupSelectedVertices.clear()
                         groupGizmoPosition = null
 
@@ -573,13 +582,13 @@ class ModelEditor : Application() {
                     if (e.isControlDown) {
                         exportMeshFunction()
                     } else {
-                        if (selectedFaceIndex != null) {
+                        if (selectedFaceIndices.isNotEmpty()) {
                             extrudeSelectedFace(10.0)
                         }
                     }
                 }
                 KeyCode.H -> {
-                    if (selectedFaceIndex != null) {
+                    if (selectedFaceIndices.isNotEmpty()) {
                         showTextureEditor(gc)
                     }
                 }
@@ -614,8 +623,54 @@ class ModelEditor : Application() {
         draw(gc, canvas.width, canvas.height, 0.0, 0.0)
     }
 
+    private fun showTextureLibrary(pixelRects: Array<Array<javafx.scene.shape.Rectangle>>, owner: Stage) {
+        val libraryStage = Stage()
+        libraryStage.initModality(Modality.APPLICATION_MODAL)
+        libraryStage.initOwner(owner)
+        libraryStage.title = "Biblioteka Tekstur"
+
+        val flowPane = javafx.scene.layout.FlowPane()
+        flowPane.padding = Insets(10.0)
+        flowPane.hgap = 5.0
+        flowPane.vgap = 5.0
+
+        val usedCustomTextureIds = faceTextureNames.values
+            .filter { it.startsWith("custom_") }
+            .mapNotNull { it.substringAfter("custom_").toIntOrNull() }
+            .toSet()
+
+        if (usedCustomTextureIds.isEmpty()) {
+            flowPane.children.add(Label("Brak niestandardowych tekstur w modelu."))
+        } else {
+            usedCustomTextureIds.forEach { textureId ->
+                customTextures.getOrNull(textureId)?.let { textureData ->
+                    val textureImage = createTextureFromHexData(textureData)
+                    val imageView = javafx.scene.image.ImageView(textureImage)
+                    imageView.fitWidth = 64.0
+                    imageView.fitHeight = 64.0
+                    imageView.isPreserveRatio = true
+
+                    val container = StackPane(imageView)
+                    container.style = "-fx-border-color: gray; -fx-border-width: 1;"
+                    container.setOnMouseClicked {
+                        for (y in 0 until 16) {
+                            for (x in 0 until 16) {
+                                val hexColor = textureData[y * 16 + x]
+                                pixelRects[y][x].fill = Color.rgb((hexColor shr 16) and 0xFF, (hexColor shr 8) and 0xFF, hexColor and 0xFF)
+                            }
+                        }
+                        libraryStage.close()
+                    }
+                    flowPane.children.add(container)
+                }
+            }
+        }
+        libraryStage.scene = Scene(ScrollPane(flowPane), 400.0, 300.0)
+        libraryStage.show()
+    }
+
     private fun showTextureEditor(mainGc: GraphicsContext) {
-        val faceIndex = selectedFaceIndex ?: return
+        val faceIndex = selectedFaceIndices.firstOrNull() ?: return
 
         val editorStage = Stage()
         editorStage.initModality(Modality.APPLICATION_MODAL)
@@ -673,8 +728,10 @@ class ModelEditor : Application() {
             }
             val newTextureId = customTextures.size
             customTextures.add(newTextureData)
-            faceTextureNames[faceIndex] = "custom_$newTextureId"
-            textureImageCache.remove(newTextureId)
+            selectedFaceIndices.forEach {
+                faceTextureNames[it] = "custom_$newTextureId"
+                textureImageCache.remove(newTextureId)
+            }
             editorStage.close()
             draw(mainGc, mainGc.canvas.width, mainGc.canvas.height, 0.0, 0.0)
         }
@@ -703,56 +760,68 @@ class ModelEditor : Application() {
             }
         }
 
-        val rightPane = VBox(10.0, colorPicker, saveButton, importButton)
+        val libraryButton = Button("Biblioteka")
+        libraryButton.setOnAction {
+            showTextureLibrary(pixelRects, editorStage)
+        }
+
+        val rightPane = VBox(10.0, colorPicker, saveButton, importButton, Separator(), libraryButton)
         rightPane.padding = Insets(10.0)
 
         val root = javafx.scene.layout.HBox(gridPane, rightPane)
+        root.style = "-fx-background-color: #333;"
         editorStage.scene = Scene(root)
         editorStage.showAndWait()
     }
 
     private fun extrudeSelectedFace(distance: Double) {
-        val faceIndex = selectedFaceIndex ?: return
-        val faceToExtrude = faces.getOrNull(faceIndex) ?: return
-        if (faceToExtrude.indices.size < 3) return
+        if (selectedFaceIndices.size != 1) return
+        val faceIndex = selectedFaceIndices.first()
 
-        val v0 = vertices[faceToExtrude.indices[0]]
-        val v1 = vertices[faceToExtrude.indices[1]]
-        val v2 = vertices[faceToExtrude.indices[2]]
-        val normal = (v1.subtract(v0)).cross(v2.subtract(v0)).normalize()
-        val extrudeVector = normal.scale(distance)
+        faces.getOrNull(faceIndex)?.let { faceToExtrude ->
+            if (faceToExtrude.indices.size < 3) return
 
-        val oldToNewVertexMap = mutableMapOf<Int, Int>()
-        val newVertexIndices = faceToExtrude.indices.map { oldIndex ->
-            val oldVertex = vertices[oldIndex]
-            val newVertex = oldVertex.add(extrudeVector)
-            val newIndex = vertices.size
-            vertices.add(newVertex)
-            oldToNewVertexMap[oldIndex] = newIndex
-            edges.add(Edge(oldIndex, newIndex))
+            val v0 = vertices[faceToExtrude.indices[0]]
+            val v1 = vertices[faceToExtrude.indices[1]]
+            val v2 = vertices[faceToExtrude.indices[2]]
+            val normal = (v1.subtract(v0)).cross(v2.subtract(v0)).normalize()
+            val extrudeVector = normal.scale(distance)
 
-            newIndex
+            val oldToNewVertexMap = mutableMapOf<Int, Int>()
+            val newVertexIndices = faceToExtrude.indices.map { oldIndex ->
+                val oldVertex = vertices[oldIndex]
+                val newVertex = oldVertex.add(extrudeVector)
+                val newIndex = vertices.size
+                vertices.add(newVertex)
+                oldToNewVertexMap[oldIndex] = newIndex
+                edges.add(Edge(oldIndex, newIndex))
+
+                newIndex
+            }
+
+            for (i in faceToExtrude.indices.indices) {
+                val p1Old = faceToExtrude.indices[i]
+                val p2Old = faceToExtrude.indices[(i + 1) % faceToExtrude.indices.size]
+                val p1New = oldToNewVertexMap[p1Old]!!
+                val p2New = oldToNewVertexMap[p2Old]!!
+                faces.add(Face(listOf(p1Old, p2Old, p2New, p1New)))
+            }
+
+            for (i in newVertexIndices.indices) {
+                edges.add(Edge(newVertexIndices[i], newVertexIndices[(i + 1) % newVertexIndices.size]))
+            }
+
+            faces[faceIndex] = Face(newVertexIndices)
         }
 
-        for (i in faceToExtrude.indices.indices) {
-            val p1Old = faceToExtrude.indices[i]
-            val p2Old = faceToExtrude.indices[(i + 1) % faceToExtrude.indices.size]
-            val p1New = oldToNewVertexMap[p1Old]!!
-            val p2New = oldToNewVertexMap[p2Old]!!
-            faces.add(Face(listOf(p1Old, p2Old, p2New, p1New)))
-        }
-
-        for (i in newVertexIndices.indices) {
-            edges.add(Edge(newVertexIndices[i], newVertexIndices[(i + 1) % newVertexIndices.size]))
-        }
-
-        faces[faceIndex] = Face(newVertexIndices)
-
+        val newVertexIndices = faces[faceIndex].indices
         selectedVertex = null
         groupSelectedVertices.clear()
         groupSelectedVertices.addAll(newVertexIndices)
         val count = groupSelectedVertices.size
         groupGizmoPosition = newVertexIndices.map { vertices[it] }.fold(Vector3d(0.0,0.0,0.0)) { acc, v -> acc.add(v) }.scale(1.0/count)
+        selectedFaceIndices.clear()
+        selectedFaceIndices.add(faceIndex)
     }
 
     private fun Double.roundTo(decimals: Int): Double {
@@ -1028,7 +1097,7 @@ class ModelEditor : Application() {
         for (j in 1 until rings) {
             val phi = PI / 2.0 * (1.0 - j.toDouble() / rings)
             val y = height / 2 + radius * sin(phi) + yOffset
-            val ringRadius = radius * cos(phi) 
+            val ringRadius = radius * cos(phi)
             for (i in 0 until segments) {
                 val theta = 2.0 * PI * i / segments
                 val x = (ringRadius * cos(theta)).roundTo(3)
@@ -1059,11 +1128,11 @@ class ModelEditor : Application() {
         for (j in 1 until rings) {
             val phi = -PI / 2.0 * (j.toDouble() / rings)
             val y = -height / 2 + radius * sin(phi) + yOffset
-            val ringRadius = radius * cos(phi) 
+            val ringRadius = radius * cos(phi)
             for (i in 0 until segments) {
                 val theta = 2.0 * PI * i / segments
                 val x = ringRadius * cos(theta)
-                val z = ringRadius * sin(theta) 
+                val z = ringRadius * sin(theta)
                 newVertices.add(Vector3d(x.roundTo(3), y.roundTo(3), z.roundTo(3)))
             }
         }
@@ -1231,8 +1300,10 @@ class ModelEditor : Application() {
             nameLabel.textFill = Color.WHITE
             val assignButton = Button("Assign")
             assignButton.setOnAction {
-                if (this.selectedFaceIndex != null) {
-                    faceTextureNames[this.selectedFaceIndex!!] = name
+                if (this.selectedFaceIndices.isNotEmpty()) {
+                    this.selectedFaceIndices.forEach { faceIndex ->
+                        faceTextureNames[faceIndex] = name
+                    }
                     draw(gc, gc.canvas.width, gc.canvas.height, 0.0, 0.0)
                 } else {
                     val alert = Alert(Alert.AlertType.WARNING, "No face selected to assign texture to.")
@@ -1552,7 +1623,7 @@ class ModelEditor : Application() {
         }
 
         val indicesToCopy: Set<Int> = when {
-            selectedFaceIndex != null && groupSelectedVertices.isNotEmpty() -> groupSelectedVertices
+            selectedFaceIndices.isNotEmpty() && groupSelectedVertices.isNotEmpty() -> groupSelectedVertices
             groupSelectedVertices.isNotEmpty() -> groupSelectedVertices
             selectedVertex != null -> setOf(selectedVertex!!)
             else -> emptySet()
@@ -1600,9 +1671,9 @@ class ModelEditor : Application() {
             selectedBlushIndex = blushes.lastIndex
             selectedBlushCorner = null
             selectedVertex = null
-            groupSelectedVertices.clear()
+            groupSelectedVertices.clear(); 
+            selectedFaceIndices.clear()
             groupGizmoPosition = null
-            selectedFaceIndex = null
 
             println("Wklejono blush. Nowa ilość: ${blushes.size}")
             return
@@ -1636,7 +1707,7 @@ class ModelEditor : Application() {
 
     private fun updateSelectionForPastedPart(baseIndex: Int) {
         selectedVertex = null; groupSelectedVertices.clear(); groupGizmoPosition = null
-        selectedFaceIndex = null; selectedBlushIndex = null; selectedBlushCorner = null
+        selectedFaceIndices.clear(); selectedBlushIndex = null; selectedBlushCorner = null
         blushMode = false
 
         val newIndices = (baseIndex until vertices.size).toList()
@@ -1673,23 +1744,26 @@ class ModelEditor : Application() {
         }
         lastSubdivideTime = currentTime
 
-        val facesToSubdivideIndices = if (selectedFaceIndex != null) {
-            val initialSet = mutableSetOf(selectedFaceIndex!!)
+        val facesToSubdivideIndices = if (selectedFaceIndices.isNotEmpty()) {
+            val allFacesToSubdivide = selectedFaceIndices.toMutableSet()
+            val oppositeFacesToAdd = mutableSetOf<Int>()
 
-            val selectedFace = faces.getOrNull(selectedFaceIndex!!)
-            if (selectedFace != null) {
-                val selectedIndicesSet = selectedFace.indices.toSet()
-
-                faces.withIndex()
-                    .find { (index, face) ->
-                        index != selectedFaceIndex!! &&
-                                face.indices.size == selectedFace.indices.size &&
-                                face.indices.toSet() == selectedIndicesSet
-                    }?.let { (oppositeIndex, _) ->
-                        initialSet.add(oppositeIndex)
-                    }
+            for (selectedFaceIndex in selectedFaceIndices) {
+                faces.getOrNull(selectedFaceIndex)?.let { selectedFace ->
+                    val selectedIndicesSet = selectedFace.indices.toSet()
+                    faces.withIndex()
+                        .find { (index, face) ->
+                            index != selectedFaceIndex &&
+                                    !allFacesToSubdivide.contains(index) &&
+                                    face.indices.size == selectedFace.indices.size &&
+                                    face.indices.toSet() == selectedIndicesSet
+                        }?.let { (oppositeIndex, _) ->
+                            oppositeFacesToAdd.add(oppositeIndex)
+                        }
+                }
             }
-            initialSet
+            allFacesToSubdivide.addAll(oppositeFacesToAdd)
+            allFacesToSubdivide
         } else if (groupSelectedVertices.isNotEmpty()) {
             faces.withIndex()
                 .filter { (_, face) -> face.indices.all { it in groupSelectedVertices } }
@@ -1781,7 +1855,7 @@ class ModelEditor : Application() {
 
         rebuildEdgesFromFaces()
 
-        selectedVertex = null; selectedFaceIndex = null; groupSelectedVertices.clear(); groupGizmoPosition = null
+        selectedVertex = null; selectedFaceIndices.clear(); groupSelectedVertices.clear(); groupGizmoPosition = null
         selectedBlushIndex = null; selectedBlushCorner = null; selectedForFace.clear()
 
         println("Subdivided ${facesToSubdivideIndices.size} faces. New total: ${vertices.size}V, ${edges.size}E, ${faces.size}F")
@@ -1833,6 +1907,15 @@ class ModelEditor : Application() {
                 gc.globalAlpha = if (blushMode) 0.2 else 0.8
                 gc.fill = faceColor
 
+                gc.beginPath()
+                gc.moveTo(projectedPoints[0].first, projectedPoints[0].second)
+                for (i in 1 until projectedPoints.size) gc.lineTo(projectedPoints[i].first, projectedPoints[i].second)
+                gc.closePath(); gc.fill()
+            }
+
+            if (selectedFaceIndices.contains(originalFaceIndex)) {
+                gc.globalAlpha = 0.2
+                gc.fill = Color.YELLOW
                 gc.beginPath()
                 gc.moveTo(projectedPoints[0].first, projectedPoints[0].second)
                 for (i in 1 until projectedPoints.size) gc.lineTo(projectedPoints[i].first, projectedPoints[i].second)
@@ -1969,7 +2052,7 @@ class ModelEditor : Application() {
             val maxX = min(screenWidth - 1, triMaxX).toInt()
             val minY = max(0.0, triMinY).toInt()
             val maxY = min(screenHeight - 1, triMaxY).toInt()
-            
+
             val area = (p1.second - p2.second) * (p0.first - p2.first) + (p2.first - p1.first) * (p0.second - p2.second)
             if (area == 0.0) continue
 
