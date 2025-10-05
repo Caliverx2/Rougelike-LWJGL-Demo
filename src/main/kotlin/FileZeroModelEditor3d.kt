@@ -830,14 +830,15 @@ class ModelEditor : Application() {
         var closestFace: Pair<Int, Double>? = null
         faces.forEachIndexed { index, face ->
             if (face.indices.any { it >= vertices.size }) return@forEachIndexed
-            val pts = face.indices.map { project(vertices[it], w, h) }
-            if (pts.any { !it.first.isFinite() || !it.second.isFinite() }) return@forEachIndexed
+            val projectedPts = face.indices.map { project(vertices[it], w, h) }
+            if (projectedPts.any { !it.first.isFinite() || !it.second.isFinite() }) return@forEachIndexed
+            val screenPts = projectedPts.map { Pair(it.first, it.second) }
 
-            if (calculateSignedPolygonArea(pts) > 0) {
+            if (calculateSignedPolygonArea(screenPts) > 0) {
                 return@forEachIndexed
             }
 
-            if (pointInPolygon(mx, my, pts)) {
+            if (pointInPolygon(mx, my, screenPts)) {
                 val avgZ = face.indices.map { getZInViewSpace(vertices[it]) }.average()
                 if (closestFace == null || avgZ < closestFace!!.second) {
                     closestFace = Pair(index, avgZ)
@@ -1797,7 +1798,7 @@ class ModelEditor : Application() {
 
         val visibleFaces = faces.withIndex().filter { (_, f) ->
             if (f.indices.any { it >= vertices.size }) return@filter false
-            val projectedPoints = f.indices.map { project(vertices[it], w, h) }
+            val projectedPoints = f.indices.map { val p = project(vertices[it], w, h); Pair(p.first, p.second) }
             if (projectedPoints.any { !it.first.isFinite() || !it.second.isFinite() }) return@filter false
             calculateSignedPolygonArea(projectedPoints) <= 0
         }
@@ -1809,7 +1810,7 @@ class ModelEditor : Application() {
         val texturePalette = getEditorTexturePalette()
 
         for ((originalFaceIndex, face) in sortedFacesWithIndex) {
-            val pts = face.indices.map { project(vertices[it], w, h) }
+            val projectedPoints = face.indices.map { project(vertices[it], w, h) }
 
             val textureName = faceTextureNames.get(originalFaceIndex)
             val isCustomTexture = textureName != null && textureName.startsWith("custom_")
@@ -1821,7 +1822,7 @@ class ModelEditor : Application() {
                         createTextureFromHexData(customTextures.getOrNull(textureId))
                     }
                     val worldVerticesForFace = face.indices.map { vertices[it] }
-                    rasterizeFaceWithTexture(gc, pts, worldVerticesForFace, textureImage, w, h)
+                    rasterizeFaceWithTexture(gc, projectedPoints, worldVerticesForFace, textureImage, w, h)
                 }
             } else {
                 val faceColor = if (textureName != null && texturePalette.containsKey(textureName)) {
@@ -1833,13 +1834,13 @@ class ModelEditor : Application() {
                 gc.fill = faceColor
 
                 gc.beginPath()
-                gc.moveTo(pts[0].first, pts[0].second)
-                for (i in 1 until pts.size) gc.lineTo(pts[i].first, pts[i].second)
+                gc.moveTo(projectedPoints[0].first, projectedPoints[0].second)
+                for (i in 1 until projectedPoints.size) gc.lineTo(projectedPoints[i].first, projectedPoints[i].second)
                 gc.closePath(); gc.fill()
             }
 
             if (textureName != null) {
-                drawTextOnFace(gc, textureName, pts)
+                drawTextOnFace(gc, textureName, projectedPoints.map { Pair(it.first, it.second) })
             }
         }
 
@@ -1914,53 +1915,76 @@ class ModelEditor : Application() {
         return image
     }
 
-    private fun rasterizeFaceWithTexture(gc: GraphicsContext, screenVertices: List<Pair<Double, Double>>, worldVertices: List<Vector3d>, texture: Image, screenWidth: Double, screenHeight: Double) {
-        if (screenVertices.size < 3) return
+    private fun rasterizeFaceWithTexture(gc: GraphicsContext, projectedVertices: List<Triple<Double, Double, Double>>, worldVertices: List<Vector3d>, texture: Image, screenWidth: Double, screenHeight: Double) {
+        if (projectedVertices.size < 3) return
 
         val pixelWriter = gc.pixelWriter
         val texReader = texture.pixelReader
         val texWidth = texture.width.toInt()
         val texHeight = texture.height.toInt()
 
-        val uvs = if (screenVertices.size == 4) {
-            listOf(Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(0.0, 1.0, 0.0))
+        val uvs = if (projectedVertices.size == 4) {
+            listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0))
         } else {
             listOf(Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.5, 1.0, 0.0))
         }
 
-        val triangles = if (screenVertices.size == 4) {
+        val triangles = if (projectedVertices.size == 4) {
             listOf(
                 Pair(
-                    listOf(screenVertices[0], screenVertices[1], screenVertices[2]),
+                    listOf(projectedVertices[0], projectedVertices[1], projectedVertices[2]),
                     listOf(uvs[0], uvs[1], uvs[2])
                 ),
                 Pair(
-                    listOf(screenVertices[0], screenVertices[2], screenVertices[3]),
+                    listOf(projectedVertices[0], projectedVertices[2], projectedVertices[3]),
                     listOf(uvs[0], uvs[2], uvs[3])
                 )
             )
         } else {
-            listOf(Pair(screenVertices, uvs))
+            listOf(Pair(projectedVertices, uvs))
         }
 
         for ((triVertices, triUVs) in triangles) {
             val (v0, v1, v2) = triVertices
             val (uv0, uv1, uv2) = triUVs
 
-            val minX = max(0.0, minOf(v0.first, v1.first, v2.first)).toInt()
-            val maxX = min(screenWidth - 1, maxOf(v0.first, v1.first, v2.first)).toInt()
-            val minY = max(0.0, minOf(v0.second, v1.second, v2.second)).toInt()
-            val maxY = min(screenHeight - 1, maxOf(v0.second, v1.second, v2.second)).toInt()
+            val p0 = Pair(v0.first, v0.second)
+            val p1 = Pair(v1.first, v1.second)
+            val p2 = Pair(v2.first, v2.second)
+
+            val w0_inv = 1.0 / v0.third
+            val w1_inv = 1.0 / v1.third
+            val w2_inv = 1.0 / v2.third
+
+            val uv0_w = Pair(uv0.x * w0_inv, uv0.y * w0_inv)
+            val uv1_w = Pair(uv1.x * w1_inv, uv1.y * w1_inv)
+            val uv2_w = Pair(uv2.x * w2_inv, uv2.y * w2_inv)
+
+            val triMinX = minOf(p0.first, p1.first, p2.first)
+            val triMaxX = maxOf(p0.first, p1.first, p2.first)
+            val triMinY = minOf(p0.second, p1.second, p2.second)
+            val triMaxY = maxOf(p0.second, p1.second, p2.second)
+
+            val minX = max(0.0, triMinX).toInt()
+            val maxX = min(screenWidth - 1, triMaxX).toInt()
+            val minY = max(0.0, triMinY).toInt()
+            val maxY = min(screenHeight - 1, triMaxY).toInt()
+            
+            val area = (p1.second - p2.second) * (p0.first - p2.first) + (p2.first - p1.first) * (p0.second - p2.second)
+            if (area == 0.0) continue
 
             for (py in minY..maxY) {
                 for (px in minX..maxX) {
-                    val w0 = ((v1.second - v2.second) * (px - v2.first) + (v2.first - v1.first) * (py - v2.second)) / ((v1.second - v2.second) * (v0.first - v2.first) + (v2.first - v1.first) * (v0.second - v2.second))
-                    val w1 = ((v2.second - v0.second) * (px - v2.first) + (v0.first - v2.first) * (py - v2.second)) / ((v1.second - v2.second) * (v0.first - v2.first) + (v2.first - v1.first) * (v0.second - v2.second))
-                    val w2 = 1.0 - w0 - w1
+                    val b0 = ((p1.second - p2.second) * (px - p2.first) + (p2.first - p1.first) * (py - p2.second)) / area
+                    val b1 = ((p2.second - p0.second) * (px - p2.first) + (p0.first - p2.first) * (py - p2.second)) / area
+                    val b2 = 1.0 - b0 - b1
 
-                    if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
-                        val u = uv0.x * w0 + uv1.x * w1 + uv2.x * w2
-                        val v = uv0.y * w0 + uv1.y * w1 + uv2.y * w2
+                    if (b0 >= 0 && b1 >= 0 && b2 >= 0) {
+                        val w_inv_interpolated = w0_inv * b0 + w1_inv * b1 + w2_inv * b2
+                        val w_interpolated = 1.0 / w_inv_interpolated
+
+                        val u = (uv0_w.first * b0 + uv1_w.first * b1 + uv2_w.first * b2) * w_interpolated
+                        val v = (uv0_w.second * b0 + uv1_w.second * b1 + uv2_w.second * b2) * w_interpolated
 
                         val texX = (u * (texWidth - 1)).toInt().coerceIn(0, texWidth - 1)
                         val texY = (v * (texHeight - 1)).toInt().coerceIn(0, texHeight - 1)
@@ -2162,24 +2186,24 @@ class ModelEditor : Application() {
         }
     }
 
-    private fun project(v: Vector3d, w: Double, h: Double): Pair<Double, Double> {
+    private fun project(v: Vector3d, w: Double, h: Double): Triple<Double, Double, Double> {
         val cosY = cos(angleY); val sinY = sin(angleY)
         val cosX = cos(angleX); val sinX = sin(angleX)
         val x = v.x * cosY - v.z * sinY
         val z = v.x * sinY + v.z * cosY
-        var y = v.y
-        val y2 = y * cosX - z * sinX
-        val z2 = y * sinX + z * cosX
+        val y1 = v.y
+        val y2 = y1 * cosX - z * sinX
+        val z2 = y1 * sinX + z * cosX
 
         val denominator = z2 / 400 + 1
         if (denominator <= 0) {
-            return Pair(Double.NaN, Double.NaN)
+            return Triple(Double.NaN, Double.NaN, Double.NaN)
         }
 
-        y = y2;
+        val y = y2
         val sx = w / 2 + x / denominator * (zoom / 100)
         val sy = h / 2 + y / denominator * (zoom / 100)
-        return Pair(sx, sy)
+        return Triple(sx, sy, denominator)
     }
 
     private fun pointToLineSegmentDistance(px: Double, py: Double, x1: Double, y1: Double, x2: Double, y2: Double): Double {

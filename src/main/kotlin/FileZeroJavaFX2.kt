@@ -203,7 +203,8 @@ class DrawingPanel : StackPane() {
             "stair" to createStairMesh(cubeSize, Color.WHITE),
             "sphere" to createCapsuleMesh(cubeSize, Color.WHITE),
             "map" to createMapMesh(cubeSize, Color.WHITE),
-            "colorPalette" to createColorPaletteMesh(cubeSize, Color.WHITE)
+            "colorPalette" to createColorPaletteMesh(cubeSize, Color.WHITE),
+            "TNT" to createTNTMesh(cubeSize, Color.WHITE),
         )
 
         modelRegistry.values.forEach { mesh ->
@@ -244,6 +245,9 @@ class DrawingPanel : StackPane() {
 
         val pos10 = Vector3d(50.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(modelRegistry["colorPalette"]!!, Matrix4x4.translation(pos10.x, pos10.y, pos10.z), faceTextures = placedTextures(modelRegistry["colorPalette"]!!)))
+
+        val pos11 = Vector3d(21.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(modelRegistry["TNT"]!!, Matrix4x4.translation(pos11.x, pos11.y, pos11.z), faceTextures = placedTextures(modelRegistry["TNT"]!!)))
 
         for (x in 0 until gridDimension) {
             for (y in 0 until gridDimension) {
