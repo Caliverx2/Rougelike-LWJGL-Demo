@@ -11,7 +11,11 @@ import javafx.scene.input.KeyCode
 import javafx.scene.input.MouseEvent
 import javafx.scene.layout.StackPane
 import javafx.scene.image.PixelFormat
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetAddress
 import java.util.Collections
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
@@ -26,6 +30,7 @@ class DrawingPanel : StackPane() {
     private val isRendering = java.util.concurrent.atomic.AtomicBoolean(false)
     private val meshes = mutableListOf<PlacedMesh>()
     private val lightGizmoMeshes = Collections.synchronizedList(mutableListOf<PlacedMesh>())
+    private val playerGizmoMeshes = Collections.synchronizedList(mutableListOf<PlacedMesh>())
     private val lightSources = Collections.synchronizedList(mutableListOf<LightSource>())
     private data class OrbitingLight(val light: LightSource, val center: Vector3d, var angle: Double = 0.0)
     private val orbitingLights = Collections.synchronizedList(mutableListOf<OrbitingLight>())
@@ -103,6 +108,12 @@ class DrawingPanel : StackPane() {
 
     private var lastLightCheckTime = 0L
     private val lightCheckInterval = (1_000_000_000.0 / 30.0).toLong() // 30 Hz
+
+    private val clientSocket: DatagramSocket = DatagramSocket()
+    private val serverAddress: InetAddress = InetAddress.getByName("lewapnoob.ddns.net")
+    private val serverPort: Int = 1027
+    private val clientId: String = UUID.randomUUID().toString()
+    private val otherPlayers = ConcurrentHashMap<String, Vector3d>()
 
     init {
         sceneProperty().addListener { _, _, newScene ->
@@ -279,6 +290,8 @@ class DrawingPanel : StackPane() {
 
         bvh.build(meshes)
 
+        Thread { listenForServerMessages() }.start()
+
         object : AnimationTimer() {
             override fun handle(now: Long) {
                 val deltaTime = (now - lastUpdateTime) / 1_000_000_000.0
@@ -294,6 +307,29 @@ class DrawingPanel : StackPane() {
                 requestRender()
             }
         }.start()
+    }
+
+    private fun listenForServerMessages() {
+        val buffer = ByteArray(1024)
+        while (true) {
+            try {
+                val packet = DatagramPacket(buffer, buffer.size)
+                clientSocket.receive(packet)
+                val message = String(packet.data, 0, packet.length)
+                val parts = message.split(",")
+                if (parts.size == 4) {
+                    val receivedClientId = parts[0]
+                    if (receivedClientId != clientId) {
+                        val x = parts[1].toDouble()
+                        val y = parts[2].toDouble()
+                        val z = parts[3].toDouble()
+                        otherPlayers[receivedClientId] = Vector3d(x, y, z)
+                    }
+                }
+            } catch (e: Exception) {
+                // Handle exceptions
+            }
+        }
     }
 
     private fun placedTextures(mesh: Mesh): Map<Int, Image> {
@@ -561,6 +597,13 @@ class DrawingPanel : StackPane() {
 
         if (cameraYaw > 2 * PI) cameraYaw -= 2 * PI
         if (cameraYaw < -2 * PI) cameraYaw += 2 * PI
+
+        val message = "$clientId,${cameraPosition.x},${cameraPosition.y},${cameraPosition.z}".toByteArray()
+        val packet = DatagramPacket(message, message.size, serverAddress, serverPort)
+        try {
+            clientSocket.send(packet)
+        } catch (e: Exception) {
+        }
     }
 
     private fun drawOverlay() {
@@ -641,6 +684,14 @@ class DrawingPanel : StackPane() {
             val placedGizmo = PlacedMesh(coloredGizmoMesh, gizmoTransform, collision = false)
             meshAABBs[placedGizmo] = AABB.fromCube(placedGizmo.getTransformedVertices())
             lightGizmoMeshes.add(placedGizmo)
+        }
+
+        playerGizmoMeshes.clear()
+        val playerGizmoBaseMesh = createCapsuleMesh(0.4 * cubeSize, Color.GRAY)
+        otherPlayers.forEach { (id, pos) ->
+            val gizmoTransform = Matrix4x4.translation(pos.x, pos.y - 0.5 * cubeSize, pos.z)
+            val placedGizmo = PlacedMesh(playerGizmoBaseMesh, gizmoTransform, collision = true, texture = texCeiling)
+            playerGizmoMeshes.add(placedGizmo)
         }
     }
 
@@ -1034,7 +1085,7 @@ class DrawingPanel : StackPane() {
         val projectionMatrix = Matrix4x4.perspective(dynamicFov, virtualWidth.toDouble() / virtualHeight.toDouble(), 0.1, renderDistanceBlocks)
         val combinedMatrix = projectionMatrix * viewMatrix
 
-        val allMeshesToRender = meshes + lightGizmoMeshes
+        val allMeshesToRender = meshes + lightGizmoMeshes + playerGizmoMeshes
 
         val tasks = mutableListOf<Future<*>>()
 
