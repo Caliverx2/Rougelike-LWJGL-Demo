@@ -2069,8 +2069,8 @@ class ModelEditor : Application() {
                         val u = (uv0_w.first * b0 + uv1_w.first * b1 + uv2_w.first * b2) * w_interpolated
                         val v = (uv0_w.second * b0 + uv1_w.second * b1 + uv2_w.second * b2) * w_interpolated
 
-                        val texX = (u * (texWidth - 1)).toInt().coerceIn(0, texWidth - 1)
-                        val texY = (v * (texHeight - 1)).toInt().coerceIn(0, texHeight - 1)
+                        val texX = (u * texWidth).toInt().coerceIn(0, texWidth - 1)
+                        val texY = (v * texHeight).toInt().coerceIn(0, texHeight - 1)
 
                         pixelWriter.setColor(px, py, texReader.getColor(texX, texY))
                     }

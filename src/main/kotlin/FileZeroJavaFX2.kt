@@ -89,6 +89,7 @@ class DrawingPanel : StackPane() {
     lateinit var texCeiling: Image
     lateinit var texFloor: Image
     private val dynamicTextures = ConcurrentHashMap<Int, Image>()
+    private var modelRegistry: Map<String, Mesh>
 
     private var isMouseCaptured = false
     private val mouseSensitivity = 0.003
@@ -200,7 +201,7 @@ class DrawingPanel : StackPane() {
         texFloor = loadImage("textures/floor.jpg")
         texSkybox = loadImage("textures/skybox.png")
 
-        val modelRegistry = mapOf(
+        modelRegistry = mapOf(
             "cube" to createCubeMesh(cubeSize, Color.GRAY),
             "cubeRed" to createCubeMesh(cubeSize, Color.RED),
             "cubeGates" to createCubeMesh(cubeSize, Color.rgb(40, 255, 40)),
@@ -1266,8 +1267,8 @@ class DrawingPanel : StackPane() {
 
                                 val u = (alpha * u0_prime + beta * u1_prime + gamma * u2_prime) * inv_z_prime
                                 val v = (alpha * v0_prime + beta * v1_prime + gamma * v2_prime) * inv_z_prime
-                                val texX = (u * (texWidth - 1)).toInt().coerceIn(0, texWidth - 1)
-                                val texY = (v * (texHeight - 1)).toInt().coerceIn(0, texHeight - 1)
+                                val texX = (u * texWidth).toInt().coerceIn(0, texWidth - 1)
+                                val texY = (v * texHeight).toInt().coerceIn(0, texHeight - 1)
 
                                 val texColor = texReader.getColor(texX, texY)
 
