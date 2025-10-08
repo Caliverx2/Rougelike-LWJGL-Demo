@@ -28,9 +28,7 @@ import kotlin.math.*
 class DrawingPanel : StackPane() {
     private var lastUpdateTime = System.nanoTime()
     private val isRendering = java.util.concurrent.atomic.AtomicBoolean(false)
-    private val meshes = mutableListOf<PlacedMesh>()
     private val lightGizmoMeshes = Collections.synchronizedList(mutableListOf<PlacedMesh>())
-    private val playerGizmoMeshes = Collections.synchronizedList(mutableListOf<PlacedMesh>())
     private val lightSources = Collections.synchronizedList(mutableListOf<LightSource>())
     private data class OrbitingLight(val light: LightSource, val center: Vector3d, var angle: Double = 0.0)
     private val orbitingLights = Collections.synchronizedList(mutableListOf<OrbitingLight>())
@@ -106,13 +104,17 @@ class DrawingPanel : StackPane() {
     private val executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
     private val bvh = BVH()
     private val renderQueue = ConcurrentLinkedQueue<RenderableFace>()
-
+    private val transparentRenderQueue = ConcurrentLinkedQueue<RenderableFace>()
+    
     private var lastLightCheckTime = 0L
     private val lightCheckInterval = (1_000_000_000.0 / 30.0).toLong() // 30 Hz
 
     private val clientSocket: DatagramSocket = DatagramSocket()
     private val serverAddress: InetAddress = InetAddress.getByName("lewapnoob.ddns.net")
     private val serverPort: Int = 1027
+    private val meshes = mutableListOf<PlacedMesh>()
+    private val dynamicMeshes = ConcurrentHashMap<String, PlacedMesh>()
+
     private val clientId: String = UUID.randomUUID().toString()
     private val otherPlayers = ConcurrentHashMap<String, Vector3d>()
 
@@ -289,7 +291,7 @@ class DrawingPanel : StackPane() {
             }
         }
 
-        bvh.build(meshes)
+        rebuildPhysicsStructures()
 
         Thread { listenForServerMessages() }.start()
 
@@ -555,7 +557,7 @@ class DrawingPanel : StackPane() {
                     collisionGrid.add(mesh, meshAABBs[mesh]!!)
                 }
             }
-            bvh.build(meshes)
+            rebuildPhysicsStructures()
             pressedKeys.remove(KeyCode.R)
         }
         if (pressedKeys.contains(KeyCode.O)) {
@@ -656,7 +658,7 @@ class DrawingPanel : StackPane() {
                     val aabb = meshAABBs[mesh]!!
                     collisionGrid.add(mesh, aabb)
                 }
-                bvh.build(meshes)
+                rebuildPhysicsStructures()
                 GRID_MAP[gridX][gridY][gridZ] = 0
             }
         }
@@ -687,13 +689,60 @@ class DrawingPanel : StackPane() {
             lightGizmoMeshes.add(placedGizmo)
         }
 
-        playerGizmoMeshes.clear()
-        val playerGizmoBaseMesh = createCapsuleMesh(0.4 * cubeSize, Color.GRAY)
-        otherPlayers.forEach { (id, pos) ->
-            val gizmoTransform = Matrix4x4.translation(pos.x, pos.y - 0.5 * cubeSize, pos.z)
-            val placedGizmo = PlacedMesh(playerGizmoBaseMesh, gizmoTransform, collision = true, texture = texCeiling)
-            playerGizmoMeshes.add(placedGizmo)
+        // Update dynamic player meshes
+        val currentDynamicMeshIds = dynamicMeshes.keys.toSet()
+        val activePlayerIds = otherPlayers.keys.toSet()
+
+        val toRemove = currentDynamicMeshIds - activePlayerIds
+        val toAdd = activePlayerIds - currentDynamicMeshIds
+        val toUpdate = currentDynamicMeshIds.intersect(activePlayerIds)
+
+        var physicsNeedsRebuild = false
+
+        toRemove.forEach { id ->
+            val meshToRemove = dynamicMeshes.remove(id)
+            if (meshToRemove != null) {
+                meshAABBs.remove(meshToRemove)
+                physicsNeedsRebuild = true
+            }
         }
+
+        toAdd.forEach { id ->
+            val pos = otherPlayers[id]
+            if (pos != null) {
+                val playerGizmoBaseMesh = createCapsuleMesh(0.4 * cubeSize, Color.GRAY)
+                val gizmoTransform = Matrix4x4.translation(pos.x, pos.y - 0.5 * cubeSize, pos.z)
+                val placedGizmo = PlacedMesh(playerGizmoBaseMesh, gizmoTransform, collision = true, texture = texCeiling)
+                dynamicMeshes[id] = placedGizmo
+                meshAABBs[placedGizmo] = AABB.fromCube(placedGizmo.getTransformedVertices())
+                physicsNeedsRebuild = true
+            }
+        }
+
+        toUpdate.forEach { id ->
+            val mesh = dynamicMeshes[id]
+            val pos = otherPlayers[id]
+            if (mesh != null && pos != null) {
+                mesh.transformMatrix = Matrix4x4.translation(pos.x, pos.y - 0.5 * cubeSize, pos.z)
+                meshAABBs[mesh] = AABB.fromCube(mesh.getTransformedVertices())
+                physicsNeedsRebuild = true // obiekt się poruszył
+            }
+        }
+
+        if (physicsNeedsRebuild) {
+            rebuildPhysicsStructures()
+        }
+    }
+
+    private fun rebuildPhysicsStructures() {
+        val allMeshes = meshes + dynamicMeshes.values
+        collisionGrid.clear()
+        allMeshes.filter { it.collision }.forEach { mesh ->
+            meshAABBs[mesh]?.let { aabb ->
+                collisionGrid.add(mesh, aabb)
+            }
+        }
+        bvh.build(allMeshes)
     }
 
     private fun updateDynamicLights() {
@@ -1079,6 +1128,7 @@ class DrawingPanel : StackPane() {
         pixelBuffer.fill(bgColorInt)
         depthBuffer.fill(Double.MAX_VALUE)
         renderQueue.clear()
+        transparentRenderQueue.clear()
 
         val lookDirection = Vector3d(cos(cameraPitch) * sin(cameraYaw), sin(cameraPitch), cos(cameraPitch) * cos(cameraYaw)).normalize()
         val upVector = Vector3d(0.0, 1.0, 0.0)
@@ -1086,7 +1136,7 @@ class DrawingPanel : StackPane() {
         val projectionMatrix = Matrix4x4.perspective(dynamicFov, virtualWidth.toDouble() / virtualHeight.toDouble(), 0.1, renderDistanceBlocks)
         val combinedMatrix = projectionMatrix * viewMatrix
 
-        val allMeshesToRender = meshes + lightGizmoMeshes + playerGizmoMeshes
+        val allMeshesToRender = meshes + lightGizmoMeshes + dynamicMeshes.values
 
         val tasks = mutableListOf<Future<*>>()
 
@@ -1163,7 +1213,14 @@ class DrawingPanel : StackPane() {
                                         } else {
                                             mesh.faceTextures[faceIndex] ?: mesh.texture
                                         }
-                                        renderQueue.add(RenderableFace(projectedVertices, originalClipW, clippedUVs, mesh.mesh.color, false, faceTexture, clippedW, lightGrid, worldBlushes, blushContainerAABB))
+
+                                        val isTransparent = faceTexture?.pixelReader?.let { reader ->
+                                            (0 until faceTexture.width.toInt()).any { x -> (0 until faceTexture.height.toInt()).any { y -> reader.getColor(x, y).opacity < 1.0 } }
+                                        } ?: false
+
+                                        val face = RenderableFace(projectedVertices, originalClipW, clippedUVs, mesh.mesh.color, false, faceTexture, clippedW, lightGrid, worldBlushes, blushContainerAABB)
+                                        if (isTransparent) transparentRenderQueue.add(face)
+                                        else renderQueue.add(face)
                                     }
                                 }
                             }
@@ -1177,6 +1234,13 @@ class DrawingPanel : StackPane() {
 
         while (renderQueue.isNotEmpty()) {
             val renderableFace = renderQueue.poll()
+            rasterizeTexturedTriangle(pixelBuffer, renderableFace, virtualWidth, virtualHeight)
+        }
+
+        val sortedTransparentFaces = transparentRenderQueue.sortedByDescending { face ->
+            face.screenVertices.map { it.z }.average()
+        }
+        for (renderableFace in sortedTransparentFaces) {
             rasterizeTexturedTriangle(pixelBuffer, renderableFace, virtualWidth, virtualHeight)
         }
 
@@ -1272,6 +1336,11 @@ class DrawingPanel : StackPane() {
 
                                 val texColor = texReader.getColor(texX, texY)
 
+                                if (texColor.opacity == 0.0) {
+                                    barycentric_w0 += A12; barycentric_w1 += A20; barycentric_w2 += A01
+                                    continue
+                                }
+
                                 val dynamicLight = if (lightGrid != null) {
                                     val lightGridResolution = lightGrid.size
                                     val gridX = (u * lightGridResolution).toInt().coerceIn(0, lightGridResolution - 1)
@@ -1337,11 +1406,29 @@ class DrawingPanel : StackPane() {
                                     b = tempB
                                 }
 
-                                pixelBuffer[pixelIndex] = (0xFF shl 24) or
-                                        ((r * 255).toInt().coerceIn(0, 255) shl 16) or
-                                        ((g * 255).toInt().coerceIn(0, 255) shl 8) or
-                                        ((b * 255).toInt().coerceIn(0, 255))
-                                depthBuffer[pixelIndex] = interpolatedZ
+                                val finalR = (r * 255).toInt().coerceIn(0, 255)
+                                val finalG = (g * 255).toInt().coerceIn(0, 255)
+                                val finalB = (b * 255).toInt().coerceIn(0, 255)
+
+                                val isOpaque = texColor.opacity >= 1.0
+                                if (!isOpaque) {
+                                    val srcAlpha = texColor.opacity
+                                    val invSrcAlpha = 1.0 - srcAlpha
+
+                                    val dstColorInt = pixelBuffer[pixelIndex]
+                                    val dstR = (dstColorInt shr 16) and 0xFF
+                                    val dstG = (dstColorInt shr 8) and 0xFF
+                                    val dstB = dstColorInt and 0xFF
+
+                                    val blendedR = (finalR * srcAlpha + dstR * invSrcAlpha).toInt()
+                                    val blendedG = (finalG * srcAlpha + dstG * invSrcAlpha).toInt()
+                                    val blendedB = (finalB * srcAlpha + dstB * invSrcAlpha).toInt()
+
+                                    pixelBuffer[pixelIndex] = (0xFF shl 24) or (blendedR shl 16) or (blendedG shl 8) or blendedB
+                                } else {
+                                    pixelBuffer[pixelIndex] = (0xFF shl 24) or (finalR shl 16) or (finalG shl 8) or finalB // W pełni nieprzezroczysty piksel
+                                    depthBuffer[pixelIndex] = interpolatedZ
+                                }
                             }
                         }
                     }

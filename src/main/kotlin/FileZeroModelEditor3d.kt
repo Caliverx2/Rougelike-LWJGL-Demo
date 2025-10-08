@@ -669,6 +669,8 @@ class ModelEditor : Application() {
         libraryStage.show()
     }
 
+    private enum class TextureEditTool { PENCIL, FILL, ERASER, LINE, EYEDROPPER }
+
     private fun showTextureEditor(mainGc: GraphicsContext) {
         val faceIndex = selectedFaceIndices.firstOrNull() ?: return
 
@@ -680,7 +682,18 @@ class ModelEditor : Application() {
         val pixelSize = 20.0
 
         val gridPane = GridPane()
+        val previewCanvas = Canvas(textureSize * pixelSize, textureSize * pixelSize)
+        val previewGc = previewCanvas.graphicsContext2D
+        previewCanvas.isMouseTransparent = true
+
+        val gridStack = StackPane(gridPane, previewCanvas)
+
+        val toolGroup = ToggleGroup()
+
         val colorPicker = ColorPicker(Color.WHITE)
+        var currentTool = TextureEditTool.PENCIL
+        var lineStartPos: Pair<Int, Int>? = null
+
         val pixelRects = Array(textureSize) { Array(textureSize) { javafx.scene.shape.Rectangle(pixelSize, pixelSize) } }
 
         val currentTexture = faceTextureNames[faceIndex]?.let { name ->
@@ -690,26 +703,101 @@ class ModelEditor : Application() {
             } else null
         } ?: List(textureSize * textureSize) { 0xFFFFFFFF.toInt() }
 
+        fun getLinePixels(x0: Int, y0: Int, x1: Int, y1: Int): List<Pair<Int, Int>> {
+            val pixels = mutableListOf<Pair<Int, Int>>()
+            var currentX = x0
+            var currentY = y0
+            val dx = abs(x1 - x0)
+            val dy = -abs(y1 - y0)
+            val sx = if (x0 < x1) 1 else -1
+            val sy = if (y0 < y1) 1 else -1
+            var err = dx + dy
+
+            while (true) {
+                pixels.add(Pair(currentX, currentY))
+                if (currentX == x1 && currentY == y1) break
+                val e2 = 2 * err
+                if (e2 >= dy) { err += dy; currentX += sx }
+                if (e2 <= dx) { err += dx; currentY += sy }
+            }
+            return pixels
+        }
+
 
         for (y in 0 until textureSize) {
             for (x in 0 until textureSize) {
                 val rect = pixelRects[y][x]
                 val hexColor = currentTexture[y * textureSize + x]
-                rect.fill = Color.rgb((hexColor shr 16) and 0xFF, (hexColor shr 8) and 0xFF, hexColor and 0xFF)
+                val a = (hexColor ushr 24) and 0xFF
+                val r = (hexColor shr 16) and 0xFF
+                val g = (hexColor shr 8) and 0xFF
+                val b = hexColor and 0xFF
+                rect.fill = Color.rgb(r, g, b, a / 255.0)
 
                 rect.setOnMousePressed { event->
-                    if (event.isPrimaryButtonDown) {
-                        rect.fill = colorPicker.value
+                    if (!event.isPrimaryButtonDown) return@setOnMousePressed
+
+                    when (currentTool) {
+                        TextureEditTool.EYEDROPPER -> {
+                            colorPicker.value = rect.fill as Color
+                            toolGroup.selectToggle(toolGroup.toggles.first()) // Wróć do ołówka
+                            currentTool = TextureEditTool.PENCIL
+                        }
+                        TextureEditTool.PENCIL -> rect.fill = colorPicker.value
+                        TextureEditTool.ERASER -> rect.fill = Color.TRANSPARENT // Gumka ustawia przezroczystość
+                        TextureEditTool.LINE -> lineStartPos = Pair(x, y)
+                        TextureEditTool.FILL -> {
+                            val targetColor = rect.fill
+                            val newColor = colorPicker.value
+                            if (targetColor != newColor) {
+                                val queue = ArrayDeque<Pair<Int, Int>>()
+                                queue.add(Pair(x, y))
+                                val visited = mutableSetOf<Pair<Int, Int>>()
+
+                                while (queue.isNotEmpty()) {
+                                    val (px, py) = queue.removeFirst()
+                                    if (px in 0 until textureSize && py in 0 until textureSize && Pair(px, py) !in visited) {
+                                        visited.add(Pair(px, py))
+                                        if (pixelRects[py][px].fill == targetColor) {
+                                            pixelRects[py][px].fill = newColor
+                                            queue.add(Pair(px + 1, py))
+                                            queue.add(Pair(px - 1, py))
+                                            queue.add(Pair(px, py + 1))
+                                            queue.add(Pair(px, py - 1))
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
                 rect.setOnDragDetected {
                     rect.startFullDrag()
+                    if (currentTool == TextureEditTool.LINE) {
+                        lineStartPos = Pair(x, y)
+                    }
                 }
 
                 rect.setOnMouseDragOver {
-                    rect.fill = colorPicker.value
+                    if (currentTool == TextureEditTool.LINE && lineStartPos != null) {
+                        previewGc.clearRect(0.0, 0.0, previewCanvas.width, previewCanvas.height)
+                        val (startX, startY) = lineStartPos!!
+                        val linePixels = getLinePixels(startX, startY, x, y)
+
+                        previewGc.fill = colorPicker.value.deriveColor(0.0, 1.0, 1.0, 0.7)
+                        linePixels.forEach { (px, py) ->
+                            previewGc.fillRect(px * pixelSize, py * pixelSize, pixelSize, pixelSize)
+                        }
+                    } else {
+                        when (currentTool) {
+                            TextureEditTool.PENCIL -> rect.fill = colorPicker.value
+                            TextureEditTool.ERASER -> rect.fill = Color.TRANSPARENT
+                            else -> {}
+                        }
+                    }
                 }
+
                 gridPane.add(rect, x, y)
             }
         }
@@ -720,10 +808,11 @@ class ModelEditor : Application() {
             for (y in 0 until textureSize) {
                 for (x in 0 until textureSize) {
                     val color = pixelRects[y][x].fill as Color
+                    val a = (color.opacity * 255).toInt()
                     val r = (color.red * 255).toInt()
                     val g = (color.green * 255).toInt()
                     val b = (color.blue * 255).toInt()
-                    newTextureData.add((0xFF shl 24) or (r shl 16) or (g shl 8) or b)
+                    newTextureData.add((a shl 24) or (r shl 16) or (g shl 8) or b)
                 }
             }
             val newTextureId = customTextures.size
@@ -765,11 +854,75 @@ class ModelEditor : Application() {
             showTextureLibrary(pixelRects, editorStage)
         }
 
+        val rotateButton = Button("Obróć 90°")
+        rotateButton.setOnAction {
+            val newFills = Array(textureSize) { Array<Color>(textureSize) { Color.BLACK } }
+            for (r in 0 until textureSize) {
+                for (c in 0 until textureSize) {
+                    newFills[c][textureSize - 1 - r] = pixelRects[r][c].fill as Color
+                }
+            }
+            for (r in 0 until textureSize) {
+                for (c in 0 until textureSize) {
+                    pixelRects[r][c].fill = newFills[r][c]
+                }
+            }
+        }
+
+        val pencilButton = ToggleButton(" ✏️ ")
+        pencilButton.tooltip = Tooltip("Ołówek")
+        pencilButton.toggleGroup = toolGroup
+        pencilButton.isSelected = true
+        pencilButton.setOnAction { currentTool = TextureEditTool.PENCIL }
+
+        val fillButton = ToggleButton(" \uD83E\uDEA3 ")
+        fillButton.tooltip = Tooltip("Wypełnienie")
+        fillButton.toggleGroup = toolGroup
+        fillButton.setOnAction { currentTool = TextureEditTool.FILL }
+
+        val eraserButton = ToggleButton(" \uD83E\uDDFD ")
+        eraserButton.tooltip = Tooltip("Gumka")
+        eraserButton.toggleGroup = toolGroup
+        eraserButton.setOnAction { currentTool = TextureEditTool.ERASER }
+
+        val lineButton = ToggleButton("╱")
+        lineButton.tooltip = Tooltip("Linia")
+        lineButton.toggleGroup = toolGroup
+        lineButton.setOnAction { currentTool = TextureEditTool.LINE }
+
+        val eyedropperButton = ToggleButton(" \uD83E\uDDEA ")
+        eyedropperButton.tooltip = Tooltip("Pipeta")
+        eyedropperButton.toggleGroup = toolGroup
+        eyedropperButton.setOnAction { currentTool = TextureEditTool.EYEDROPPER }
+
+        val toolbar = VBox(5.0, pencilButton, fillButton, eraserButton, lineButton, eyedropperButton, Separator(), rotateButton)
+        toolbar.padding = Insets(10.0)
+        toolbar.style = "-fx-background-color: #444;"
+
+
         val rightPane = VBox(10.0, colorPicker, saveButton, importButton, Separator(), libraryButton)
         rightPane.padding = Insets(10.0)
 
-        val root = javafx.scene.layout.HBox(gridPane, rightPane)
+        val root = javafx.scene.layout.HBox(toolbar, gridStack, rightPane)
         root.style = "-fx-background-color: #333;"
+
+        gridStack.setOnMouseReleased { event ->
+            if (currentTool == TextureEditTool.LINE && lineStartPos != null) {
+                previewGc.clearRect(0.0, 0.0, previewCanvas.width, previewCanvas.height)
+
+                val endX = (event.x / pixelSize).toInt().coerceIn(0, textureSize - 1)
+                val endY = (event.y / pixelSize).toInt().coerceIn(0, textureSize - 1)
+
+                val (startX, startY) = lineStartPos!!
+                val linePixels = getLinePixels(startX, startY, endX, endY)
+
+                linePixels.forEach { (px, py) ->
+                    pixelRects[py][px].fill = colorPicker.value
+                }
+                lineStartPos = null
+            }
+        }
+
         editorStage.scene = Scene(root)
         editorStage.showAndWait()
     }
@@ -1671,7 +1824,7 @@ class ModelEditor : Application() {
             selectedBlushIndex = blushes.lastIndex
             selectedBlushCorner = null
             selectedVertex = null
-            groupSelectedVertices.clear(); 
+            groupSelectedVertices.clear()
             selectedFaceIndices.clear()
             groupGizmoPosition = null
 
@@ -2007,7 +2160,7 @@ class ModelEditor : Application() {
         val texHeight = texture.height.toInt()
 
         val uvs = if (projectedVertices.size == 4) {
-            listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0))
+            listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0))
         } else {
             listOf(Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.5, 1.0, 0.0))
         }
@@ -2072,7 +2225,14 @@ class ModelEditor : Application() {
                         val texX = (u * texWidth).toInt().coerceIn(0, texWidth - 1)
                         val texY = (v * texHeight).toInt().coerceIn(0, texHeight - 1)
 
-                        pixelWriter.setColor(px, py, texReader.getColor(texX, texY))
+                        val texColor = texReader.getColor(texX, texY)
+
+                        // Pomijaj w pełni przezroczyste piksele
+                        if (texColor.opacity > 0.0) {
+                            // Użyj globalAlpha do mieszania kolorów
+                            gc.globalAlpha = texColor.opacity
+                            pixelWriter.setColor(px, py, texColor)
+                        }
                     }
                 }
             }
