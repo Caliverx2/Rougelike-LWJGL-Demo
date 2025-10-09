@@ -34,10 +34,13 @@ fun Vector3d.normalize(): Vector3d {
     val len = this.length()
     return if (len > 0.00001) Vector3d(x / len, y / len, z / len) else Vector3d(0.0, 0.0, 0.0)
 }
+fun Double.roundTo(decimals: Int): Double {
+    val factor = 10.0.pow(decimals)
+    return (this * factor).roundToInt() / factor
+}
 
 data class Edge(val a: Int, val b: Int)
 data class Face(val indices: List<Int>)
-data class Mesh(val vertices: List<Vector3d>, val faces: List<List<Int>>, val faceUVs: List<List<Vector3d>>, val color: Color)
 data class AABB(var min: Vector3d, var max: Vector3d) {
     fun getCorners(): List<Vector3d> {
         return listOf(
@@ -463,10 +466,12 @@ class ModelEditor : Application() {
                         groupSelectedVertices.clear()
                         groupGizmoPosition = null
 
+                    } else if (groupSelectedVertices.isNotEmpty()) {
+                        deleteSelectedVertices()
                     } else if (selectedVertex != null) {
-                        deleteSelectedVertex()
+                        deleteSelectedVertices()
                     } else {
-                        deleteMode = !deleteMode
+                        deleteMode = false
                         faceSelectMode = false
                         blushMode = false
                     }
@@ -656,7 +661,11 @@ class ModelEditor : Application() {
                         for (y in 0 until 16) {
                             for (x in 0 until 16) {
                                 val hexColor = textureData[y * 16 + x]
-                                pixelRects[y][x].fill = Color.rgb((hexColor shr 16) and 0xFF, (hexColor shr 8) and 0xFF, hexColor and 0xFF)
+                                val a = (hexColor ushr 24) and 0xFF
+                                val r = (hexColor shr 16) and 0xFF
+                                val g = (hexColor shr 8) and 0xFF
+                                val b = hexColor and 0xFF
+                                pixelRects[y][x].fill = Color.rgb(r, g, b, a / 255.0)
                             }
                         }
                         libraryStage.close()
@@ -977,21 +986,31 @@ class ModelEditor : Application() {
         selectedFaceIndices.add(faceIndex)
     }
 
-    private fun Double.roundTo(decimals: Int): Double {
-        val factor = 10.0.pow(decimals)
-        return (this * factor).roundToInt() / factor
-    }
+    private fun deleteSelectedVertices() {
+        val indicesToDelete = (groupSelectedVertices + (selectedVertex ?: -1)).filter { it != -1 }.toSortedSet(compareByDescending { it })
+        if (indicesToDelete.isEmpty()) return
 
-    private fun deleteSelectedVertex() {
-        selectedVertex?.let { index ->
-            edges.removeIf { it.a == index || it.b == index }
-            faces.removeIf { it.indices.contains(index) }
+        faces.removeIf { face -> face.indices.any { it in indicesToDelete } }
+        edges.removeIf { edge -> edge.a in indicesToDelete || edge.b in indicesToDelete }
+
+        indicesToDelete.forEach { index ->
             vertices.removeAt(index)
-            fun fixIndex(oldIdx: Int) = if (oldIdx > index) oldIdx - 1 else oldIdx
-            for (i in edges.indices) edges[i] = Edge(fixIndex(edges[i].a), fixIndex(edges[i].b))
-            for (i in faces.indices) faces[i] = Face(faces[i].indices.map { fixIndex(it) })
-            selectedVertex = null
         }
+
+        val indexMap = mutableMapOf<Int, Int>()
+        var newIndex = 0
+        for (i in 0 until (vertices.size + indicesToDelete.size)) {
+            if (i !in indicesToDelete) {
+                indexMap[i] = newIndex
+                newIndex++
+            }
+        }
+
+        edges.replaceAll { edge -> Edge(indexMap[edge.a]!!, indexMap[edge.b]!!) }
+        faces.replaceAll { face -> Face(face.indices.map { indexMap[it]!! }) }
+
+        selectedVertex = null
+        groupSelectedVertices.clear()
     }
 
     private fun getZInViewSpace(v: Vector3d): Double {

@@ -1471,18 +1471,6 @@ class DrawingPanel : StackPane() {
         return false
     }
 
-
-    private fun Color.interpolate(other: Color, t: Double): Color {
-        val tClamped = t.coerceIn(0.0, 1.0)
-        val invT = 1.0 - tClamped
-        return Color(
-            this.red * invT + other.red * tClamped,
-            this.green * invT + other.green * tClamped,
-            this.blue * invT + other.blue * tClamped,
-            this.opacity * invT + other.opacity * tClamped
-        )
-    }
-
     private fun colorToInt(c: Color): Int {
         val r = (c.red * 255).toInt() and 0xFF
         val g = (c.green * 255).toInt() and 0xFF
