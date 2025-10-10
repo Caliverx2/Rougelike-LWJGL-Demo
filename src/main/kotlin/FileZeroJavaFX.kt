@@ -198,6 +198,16 @@ class PlacedMesh(
     fun applyTransform(matrix: Matrix4x4) {
         transformMatrix = matrix * transformMatrix
     }
+
+    fun applyRotationY(angleRad: Double) {
+        val center = getTransformedVertices().reduce { acc, v -> acc + v } / mesh.vertices.size.toDouble()
+        val toOrigin = Matrix4x4.translation(-center.x, -center.y, -center.z)
+        val rotation = Matrix4x4.rotationY(angleRad)
+        val fromOrigin = Matrix4x4.translation(center.x, center.y, center.z)
+
+        val rotationMatrix = fromOrigin * rotation * toOrigin
+        transformMatrix = rotationMatrix * transformMatrix
+    }
 }
 
 data class AABB(val min: Vector3d, val max: Vector3d) {

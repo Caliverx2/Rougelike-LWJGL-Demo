@@ -86,7 +86,7 @@ class DrawingPanel : StackPane() {
     lateinit var texBricks: Image
     lateinit var texCeiling: Image
     lateinit var texFloor: Image
-    private val dynamicTextures = ConcurrentHashMap<Int, Image>()
+    private val dynamicTextures = ConcurrentHashMap<String, Image>()
     private var modelRegistry: Map<String, Mesh>
 
     private var isMouseCaptured = false
@@ -116,7 +116,7 @@ class DrawingPanel : StackPane() {
     private val dynamicMeshes = ConcurrentHashMap<String, PlacedMesh>()
 
     private val clientId: String = UUID.randomUUID().toString()
-    private val otherPlayers = ConcurrentHashMap<String, Vector3d>()
+    private val otherPlayers = ConcurrentHashMap<String, Pair<Vector3d, Double>>()
 
     init {
         sceneProperty().addListener { _, _, newScene ->
@@ -219,11 +219,13 @@ class DrawingPanel : StackPane() {
             "map" to createMapMesh(cubeSize, Color.WHITE),
             "colorPalette" to createColorPaletteMesh(cubeSize, Color.WHITE),
             "TNT" to createTNTMesh(cubeSize, Color.WHITE),
+            "player" to createPlayerMesh(cubeSize, Color.WHITE),
         )
 
-        modelRegistry.values.forEach { mesh ->
-            mesh.customTextures.forEach { (id, hexData) ->
-                dynamicTextures.computeIfAbsent(id) { createTextureFromHexData(hexData) }
+        modelRegistry.forEach { (modelName, mesh) ->
+            mesh.customTextures.forEach { (localId, hexData) ->
+                val globalId = "${modelName}_$localId"
+                dynamicTextures.computeIfAbsent(globalId) { createTextureFromHexData(hexData) }
             }
         }
 
@@ -231,10 +233,10 @@ class DrawingPanel : StackPane() {
         meshes.add(PlacedMesh(modelRegistry["skybox"]!!, Matrix4x4.translation(pos0.x, pos0.y, pos0.z), texture = texSkybox, collision=false))
 
         val pos1 = Vector3d(5.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["pyramid"]!!, Matrix4x4.translation(pos1.x, pos1.y, pos1.z), faceTextures = placedTextures(modelRegistry["pyramid"]!!)))
+        meshes.add(PlacedMesh(modelRegistry["pyramid"]!!, Matrix4x4.translation(pos1.x, pos1.y, pos1.z), faceTextures = placedTextures("pyramid", modelRegistry["pyramid"]!!)))
 
         val pos2 = Vector3d(7.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["invertedPyramid"]!!, Matrix4x4.translation(pos2.x, pos2.y, pos2.z), faceTextures = placedTextures(modelRegistry["invertedPyramid"]!!)))
+        meshes.add(PlacedMesh(modelRegistry["invertedPyramid"]!!, Matrix4x4.translation(pos2.x, pos2.y, pos2.z), faceTextures = placedTextures("invertedPyramid", modelRegistry["invertedPyramid"]!!)))
 
         val pos3 = Vector3d(9.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(modelRegistry["tower"]!!, Matrix4x4.translation(pos3.x, pos3.y, pos3.z), texture = texBricks))
@@ -243,25 +245,25 @@ class DrawingPanel : StackPane() {
         meshes.add(PlacedMesh(modelRegistry["kotlin"]!!, Matrix4x4.translation(pos4.x, pos4.y, pos4.z), texture = texFloor))
 
         val pos5 = Vector3d(13.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["tank"]!!, Matrix4x4.translation(pos5.x, pos5.y, pos5.z), faceTextures = placedTextures(modelRegistry["tank"]!!)))
+        meshes.add(PlacedMesh(modelRegistry["tank"]!!, Matrix4x4.translation(pos5.x, pos5.y, pos5.z), faceTextures = placedTextures("tank", modelRegistry["tank"]!!)))
 
         val pos6 = Vector3d(15.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(modelRegistry["offroadCar"]!!, Matrix4x4.translation(pos6.x, pos6.y, pos6.z), texture = texBlackBricks))
 
         val pos7 = Vector3d(17.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["stair"]!!, Matrix4x4.translation(pos7.x, pos7.y, pos7.z), texture = texCeiling, faceTextures = placedTextures(modelRegistry["stair"]!!)))
+        meshes.add(PlacedMesh(modelRegistry["stair"]!!, Matrix4x4.translation(pos7.x, pos7.y, pos7.z), texture = texCeiling, faceTextures = placedTextures("stair", modelRegistry["stair"]!!)))
 
         val pos8 = Vector3d(19.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(modelRegistry["sphere"]!!, Matrix4x4.translation(pos8.x, pos8.y, pos8.z), texture = texCeiling))
 
         val pos9 = Vector3d(31.0 * cubeSize, -4.0 * cubeSize, 0 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["map"]!!, Matrix4x4.translation(pos9.x, pos9.y, pos9.z), faceTextures = placedTextures(modelRegistry["map"]!!)))
+        meshes.add(PlacedMesh(modelRegistry["map"]!!, Matrix4x4.translation(pos9.x, pos9.y, pos9.z), faceTextures = placedTextures("map", modelRegistry["map"]!!)))
 
         val pos10 = Vector3d(50.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["colorPalette"]!!, Matrix4x4.translation(pos10.x, pos10.y, pos10.z), faceTextures = placedTextures(modelRegistry["colorPalette"]!!)))
+        meshes.add(PlacedMesh(modelRegistry["colorPalette"]!!, Matrix4x4.translation(pos10.x, pos10.y, pos10.z), faceTextures = placedTextures("colorPalette", modelRegistry["colorPalette"]!!)))
 
         val pos11 = Vector3d(21.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["TNT"]!!, Matrix4x4.translation(pos11.x, pos11.y, pos11.z), faceTextures = placedTextures(modelRegistry["TNT"]!!)))
+        meshes.add(PlacedMesh(modelRegistry["TNT"]!!, Matrix4x4.translation(pos11.x, pos11.y, pos11.z), faceTextures = placedTextures("TNT", modelRegistry["TNT"]!!)))
 
         for (x in 0 until gridDimension) {
             for (y in 0 until gridDimension) {
@@ -320,13 +322,14 @@ class DrawingPanel : StackPane() {
                 clientSocket.receive(packet)
                 val message = String(packet.data, 0, packet.length)
                 val parts = message.split(",")
-                if (parts.size == 4) {
+                if (parts.size == 5) {
                     val receivedClientId = parts[0]
                     if (receivedClientId != clientId) {
                         val x = parts[1].toDouble()
                         val y = parts[2].toDouble()
                         val z = parts[3].toDouble()
-                        otherPlayers[receivedClientId] = Vector3d(x, y, z)
+                        val yaw = parts[4].toDouble()
+                        otherPlayers[receivedClientId] = Pair(Vector3d(x, y, z), yaw)
                     }
                 }
             } catch (e: Exception) {
@@ -335,7 +338,7 @@ class DrawingPanel : StackPane() {
         }
     }
 
-    private fun placedTextures(mesh: Mesh): Map<Int, Image> {
+    private fun placedTextures(modelName: String, mesh: Mesh): Map<Int, Image> {
         val loadedTextures = mapOf(
             "blackBricks" to texBlackBricks,
             "bricks" to texBricks,
@@ -381,7 +384,7 @@ class DrawingPanel : StackPane() {
         )
         return mesh.faceTextureNames.mapValues { (_, textureName) ->
             loadedTextures[textureName]
-                ?: dynamicTextures[textureName.substringAfter("custom_").toIntOrNull()]
+                ?: dynamicTextures["${modelName}_${textureName.substringAfter("custom_")}"]
                 ?: texSkybox
         }
     }
@@ -601,7 +604,7 @@ class DrawingPanel : StackPane() {
         if (cameraYaw > 2 * PI) cameraYaw -= 2 * PI
         if (cameraYaw < -2 * PI) cameraYaw += 2 * PI
 
-        val message = "$clientId,${cameraPosition.x},${cameraPosition.y},${cameraPosition.z}".toByteArray()
+        val message = "$clientId,${cameraPosition.x},${cameraPosition.y},${cameraPosition.z},${cameraYaw - PI}".toByteArray()
         val packet = DatagramPacket(message, message.size, serverAddress, serverPort)
         try {
             clientSocket.send(packet)
@@ -667,6 +670,7 @@ class DrawingPanel : StackPane() {
         val orbitSpeed = 0.5 * cubeSize
         val orbitRadius = 2.5 * cubeSize
         val angularVelocity = orbitSpeed / orbitRadius // v = ω * r  => ω = v / r
+        var physicsNeedsRebuild = false
 
         synchronized(orbitingLights) {
             for (orbitingLight in orbitingLights) {
@@ -697,8 +701,6 @@ class DrawingPanel : StackPane() {
         val toAdd = activePlayerIds - currentDynamicMeshIds
         val toUpdate = currentDynamicMeshIds.intersect(activePlayerIds)
 
-        var physicsNeedsRebuild = false
-
         toRemove.forEach { id ->
             val meshToRemove = dynamicMeshes.remove(id)
             if (meshToRemove != null) {
@@ -708,11 +710,12 @@ class DrawingPanel : StackPane() {
         }
 
         toAdd.forEach { id ->
-            val pos = otherPlayers[id]
-            if (pos != null) {
-                val playerGizmoBaseMesh = createCapsuleMesh(0.4 * cubeSize, Color.GRAY)
-                val gizmoTransform = Matrix4x4.translation(pos.x, pos.y - 0.5 * cubeSize, pos.z)
-                val placedGizmo = PlacedMesh(playerGizmoBaseMesh, gizmoTransform, collision = true, texture = texCeiling)
+            val playerData = otherPlayers[id]
+            if (playerData != null) {
+                val (pos, yaw) = playerData
+                val playerGizmoBaseMesh = createPlayerMesh(0.4 * cubeSize, Color.WHITE)
+                val gizmoTransform = Matrix4x4.translation(pos.x, pos.y - 0.5 * cubeSize, pos.z) * Matrix4x4.rotationY(yaw)
+                val placedGizmo = PlacedMesh(playerGizmoBaseMesh, gizmoTransform, collision = true, texture = texCeiling, faceTextures = placedTextures("player", modelRegistry["player"]!!))
                 dynamicMeshes[id] = placedGizmo
                 meshAABBs[placedGizmo] = AABB.fromCube(placedGizmo.getTransformedVertices())
                 physicsNeedsRebuild = true
@@ -721,9 +724,10 @@ class DrawingPanel : StackPane() {
 
         toUpdate.forEach { id ->
             val mesh = dynamicMeshes[id]
-            val pos = otherPlayers[id]
-            if (mesh != null && pos != null) {
-                mesh.transformMatrix = Matrix4x4.translation(pos.x, pos.y - 0.5 * cubeSize, pos.z)
+            val playerData = otherPlayers[id]
+            if (mesh != null && playerData != null) {
+                val (pos, yaw) = playerData
+                mesh.transformMatrix = Matrix4x4.translation(pos.x, pos.y - 0.5 * cubeSize, pos.z) * Matrix4x4.rotationY(yaw)
                 meshAABBs[mesh] = AABB.fromCube(mesh.getTransformedVertices())
                 physicsNeedsRebuild = true // obiekt się poruszył
             }
@@ -1194,10 +1198,11 @@ class DrawingPanel : StackPane() {
                                 for ((clippedW, clippedUVs) in clippedTriangles) {
                                     val projectedVertices = mutableListOf<Vector3d>()
                                     val originalClipW = mutableListOf<Double>()
+                                    val modelName = modelRegistry.entries.find { it.value === mesh.mesh }?.key
                                     for (vertex in clippedW) {
                                         val projectedHomogeneous = combinedMatrix.transformHomogeneous(vertex)
                                         val w = projectedHomogeneous.w
-                                        if (w.isCloseToZero()) continue
+                                        if (w.isCloseToZero()) continue // Should not happen with clipping
                                         projectedVertices.add(Vector3d((projectedHomogeneous.x / w + 1) * virtualWidth / 2.0, (1 - projectedHomogeneous.y / w) * virtualHeight / 2.0, projectedHomogeneous.z / w))
                                         originalClipW.add(w)
                                     }
@@ -1205,8 +1210,8 @@ class DrawingPanel : StackPane() {
                                         val textureName = mesh.mesh.faceTextureNames[faceIndex]
                                         val faceTexture = if (textureName != null && textureName.startsWith("custom_")) {
                                             val textureId = textureName.substringAfter("custom_").toIntOrNull()
-                                            if (textureId != null) {
-                                                dynamicTextures[textureId]
+                                            if (textureId != null && modelName != null) {
+                                                dynamicTextures["${modelName}_$textureId"]
                                             } else {
                                                 mesh.faceTextures[faceIndex] ?: mesh.texture
                                             }
