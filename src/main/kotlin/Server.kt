@@ -1,5 +1,7 @@
 import javax.swing.*
 import java.awt.FlowLayout
+import java.awt.Color
+import java.awt.Dimension
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.util.concurrent.ConcurrentHashMap
@@ -8,18 +10,31 @@ class Server : JFrame("Server") {
     private val startButton = JButton("Start Server")
     private val stopButton = JButton("Stop Server")
     private val portField = JTextField("1027", 5)
+    private val statusIndicator = JPanel()
     private var serverSocket: DatagramSocket? = null
     private var running = false
     private val clients = ConcurrentHashMap.newKeySet<Pair<InetAddress, Int>>()
 
+    private enum class ServerStatus(val color: Color) {
+        STOPPED(Color.BLACK),
+        RUNNING(Color.GREEN),
+        ERROR(Color.RED)
+    }
+
     init {
+        statusIndicator.preferredSize = Dimension(15, 15)
+        updateStatus(ServerStatus.STOPPED)
+
         defaultCloseOperation = EXIT_ON_CLOSE
         layout = FlowLayout()
         add(JLabel("Port:"))
         add(portField)
         add(startButton)
         add(stopButton)
-        pack()
+        add(JLabel("Status:"))
+        add(statusIndicator)
+
+        setSize(400, 75)
         setLocationRelativeTo(null)
         isVisible = true
 
@@ -29,9 +44,11 @@ class Server : JFrame("Server") {
                     val port = portField.text.toInt()
                     serverSocket = DatagramSocket(port)
                     running = true
+                    updateStatus(ServerStatus.RUNNING)
                     println("Server started on port $port")
                     Thread { listen() }.start()
                 } catch (e: Exception) {
+                    updateStatus(ServerStatus.ERROR)
                     e.printStackTrace()
                 }
             }
@@ -41,9 +58,14 @@ class Server : JFrame("Server") {
             if (running) {
                 running = false
                 serverSocket?.close()
+                updateStatus(ServerStatus.STOPPED)
                 println("Server stopped")
             }
         }
+    }
+
+    private fun updateStatus(status: ServerStatus) {
+        statusIndicator.background = status.color
     }
 
     private fun listen() {
@@ -70,6 +92,7 @@ class Server : JFrame("Server") {
 
             } catch (e: Exception) {
                 if (running) {
+                    updateStatus(ServerStatus.ERROR)
                     e.printStackTrace()
                 }
             }
