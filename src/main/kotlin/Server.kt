@@ -1,3 +1,5 @@
+package org.lewapnoob.FileZeroServer
+
 import javax.swing.*
 import java.awt.FlowLayout
 import java.awt.Color

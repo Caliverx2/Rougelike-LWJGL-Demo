@@ -70,6 +70,7 @@ class ModelEditor : Application() {
     private val customTextures = mutableListOf<List<Int>>()
     private val blushes = mutableListOf<AABB>()
     private val textureImageCache = mutableMapOf<Int, Image>()
+    private var zBuffer: DoubleArray? = null
 
     private data class CopiedModelPart(
         val vertices: List<Vector3d>,
@@ -689,8 +690,27 @@ class ModelEditor : Application() {
                         val deleteButton = Button("X")
                         deleteButton.style = "-fx-font-size: 8px; -fx-padding: 0 4 0 4; -fx-background-color: #C00; -fx-text-fill: white;"
                         deleteButton.setOnAction {
-                            customTextures[textureId] = emptyList()
-                            textureImageCache.remove(textureId)
+                            customTextures.removeAt(textureId)
+
+                            val newFaceTextureNames = mutableMapOf<Int, String>()
+                            faceTextureNames.forEach { (faceIndex, name) ->
+                                if (name.startsWith("custom_")) {
+                                    val usedTextureId = name.substringAfter("custom_").toIntOrNull()
+                                    if (usedTextureId != null) {
+                                        if (usedTextureId > textureId) {
+                                            newFaceTextureNames[faceIndex] = "custom_${usedTextureId - 1}"
+                                        } else if (usedTextureId < textureId) {
+                                            newFaceTextureNames[faceIndex] = name
+                                        }
+                                    }
+                                } else {
+                                    newFaceTextureNames[faceIndex] = name
+                                }
+                            }
+                            faceTextureNames.clear()
+                            faceTextureNames.putAll(newFaceTextureNames)
+
+                            textureImageCache.clear()
                             libraryStage.close()
                             showTextureLibrary(pixelRects, owner)
                         }
@@ -733,7 +753,12 @@ class ModelEditor : Application() {
         val pixelSize = 20.0
 
         val gridPane = GridPane()
-        val previewCanvas = Canvas(textureSize * pixelSize, textureSize * pixelSize)
+        gridPane.hgap = 1.0
+        gridPane.vgap = 1.0
+
+        val canvasWidth = textureSize * pixelSize + (textureSize - 1) * gridPane.hgap
+        val canvasHeight = textureSize * pixelSize + (textureSize - 1) * gridPane.vgap
+        val previewCanvas = Canvas(canvasWidth, canvasHeight)
         val previewGc = previewCanvas.graphicsContext2D
         previewCanvas.isMouseTransparent = true
 
@@ -838,7 +863,7 @@ class ModelEditor : Application() {
 
                         previewGc.fill = colorPicker.value.deriveColor(0.0, 1.0, 1.0, 0.7)
                         linePixels.forEach { (px, py) ->
-                            previewGc.fillRect(px * pixelSize, py * pixelSize, pixelSize, pixelSize)
+                            previewGc.fillRect(px * (pixelSize + gridPane.hgap), py * (pixelSize + gridPane.vgap), pixelSize, pixelSize)
                         }
                     } else {
                         when (currentTool) {
@@ -969,8 +994,8 @@ class ModelEditor : Application() {
             if (currentTool == TextureEditTool.LINE && lineStartPos != null) {
                 previewGc.clearRect(0.0, 0.0, previewCanvas.width, previewCanvas.height)
 
-                val endX = (event.x / pixelSize).toInt().coerceIn(0, textureSize - 1)
-                val endY = (event.y / pixelSize).toInt().coerceIn(0, textureSize - 1)
+                val endX = (event.x / (pixelSize + gridPane.hgap)).toInt().coerceIn(0, textureSize - 1)
+                val endY = (event.y / (pixelSize + gridPane.vgap)).toInt().coerceIn(0, textureSize - 1)
 
                 val (startX, startY) = lineStartPos!!
                 val linePixels = getLinePixels(startX, startY, endX, endY)
@@ -1570,7 +1595,7 @@ class ModelEditor : Application() {
         println("\n    val customTextures = mapOf(")
         customTextures.withIndex().forEach { (id, data) ->
             val dataString = data.joinToString(", ") { "0x%08X".format(it) }
-            println("        $id to listOf($dataString).map { it.toInt() },")
+            if ("$dataString" != "") println("        $id to listOf($dataString).map { it.toInt() },")
         }
         println("    )")
 
@@ -2094,6 +2119,14 @@ class ModelEditor : Application() {
         println("Subdivided ${facesToSubdivideIndices.size} faces. New total: ${vertices.size}V, ${edges.size}E, ${faces.size}F")
     }
 
+    private fun initializeZBuffer(width: Int, height: Int) {
+        val size = width * height
+        if (zBuffer == null || zBuffer!!.size != size) {
+            zBuffer = DoubleArray(size)
+        }
+        zBuffer!!.fill(Double.POSITIVE_INFINITY)
+    }
+
     private fun draw(gc: GraphicsContext, w: Double, h: Double, mouseX: Double, mouseY: Double) {
         gc.fill = Color.BLACK; gc.fillRect(0.0, 0.0, w, h)
         drawGrid(gc, w, h); drawBlushes(gc, w, h)
@@ -2103,6 +2136,11 @@ class ModelEditor : Application() {
         if (angleX < -PI * 2) angleX += PI * 2
         if (angleX > PI * 2) angleX -= PI * 2
 
+        initializeZBuffer(w.toInt(), h.toInt())
+
+        val backgroundSnapshot = gc.canvas.snapshot(null, null)
+        val backgroundReader = backgroundSnapshot.pixelReader
+
         val visibleFaces = faces.withIndex().filter { (_, f) ->
             if (f.indices.any { it >= vertices.size }) return@filter false
             val projectedPoints = f.indices.map { val p = project(vertices[it], w, h); Pair(p.first, p.second) }
@@ -2110,13 +2148,9 @@ class ModelEditor : Application() {
             calculateSignedPolygonArea(projectedPoints) <= 0
         }
 
-        val sortedFacesWithIndex = visibleFaces.sortedByDescending { (_, f) ->
-            f.indices.map { getZInViewSpace(vertices[it]) }.average()
-        }
-
         val texturePalette = getEditorTexturePalette()
 
-        for ((originalFaceIndex, face) in sortedFacesWithIndex) {
+        for ((originalFaceIndex, face) in visibleFaces) {
             val projectedPoints = face.indices.map { project(vertices[it], w, h) }
 
             val textureName = faceTextureNames.get(originalFaceIndex)
@@ -2128,22 +2162,15 @@ class ModelEditor : Application() {
                     val textureImage = textureImageCache.getOrPut(textureId) {
                         createTextureFromHexData(customTextures.getOrNull(textureId))
                     }
-                    val worldVerticesForFace = face.indices.map { vertices[it] }
-                    rasterizeFaceWithTexture(gc, projectedPoints, worldVerticesForFace, textureImage, w, h)
+                    rasterizeFaceWithTexture(gc, projectedPoints, textureImage, w, h, backgroundReader)
                 }
             } else {
                 val faceColor = if (textureName != null && texturePalette.containsKey(textureName)) {
                     texturePalette[textureName]!!
                 } else {
-                    Color.GRAY
+                    Color.GRAY.deriveColor(0.0, 1.0, 1.0, if (blushMode) 0.2 else 0.8)
                 }
-                gc.globalAlpha = if (blushMode) 0.2 else 0.8
-                gc.fill = faceColor
-
-                gc.beginPath()
-                gc.moveTo(projectedPoints[0].first, projectedPoints[0].second)
-                for (i in 1 until projectedPoints.size) gc.lineTo(projectedPoints[i].first, projectedPoints[i].second)
-                gc.closePath(); gc.fill()
+                rasterizeFaceWithColor(gc, projectedPoints, faceColor, w, h, backgroundReader)
             }
 
             if (selectedFaceIndices.contains(originalFaceIndex)) {
@@ -2231,13 +2258,14 @@ class ModelEditor : Application() {
         return image
     }
 
-    private fun rasterizeFaceWithTexture(gc: GraphicsContext, projectedVertices: List<Triple<Double, Double, Double>>, worldVertices: List<Vector3d>, texture: Image, screenWidth: Double, screenHeight: Double) {
+    private fun rasterizeFaceWithTexture(gc: GraphicsContext, projectedVertices: List<Triple<Double, Double, Double>>, texture: Image, screenWidth: Double, screenHeight: Double, backgroundReader: javafx.scene.image.PixelReader) {
         if (projectedVertices.size < 3) return
 
         val pixelWriter = gc.pixelWriter
         val texReader = texture.pixelReader
         val texWidth = texture.width.toInt()
         val texHeight = texture.height.toInt()
+        val screenWidthInt = screenWidth.toInt()
 
         val uvs = if (projectedVertices.size == 4) {
             listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0))
@@ -2298,20 +2326,97 @@ class ModelEditor : Application() {
                     if (b0 >= 0 && b1 >= 0 && b2 >= 0) {
                         val w_inv_interpolated = w0_inv * b0 + w1_inv * b1 + w2_inv * b2
                         val w_interpolated = 1.0 / w_inv_interpolated
+                        val zBufferIndex = py * screenWidthInt + px
 
-                        val u = (uv0_w.first * b0 + uv1_w.first * b1 + uv2_w.first * b2) * w_interpolated
-                        val v = (uv0_w.second * b0 + uv1_w.second * b1 + uv2_w.second * b2) * w_interpolated
+                        if (w_interpolated < zBuffer!![zBufferIndex]) {
+                            val u = (uv0_w.first * b0 + uv1_w.first * b1 + uv2_w.first * b2) * w_interpolated
+                            val v = (uv0_w.second * b0 + uv1_w.second * b1 + uv2_w.second * b2) * w_interpolated
 
-                        val texX = (u * texWidth).toInt().coerceIn(0, texWidth - 1)
-                        val texY = (v * texHeight).toInt().coerceIn(0, texHeight - 1)
+                            val texX = (u * texWidth).toInt().coerceIn(0, texWidth - 1)
+                            val texY = (v * texHeight).toInt().coerceIn(0, texHeight - 1)
 
-                        val texColor = texReader.getColor(texX, texY)
+                            val texColor = texReader.getColor(texX, texY)
 
-                        // Pomijaj w pełni przezroczyste piksele
-                        if (texColor.opacity > 0.0) {
-                            // Użyj globalAlpha do mieszania kolorów
-                            gc.globalAlpha = texColor.opacity
-                            pixelWriter.setColor(px, py, texColor)
+                            if (texColor.opacity > 0.0) {
+                                zBuffer!![zBufferIndex] = w_interpolated
+                                if (texColor.opacity < 1.0) {
+                                    val existingColor = backgroundReader.getColor(px, py)
+                                    val blendedColor = Color(
+                                        texColor.red * texColor.opacity + existingColor.red * (1 - texColor.opacity),
+                                        texColor.green * texColor.opacity + existingColor.green * (1 - texColor.opacity),
+                                        texColor.blue * texColor.opacity + existingColor.blue * (1 - texColor.opacity),
+                                        1.0
+                                    )
+                                    pixelWriter.setColor(px, py, blendedColor)
+                                } else {
+                                    pixelWriter.setColor(px, py, texColor)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun rasterizeFaceWithColor(gc: GraphicsContext, projectedVertices: List<Triple<Double, Double, Double>>, color: Color, screenWidth: Double, screenHeight: Double, backgroundReader: javafx.scene.image.PixelReader) {
+        if (projectedVertices.size < 3 || color.opacity == 0.0) return
+
+        val pixelWriter = gc.pixelWriter
+        val screenWidthInt = screenWidth.toInt()
+
+        val triangles = if (projectedVertices.size == 4) {
+            listOf(
+                listOf(projectedVertices[0], projectedVertices[1], projectedVertices[2]),
+                listOf(projectedVertices[0], projectedVertices[2], projectedVertices[3])
+            )
+        } else {
+            listOf(projectedVertices)
+        }
+
+        for (triVertices in triangles) {
+            val (v0, v1, v2) = triVertices
+
+            val p0 = Pair(v0.first, v0.second)
+            val p1 = Pair(v1.first, v1.second)
+            val p2 = Pair(v2.first, v2.second)
+
+            val w0_inv = 1.0 / v0.third
+            val w1_inv = 1.0 / v1.third
+            val w2_inv = 1.0 / v2.third
+
+            val triMinX = minOf(p0.first, p1.first, p2.first)
+            val triMaxX = maxOf(p0.first, p1.first, p2.first)
+            val triMinY = minOf(p0.second, p1.second, p2.second)
+            val triMaxY = maxOf(p0.second, p1.second, p2.second)
+
+            val minX = max(0.0, triMinX).toInt()
+            val maxX = min(screenWidth - 1, triMaxX).toInt()
+            val minY = max(0.0, triMinY).toInt()
+            val maxY = min(screenHeight - 1, triMaxY).toInt()
+
+            val area = (p1.second - p2.second) * (p0.first - p2.first) + (p2.first - p1.first) * (p0.second - p2.second)
+            if (area == 0.0) continue
+
+            for (py in minY..maxY) {
+                for (px in minX..maxX) {
+                    val b0 = ((p1.second - p2.second) * (px - p2.first) + (p2.first - p1.first) * (py - p2.second)) / area
+                    val b1 = ((p2.second - p0.second) * (px - p2.first) + (p0.first - p2.first) * (py - p2.second)) / area
+                    val b2 = 1.0 - b0 - b1
+
+                    if (b0 >= 0 && b1 >= 0 && b2 >= 0) {
+                        val w_inv_interpolated = w0_inv * b0 + w1_inv * b1 + w2_inv * b2
+                        val w_interpolated = 1.0 / w_inv_interpolated
+                        val zBufferIndex = py * screenWidthInt + px
+
+                        if (w_interpolated < zBuffer!![zBufferIndex]) {
+                            zBuffer!![zBufferIndex] = w_interpolated
+                            // Proste mieszanie alfa, jeśli kolor jest półprzezroczysty
+                            val finalColor = if (color.opacity < 1.0) {
+                                val existingColor = backgroundReader.getColor(px, py)
+                                Color(color.red * color.opacity + existingColor.red * (1 - color.opacity), color.green * color.opacity + existingColor.green * (1 - color.opacity), color.blue * color.opacity + existingColor.blue * (1 - color.opacity), 1.0)
+                            } else { color }
+                            pixelWriter.setColor(px, py, finalColor)
                         }
                     }
                 }
