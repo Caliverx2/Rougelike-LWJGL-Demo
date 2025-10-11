@@ -2680,5 +2680,5 @@ fun createPlayerMesh(size: Double, color: Color): Mesh {
             else -> face.map { Vector3d(0.0,0.0,0.0) }
         }
     }
-    return Mesh(vertices, faces, uvs, color, faceTextureNames = textureMapping, customTextures = customTextures)
+    return Mesh(vertices = vertices, faces = faces, faceUVs = uvs, color = color, faceTextureNames = textureMapping, customTextures = customTextures)
 }

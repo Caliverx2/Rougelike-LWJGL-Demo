@@ -403,7 +403,25 @@ class ModelEditor : Application() {
             when (e.code) {
                 KeyCode.W -> angleX -= 0.1
                 KeyCode.S -> angleX += 0.1
-                KeyCode.A -> angleY -= 0.1
+                KeyCode.A -> {
+                    if (e.isControlDown) {
+                        if (selectedFaceIndices.isNotEmpty()) {
+                            selectedFaceIndices.clear()
+                            selectedFaceIndices.addAll(faces.indices)
+                            groupSelectedVertices.clear()
+                            groupSelectedVertices.addAll(vertices.indices)
+                            updateGroupGizmoPosition()
+                        } else if (groupSelectedVertices.isNotEmpty() || selectedVertex != null) {
+                            selectedVertex = null
+                            selectedFaceIndices.clear()
+                            groupSelectedVertices.clear()
+                            groupSelectedVertices.addAll(vertices.indices)
+                            updateGroupGizmoPosition()
+                        }
+                    } else {
+                        angleY -= 0.1
+                    }
+                }
                 KeyCode.D -> angleY += 0.1
 
                 KeyCode.PERIOD -> if (zoom < 1000) zoom += 25
@@ -630,6 +648,7 @@ class ModelEditor : Application() {
 
     private fun showTextureLibrary(pixelRects: Array<Array<javafx.scene.shape.Rectangle>>, owner: Stage) {
         val libraryStage = Stage()
+        libraryStage.isResizable = false
         libraryStage.initModality(Modality.APPLICATION_MODAL)
         libraryStage.initOwner(owner)
         libraryStage.title = "Biblioteka Tekstur"
@@ -639,16 +658,17 @@ class ModelEditor : Application() {
         flowPane.hgap = 5.0
         flowPane.vgap = 5.0
 
-        val usedCustomTextureIds = faceTextureNames.values
+        val textureUsageCount = faceTextureNames.values
             .filter { it.startsWith("custom_") }
             .mapNotNull { it.substringAfter("custom_").toIntOrNull() }
-            .toSet()
+            .groupingBy { it }
+            .eachCount()
 
-        if (usedCustomTextureIds.isEmpty()) {
+        if (customTextures.isEmpty()) {
             flowPane.children.add(Label("Brak niestandardowych tekstur w modelu."))
         } else {
-            usedCustomTextureIds.forEach { textureId ->
-                customTextures.getOrNull(textureId)?.let { textureData ->
+            customTextures.forEachIndexed { textureId, textureData ->
+                if (textureData.isNotEmpty()) {
                     val textureImage = createTextureFromHexData(textureData)
                     val imageView = javafx.scene.image.ImageView(textureImage)
                     imageView.fitWidth = 64.0
@@ -656,6 +676,28 @@ class ModelEditor : Application() {
                     imageView.isPreserveRatio = true
 
                     val container = StackPane(imageView)
+                    container.style = "-fx-border-color: gray; -fx-border-width: 1;"
+
+                    val usageCount = textureUsageCount[textureId] ?: 0
+                    val usageLabel = Label(usageCount.toString())
+                    usageLabel.style = "-fx-font-size: 9px; -fx-text-fill: white; -fx-background-color: rgba(0,0,0,0.7); -fx-padding: 1 3 1 3;"
+                    javafx.geometry.Pos.TOP_RIGHT.let { StackPane.setAlignment(usageLabel, it) }
+
+                    container.children.add(usageLabel)
+
+                    if (usageCount == 0) {
+                        val deleteButton = Button("X")
+                        deleteButton.style = "-fx-font-size: 8px; -fx-padding: 0 4 0 4; -fx-background-color: #C00; -fx-text-fill: white;"
+                        deleteButton.setOnAction {
+                            customTextures[textureId] = emptyList()
+                            textureImageCache.remove(textureId)
+                            libraryStage.close()
+                            showTextureLibrary(pixelRects, owner)
+                        }
+                        javafx.geometry.Pos.BOTTOM_RIGHT.let { StackPane.setAlignment(deleteButton, it) }
+                        container.children.add(deleteButton)
+                    }
+
                     container.style = "-fx-border-color: gray; -fx-border-width: 1;"
                     container.setOnMouseClicked {
                         for (y in 0 until 16) {
@@ -824,11 +866,19 @@ class ModelEditor : Application() {
                     newTextureData.add((a shl 24) or (r shl 16) or (g shl 8) or b)
                 }
             }
-            val newTextureId = customTextures.size
-            customTextures.add(newTextureData)
+
+            val existingTextureId = customTextures.indexOf(newTextureData)
+
+            val textureIdToAssign = if (existingTextureId != -1) {
+                existingTextureId
+            } else {
+                customTextures.add(newTextureData)
+                customTextures.lastIndex
+            }
+
             selectedFaceIndices.forEach {
-                faceTextureNames[it] = "custom_$newTextureId"
-                textureImageCache.remove(newTextureId)
+                faceTextureNames[it] = "custom_$textureIdToAssign"
+                textureImageCache.remove(textureIdToAssign)
             }
             editorStage.close()
             draw(mainGc, mainGc.canvas.width, mainGc.canvas.height, 0.0, 0.0)
@@ -1545,9 +1595,9 @@ class ModelEditor : Application() {
         println("            else -> face.map { Vector3d(0.0,0.0,0.0) }")
         println("        }")
         if (blushes.size > 0) {
-            println("    }\n    return Mesh(vertices, faces, uvs, color, blushes = blushes, faceTextureNames = textureMapping, customTextures = customTextures)")
+            println("    }\n    return Mesh(vertices = vertices, faces = faces, faceUVs = uvs, color = color, blushes = blushes, faceTextureNames = textureMapping, customTextures = customTextures)")
         } else {
-            println("    }\n    return Mesh(vertices, faces, uvs, color, faceTextureNames = textureMapping, customTextures = customTextures)")
+            println("    }\n    return Mesh(vertices = vertices, faces = faces, faceUVs = uvs, color = color, faceTextureNames = textureMapping, customTextures = customTextures)")
         }
         println("}")
         println("\n")
@@ -1891,6 +1941,17 @@ class ModelEditor : Application() {
             groupSelectedVertices.forEach { val v = vertices[it]; sumX += v.x; sumY += v.y; sumZ += v.z }
             val count = groupSelectedVertices.size
             groupGizmoPosition = Vector3d(sumX / count, sumY / count, sumZ / count)
+        }
+    }
+
+    private fun updateGroupGizmoPosition() {
+        if (groupSelectedVertices.isNotEmpty()) {
+            var sumX = 0.0; var sumY = 0.0; var sumZ = 0.0
+            groupSelectedVertices.forEach { val v = vertices[it]; sumX += v.x; sumY += v.y; sumZ += v.z }
+            val count = groupSelectedVertices.size
+            groupGizmoPosition = Vector3d(sumX / count, sumY / count, sumZ / count)
+        } else {
+            groupGizmoPosition = null
         }
     }
 
