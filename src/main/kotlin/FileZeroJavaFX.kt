@@ -8,6 +8,8 @@ import javafx.stage.Stage
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.floor
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.math.tan
@@ -229,6 +231,17 @@ data class AABB(val min: Vector3d, val max: Vector3d) {
                 maxZ = maxOf(maxZ, v.z)
             }
             return AABB(Vector3d(minX, minY, minZ), Vector3d(maxX, maxY, maxZ))
+        }
+
+        fun fromAABBs(aabbs: List<AABB>): AABB {
+            if (aabbs.isEmpty()) return AABB(Vector3d(0.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0))
+            var min = aabbs.first().min.copy()
+            var max = aabbs.first().max.copy()
+            aabbs.forEach {
+                min = Vector3d(min(min.x, it.min.x), min(min.y, it.min.y), min(min.z, it.min.z))
+                max = Vector3d(max(max.x, it.max.x), max(max.y, it.max.y), max(max.z, it.max.z))
+            }
+            return AABB(min, max)
         }
     }
 

@@ -33,6 +33,23 @@ class DrawingPanel : StackPane() {
     private data class OrbitingLight(val light: LightSource, val center: Vector3d, var angle: Double = 0.0)
     private val orbitingLights = Collections.synchronizedList(mutableListOf<OrbitingLight>())
 
+    private data class StaticMeshBatch(
+        val mesh: Mesh,
+        val texture: Image?,
+        val aabb: AABB,
+        val faceIndexToOriginal: Map<Int, Pair<PlacedMesh, Int>>
+    )
+
+    private data class FaceToProcess(
+        val source: Any, // PlacedMesh or StaticMeshBatch
+        val faceIndex: Int,
+        val indices: List<Int>,
+        val worldVertices: List<Vector3d>
+    )
+
+    private var staticMeshBatches = listOf<StaticMeshBatch>()
+    private val textureTransparencyCache = ConcurrentHashMap<Image, Boolean>()
+
     private val faceLightGrids = ConcurrentHashMap<Pair<PlacedMesh, Int>, Array<Array<Color>>>()
     private val lightingUpdateQueue = ConcurrentLinkedQueue<Pair<PlacedMesh, Int>>()
     private val lightingExecutor = Executors.newSingleThreadExecutor()
@@ -105,7 +122,7 @@ class DrawingPanel : StackPane() {
     private val bvh = BVH()
     private val renderQueue = ConcurrentLinkedQueue<RenderableFace>()
     private val transparentRenderQueue = ConcurrentLinkedQueue<RenderableFace>()
-    
+
     private var lastLightCheckTime = 0L
     private val lightCheckInterval = (1_000_000_000.0 / 30.0).toLong() // 30 Hz
 
@@ -294,6 +311,7 @@ class DrawingPanel : StackPane() {
         }
 
         rebuildPhysicsStructures()
+        rebuildStaticMeshBatches()
 
         Thread { listenForServerMessages() }.start()
 
@@ -662,6 +680,7 @@ class DrawingPanel : StackPane() {
                     collisionGrid.add(mesh, aabb)
                 }
                 rebuildPhysicsStructures()
+                rebuildStaticMeshBatches()
                 GRID_MAP[gridX][gridY][gridZ] = 0
             }
         }
@@ -735,6 +754,7 @@ class DrawingPanel : StackPane() {
 
         if (physicsNeedsRebuild) {
             rebuildPhysicsStructures()
+            // Nie przebudowujemy tutaj `staticMeshBatches`, bo dynamiczne obiekty są renderowane osobno.
         }
     }
 
@@ -748,6 +768,53 @@ class DrawingPanel : StackPane() {
         }
         bvh.build(allMeshes)
     }
+
+    private fun rebuildStaticMeshBatches() {
+        val newBatches = mutableMapOf<Image?, MutableList<PlacedMesh>>()
+
+        meshes.filter { mesh ->
+            !mesh.collision && mesh.texture != null && mesh.texture != texSkybox && !isTextureTransparent(mesh.texture)
+        }.forEach { mesh ->
+            newBatches.computeIfAbsent(mesh.texture) { mutableListOf() }.add(mesh)
+        }
+
+        staticMeshBatches = newBatches.map { (texture, groupedMeshes) ->
+            val combinedVertices = mutableListOf<Vector3d>()
+            val combinedFaces = mutableListOf<List<Int>>()
+            val combinedUVs = mutableListOf<List<Vector3d>>()
+            val faceIndexToOriginal = mutableMapOf<Int, Pair<PlacedMesh, Int>>()
+            var vertexOffset = 0
+
+            val batchAABBs = mutableListOf<AABB>()
+
+            for (placedMesh in groupedMeshes) {
+                val worldVertices = placedMesh.mesh.vertices.map { placedMesh.transformMatrix.transform(it) }
+                combinedVertices.addAll(worldVertices)
+                meshAABBs[placedMesh]?.let { batchAABBs.add(it) }
+
+                placedMesh.mesh.faces.forEachIndexed { faceIndex, face ->
+                    combinedFaces.add(face.map { it + vertexOffset })
+                    val newFaceIndex = combinedFaces.size - 1
+                    faceIndexToOriginal[newFaceIndex] = Pair(placedMesh, faceIndex)
+                }
+                combinedUVs.addAll(placedMesh.mesh.faceUVs)
+
+                vertexOffset += worldVertices.size
+            }
+
+            val batchedMesh = Mesh(
+                vertices = combinedVertices,
+                faces = combinedFaces,
+                faceUVs = combinedUVs,
+                color = Color.WHITE
+            )
+            val combinedAABB = AABB.fromAABBs(batchAABBs)
+            StaticMeshBatch(batchedMesh, texture, combinedAABB, faceIndexToOriginal)
+        }
+        println("Rebuilt static batches. Found ${staticMeshBatches.size} batches.")
+    }
+
+
 
     private fun updateDynamicLights() {
         synchronized(lightSources) {
@@ -1140,103 +1207,140 @@ class DrawingPanel : StackPane() {
         val projectionMatrix = Matrix4x4.perspective(dynamicFov, virtualWidth.toDouble() / virtualHeight.toDouble(), 0.1, renderDistanceBlocks)
         val combinedMatrix = projectionMatrix * viewMatrix
 
-        val allMeshesToRender = meshes + lightGizmoMeshes + dynamicMeshes.values
+        val facesToProcess = mutableListOf<FaceToProcess>()
 
-        val tasks = mutableListOf<Future<*>>()
+        // add walls from individual objects (dynamic, transparent, special)
+        val individualMeshesToRender = (meshes + lightGizmoMeshes + dynamicMeshes.values).filter { mesh ->
+            val isBatched = staticMeshBatches.any { batch -> batch.texture == mesh.texture && !mesh.collision }
+            !isBatched
+        }
 
-        for (mesh in allMeshesToRender) {
+        for (mesh in individualMeshesToRender) {
             val meshAABB = meshAABBs[mesh]
             if (mesh.texture == texSkybox || meshAABB == null || !isAabbOutsideFrustum(meshAABB, combinedMatrix)) {
-                tasks.add(executor.submit {
-                    val worldVertices = mesh.mesh.vertices.map { mesh.transformMatrix.transform(it) }
-                    for (faceIndex in mesh.mesh.faces.indices) {
-                        val faceIndices = mesh.mesh.faces[faceIndex]
-                        if (faceIndices.size < 3) continue
+                val worldVertices = mesh.mesh.vertices.map { mesh.transformMatrix.transform(it) }
+                mesh.mesh.faces.forEachIndexed { faceIndex, faceIndices ->
+                    facesToProcess.add(FaceToProcess(mesh, faceIndex, faceIndices, worldVertices))
+                }
+            }
+        }
 
-                        val p0View = viewMatrix.transform(worldVertices[faceIndices[0]])
-                        val p1View = viewMatrix.transform(worldVertices[faceIndices[1]])
-                        val p2View = viewMatrix.transform(worldVertices[faceIndices[2]])
+        // add walls from batched objects
+        for (batch in staticMeshBatches) {
+            if (isAabbOutsideFrustum(batch.aabb, combinedMatrix)) continue
+            val worldVertices = batch.mesh.vertices
+            batch.mesh.faces.forEachIndexed { faceIndex, faceIndices ->
+                facesToProcess.add(FaceToProcess(batch, faceIndex, faceIndices, worldVertices))
+            }
+        }
 
-                        val normalView = (p1View - p0View).cross(p2View - p0View).normalize()
-                        val cameraRayView = (Vector3d(0.0, 0.0, 0.0) - p0View).normalize()
+        val tasks = mutableListOf<Future<*>>()
+        val chunkSize = (facesToProcess.size / Runtime.getRuntime().availableProcessors()).coerceAtLeast(100)
+        val chunks = facesToProcess.chunked(chunkSize)
 
-                        if (normalView.dot(cameraRayView) > 0) {
-                            val faceWorldVertices = faceIndices.map { worldVertices[it] }
-                            val faceTexCoords = mesh.mesh.faceUVs[faceIndex]
+        for (chunk in chunks) {
+            tasks.add(executor.submit {
+                for (faceData in chunk) {
+                    if (faceData.indices.size < 3) continue
 
-                            val triangles = if (faceIndices.size == 4) {
-                                listOf(
-                                    Pair(listOf(faceWorldVertices[0], faceWorldVertices[1], faceWorldVertices[2]),
-                                        listOf(faceTexCoords[0], faceTexCoords[1], faceTexCoords[2])),
-                                    Pair(listOf(faceWorldVertices[0], faceWorldVertices[2], faceWorldVertices[3]),
-                                        listOf(faceTexCoords[0], faceTexCoords[2], faceTexCoords[3]))
-                                )
+                    val worldVertices = faceData.worldVertices
+                    val p0View = viewMatrix.transform(worldVertices[faceData.indices[0]])
+                    val p1View = viewMatrix.transform(worldVertices[faceData.indices[1]])
+                    val p2View = viewMatrix.transform(worldVertices[faceData.indices[2]])
+
+                    val normalView = (p1View - p0View).cross(p2View - p0View).normalize()
+                    val cameraRayView = (Vector3d(0.0, 0.0, 0.0) - p0View).normalize()
+
+                    if (normalView.dot(cameraRayView) > 0) { // Back-face culling
+                        val faceWorldVertices = faceData.indices.map { worldVertices[it] }
+                        val faceTexCoords: List<Vector3d>
+                        val lightGrid: Array<Array<Color>>?
+                        val faceTexture: Image?
+                        val meshColor: Color
+                        val modelName: String?
+                        val worldBlushes: List<AABB>
+                        val blushContainerAABB: AABB?
+
+                        if (faceData.source is PlacedMesh) {
+                            val mesh = faceData.source
+                            faceTexCoords = mesh.mesh.faceUVs[faceData.faceIndex]
+                            lightGrid = faceLightGrids[Pair(mesh, faceData.faceIndex)]
+                            meshColor = mesh.mesh.color
+                            modelName = modelRegistry.entries.find { it.value === mesh.mesh }?.key
+                            val textureName = mesh.mesh.faceTextureNames[faceData.faceIndex]
+                            faceTexture = if (textureName != null && textureName.startsWith("custom_")) {
+                                val textureId = textureName.substringAfter("custom_").toIntOrNull()
+                                if (textureId != null && modelName != null) dynamicTextures["${modelName}_$textureId"]
+                                else mesh.faceTextures[faceData.faceIndex] ?: mesh.texture
                             } else {
-                                listOf(Pair(faceWorldVertices, faceTexCoords))
+                                mesh.faceTextures[faceData.faceIndex] ?: mesh.texture
                             }
-
-                            val lightGrid = faceLightGrids[Pair(mesh, faceIndex)]
-                            val worldBlushes = mesh.mesh.blushes.map { blush ->
+                            worldBlushes = mesh.mesh.blushes.map { blush ->
                                 val transformedCorners = blush.getCorners().map { corner -> mesh.transformMatrix.transform(corner) }
                                 AABB.fromCube(transformedCorners)
                             }
+                            blushContainerAABB = if (worldBlushes.isNotEmpty()) AABB.fromAABBs(worldBlushes) else null
 
-                            val blushContainerAABB = if (worldBlushes.isNotEmpty()) {
-                                var min = worldBlushes.first().min.copy()
-                                var max = worldBlushes.first().max.copy()
-                                worldBlushes.forEach {
-                                    min = Vector3d(min(min.x, it.min.x), min(min.y, it.min.y), min(min.z, it.min.z))
-                                    max = Vector3d(max(max.x, it.max.x), max(max.y, it.max.y), max(max.z, it.max.z))
+                        } else { // source is StaticMeshBatch
+                            val batch = faceData.source as StaticMeshBatch
+                            faceTexCoords = batch.mesh.faceUVs[faceData.faceIndex]
+                            val originalFaceInfo = batch.faceIndexToOriginal[faceData.faceIndex]
+                            lightGrid = if (originalFaceInfo != null) faceLightGrids[originalFaceInfo] else null
+                            faceTexture = batch.texture
+                            meshColor = batch.mesh.color
+                            modelName = null
+
+                            // blushes system
+                            if (originalFaceInfo != null) {
+                                val (originalMesh, _) = originalFaceInfo
+                                worldBlushes = originalMesh.mesh.blushes.map { blush ->
+                                    val transformedCorners = blush.getCorners().map { corner -> originalMesh.transformMatrix.transform(corner) }
+                                    AABB.fromCube(transformedCorners)
                                 }
-                                AABB(min, max)
+                                blushContainerAABB = if (worldBlushes.isNotEmpty()) AABB.fromAABBs(worldBlushes) else null
                             } else {
-                                null
+                                worldBlushes = emptyList()
+                                blushContainerAABB = null
                             }
+                        }
 
-                            for ((triWorld, triUV) in triangles) {
-                                val clippedTriangles = clipTriangleAgainstNearPlane(triWorld, triUV, viewMatrix, 0.1)
-                                for ((clippedW, clippedUVs) in clippedTriangles) {
-                                    val projectedVertices = mutableListOf<Vector3d>()
-                                    val originalClipW = mutableListOf<Double>()
-                                    val modelName = modelRegistry.entries.find { it.value === mesh.mesh }?.key
-                                    for (vertex in clippedW) {
-                                        val projectedHomogeneous = combinedMatrix.transformHomogeneous(vertex)
-                                        val w = projectedHomogeneous.w
-                                        if (w.isCloseToZero()) continue // Should not happen with clipping
-                                        projectedVertices.add(Vector3d((projectedHomogeneous.x / w + 1) * virtualWidth / 2.0, (1 - projectedHomogeneous.y / w) * virtualHeight / 2.0, projectedHomogeneous.z / w))
-                                        originalClipW.add(w)
-                                    }
-                                    if (projectedVertices.size == 3) {
-                                        val textureName = mesh.mesh.faceTextureNames[faceIndex]
-                                        val faceTexture = if (textureName != null && textureName.startsWith("custom_")) {
-                                            val textureId = textureName.substringAfter("custom_").toIntOrNull()
-                                            if (textureId != null && modelName != null) {
-                                                dynamicTextures["${modelName}_$textureId"]
-                                            } else {
-                                                mesh.faceTextures[faceIndex] ?: mesh.texture
-                                            }
-                                        } else {
-                                            mesh.faceTextures[faceIndex] ?: mesh.texture
-                                        }
+                        // Triangulation
+                        val triangles = if (faceData.indices.size == 4) {
+                            listOf(
+                                Pair(listOf(faceWorldVertices[0], faceWorldVertices[1], faceWorldVertices[2]), listOf(faceTexCoords[0], faceTexCoords[1], faceTexCoords[2])),
+                                Pair(listOf(faceWorldVertices[0], faceWorldVertices[2], faceWorldVertices[3]), listOf(faceTexCoords[0], faceTexCoords[2], faceTexCoords[3]))
+                            )
+                        } else {
+                            listOf(Pair(faceWorldVertices, faceTexCoords))
+                        }
 
-                                        val isTransparent = faceTexture?.pixelReader?.let { reader ->
-                                            (0 until faceTexture.width.toInt()).any { x -> (0 until faceTexture.height.toInt()).any { y -> reader.getColor(x, y).opacity < 1.0 } }
-                                        } ?: false
-
-                                        val face = RenderableFace(projectedVertices, originalClipW, clippedUVs, mesh.mesh.color, false, faceTexture, clippedW, lightGrid, worldBlushes, blushContainerAABB)
-                                        if (isTransparent) transparentRenderQueue.add(face)
-                                        else renderQueue.add(face)
-                                    }
+                        for ((triWorld, triUV) in triangles) {
+                            val clippedTriangles = clipTriangleAgainstNearPlane(triWorld, triUV, viewMatrix, 0.1)
+                            for ((clippedW, clippedUVs) in clippedTriangles) {
+                                val projectedVertices = mutableListOf<Vector3d>()
+                                val originalClipW = mutableListOf<Double>()
+                                for (vertex in clippedW) {
+                                    val projectedHomogeneous = combinedMatrix.transformHomogeneous(vertex)
+                                    val w = projectedHomogeneous.w
+                                    if (w.isCloseToZero()) continue
+                                    projectedVertices.add(Vector3d((projectedHomogeneous.x / w + 1) * virtualWidth / 2.0, (1 - projectedHomogeneous.y / w) * virtualHeight / 2.0, projectedHomogeneous.z / w))
+                                    originalClipW.add(w)
+                                }
+                                if (projectedVertices.size == 3) {
+                                    val isTransparent = isTextureTransparent(faceTexture)
+                                    val face = RenderableFace(projectedVertices, originalClipW, clippedUVs, meshColor, false, faceTexture, clippedW, lightGrid, worldBlushes, blushContainerAABB)
+                                    if (isTransparent) transparentRenderQueue.add(face) else renderQueue.add(face)
                                 }
                             }
                         }
                     }
-                })
-            }
+                }
+            })
         }
 
         for (task in tasks) { task.get() }
 
+        // Rasteryzuj kolejki
         while (renderQueue.isNotEmpty()) {
             val renderableFace = renderQueue.poll()
             rasterizeTexturedTriangle(pixelBuffer, renderableFace, virtualWidth, virtualHeight)
@@ -1515,6 +1619,19 @@ class DrawingPanel : StackPane() {
         val stream = DrawingPanel::class.java.classLoader.getResourceAsStream(path)
         val bufferedImage = ImageIO.read(stream)
         return SwingFXUtils.toFXImage(bufferedImage, null)
+    }
+
+    private fun isTextureTransparent(texture: Image?): Boolean {
+        if (texture == null) return false
+        return textureTransparencyCache.computeIfAbsent(texture) {
+            val reader = it.pixelReader ?: return@computeIfAbsent false
+            for (y in 0 until it.height.toInt()) {
+                for (x in 0 until it.width.toInt()) {
+                    if (reader.getColor(x, y).opacity < 1.0) return@computeIfAbsent true
+                }
+            }
+            false
+        }
     }
 
     private fun createTextureFromHexData(hexData: List<Int>): WritableImage {

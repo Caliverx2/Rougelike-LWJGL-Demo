@@ -1318,7 +1318,7 @@ class ModelEditor : Application() {
         edges.addAll(newEdges)
 
         val newFaces = listOf(
-            Face(listOf(0, 1, 2, 3)),
+            Face(listOf(2, 3, 0, 1)),
             Face(listOf(3, 2, 1, 0)),
         ).map { Face(it.indices.map { idx -> idx + baseIndex }) }
         faces.addAll(newFaces)
