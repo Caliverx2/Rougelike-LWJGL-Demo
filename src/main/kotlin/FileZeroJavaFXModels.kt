@@ -1615,9 +1615,9 @@ fun createMapMesh(size: Double, color: Color): Mesh {
     )
 
     val blushes = listOf(
-        AABB(min = Vector3d(140.0 * hs, 50.0 * hs, 50.0 * hs), max = Vector3d(160.0 * hs, 0.0001 * hs, 100.0 * hs)),
-        AABB(min = Vector3d(290.0 * hs, 50.0 * hs, 50.0 * hs), max = Vector3d(310.0 * hs, 0.0001 * hs, 100.0 * hs)),
-        AABB(min = Vector3d(-10.0 * hs, 50.0 * hs, 50.0 * hs), max = Vector3d(10.0 * hs, 0.0001 * hs, 100.0 * hs)),
+        AABB(min = Vector3d(150.1 * hs, 50.0 * hs, 50.0 * hs), max = Vector3d(149.9 * hs, 0.0001 * hs, 100.0 * hs)),
+        AABB(min = Vector3d(300.1 * hs, 50.0 * hs, 50.0 * hs), max = Vector3d(299.9 * hs, 0.0001 * hs, 100.0 * hs)),
+        AABB(min = Vector3d(0.1 * hs, 50.0 * hs, 50.0 * hs), max = Vector3d(-0.1 * hs, 0.0001 * hs, 100.0 * hs)),
     )
 
     val uvs: List<List<Vector3d>> = faces.map { face ->

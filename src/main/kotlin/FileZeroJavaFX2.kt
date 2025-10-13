@@ -64,9 +64,8 @@ class DrawingPanel : StackPane() {
 
     private val defaultScalePlayer = 1.25
     private val scalePlayer = defaultScalePlayer
-    private val playerHeight = ((cubeSize / 2 ) - (cubeSize / 20)) * scalePlayer
-    private val playerWidth = ((cubeSize / 2 ) - (cubeSize / 20)) * scalePlayer
-    private val playerHalfWidth = playerWidth / 2.3
+    private val playerHeight = ((cubeSize / 2) - (cubeSize / 20)) * scalePlayer
+    private val playerRadius = 0.3 * cubeSize
 
     private var cameraPosition = Vector3d(0.0, 0.1, 0.0)
     private var cameraYaw = 2.4
@@ -436,37 +435,108 @@ class DrawingPanel : StackPane() {
 
     private fun isCollidingAt(testPosition: Vector3d): Boolean {
         val playerAABB = AABB(
-            Vector3d(testPosition.x - playerHalfWidth, testPosition.y - playerHeight / 2, testPosition.z - playerHalfWidth),
-            Vector3d(testPosition.x + playerHalfWidth, testPosition.y + playerHeight / 2, testPosition.z + playerHalfWidth)
+            min = Vector3d(testPosition.x - playerRadius, testPosition.y - playerHeight / 2, testPosition.z - playerRadius),
+            max = Vector3d(testPosition.x + playerRadius, testPosition.y + playerHeight / 2, testPosition.z + playerRadius)
         )
 
         val potentialColliders = collisionGrid.query(playerAABB)
         for (mesh in potentialColliders) {
-            val worldBlushes = mesh.mesh.blushes.map { blush ->
-                val transformedCorners = blush.getCorners().map { corner -> mesh.transformMatrix.transform(corner) }
-                AABB.fromCube(transformedCorners)
-            }
-
-            if (worldBlushes.any { it.intersects(playerAABB) }) {
-                continue
-            }
-
             val meshAABB = AABB.fromCube(mesh.getTransformedVertices())
             if (playerAABB.intersects(meshAABB)) {
-                val worldVertices = mesh.getTransformedVertices()
-                for (faceIndices in mesh.mesh.faces.filter { it.size >= 3 }) {
-                    for (i in 0 until faceIndices.size - 2) {
-                        val v0 = worldVertices[faceIndices[0]]
-                        val v1 = worldVertices[faceIndices[i + 1]]
-                        val v2 = worldVertices[faceIndices[i + 2]]
-                        if (CollisionUtils.testAABBTriangle(playerAABB, v0, v1, v2)) {
-                            return true
-                        }
-                    }
+                if (checkCylinderCollision(testPosition, mesh)) {
+                    return true
                 }
             }
         }
         return false
+    }
+
+    private fun checkCylinderCollision(cylinderCenter: Vector3d, mesh: PlacedMesh): Boolean {
+        val worldVertices = mesh.getTransformedVertices()
+        val playerMinY = cylinderCenter.y - playerHeight / 2
+        val playerMaxY = cylinderCenter.y + playerHeight / 2
+
+        val worldBlushes = mesh.mesh.blushes.map { blush ->
+            val transformedCorners = blush.getCorners().map { corner -> mesh.transformMatrix.transform(corner) }
+            AABB.fromCube(transformedCorners)
+        }
+
+        for (faceIndices in mesh.mesh.faces) {
+            if (faceIndices.size < 3) continue
+
+            // Triangulate face
+            for (i in 0 until faceIndices.size - 2) {
+                val v0 = worldVertices[faceIndices[0]]
+                val v1 = worldVertices[faceIndices[i + 1]]
+                val v2 = worldVertices[faceIndices[i + 2]]
+
+                // Broad-phase check for triangle
+                val triMinY = minOf(v0.y, v1.y, v2.y)
+                val triMaxY = maxOf(v0.y, v1.y, v2.y)
+                if (playerMaxY < triMinY || playerMinY > triMaxY) {
+                    continue
+                }
+
+                val closestPoint = closestPointOnTriangle(Vector3d(cylinderCenter.x, 0.0, cylinderCenter.z), Vector3d(v0.x, 0.0, v0.z), Vector3d(v1.x, 0.0, v1.z), Vector3d(v2.x, 0.0, v2.z))
+
+                val distSq = (closestPoint.x - cylinderCenter.x).pow(2) + (closestPoint.z - cylinderCenter.z).pow(2)
+
+                if (distSq < playerRadius.pow(2)) {
+                    val collisionPointY = (playerMinY + playerMaxY) / 2
+                    val collisionPoint = Vector3d(closestPoint.x, collisionPointY, closestPoint.z)
+                    if (worldBlushes.any { it.contains(collisionPoint) }) {
+                        continue
+                    }
+
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private fun closestPointOnTriangle(p: Vector3d, a: Vector3d, b: Vector3d, c: Vector3d): Vector3d {
+        // This is a 2D version for XZ plane
+        val ab = b - a
+        val ac = c - a
+        val ap = p - a
+
+        val d1 = ab.dot(ap)
+        val d2 = ac.dot(ap)
+        if (d1 <= 0.0 && d2 <= 0.0) return a
+
+        val bp = p - b
+        val d3 = ab.dot(bp)
+        val d4 = ac.dot(bp)
+        if (d3 >= 0.0 && d4 <= d3) return b
+
+        val vc = d1 * d4 - d3 * d2
+        if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0) {
+            val v = d1 / (d1 - d3)
+            return a + ab * v
+        }
+
+        val cp = p - c
+        val d5 = ab.dot(cp)
+        val d6 = ac.dot(cp)
+        if (d6 >= 0.0 && d5 <= d6) return c
+
+        val vb = d5 * d2 - d1 * d6
+        if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0) {
+            val w = d2 / (d2 - d6)
+            return a + ac * w
+        }
+
+        val va = d3 * d6 - d5 * d4
+        if (va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0) {
+            val w = (d4 - d3) / ((d4 - d3) + (d5 - d6))
+            return b + (c - b) * w
+        }
+
+        val denom = 1.0 / (va + vb + vc)
+        val v = vb * denom
+        val w = vc * denom
+        return a + ab * v + ac * w
     }
 
     private fun updateCameraPosition(deltaTime: Double) {

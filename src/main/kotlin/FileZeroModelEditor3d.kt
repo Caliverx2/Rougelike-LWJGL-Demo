@@ -1619,12 +1619,16 @@ class ModelEditor : Application() {
         println("            4 -> listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0))")
         println("            else -> face.map { Vector3d(0.0,0.0,0.0) }")
         println("        }")
-        if (blushes.size > 0) {
-            println("    }\n    return Mesh(vertices = vertices, faces = faces, faceUVs = uvs, color = color, blushes = blushes, faceTextureNames = textureMapping, customTextures = customTextures)")
-        } else {
-            println("    }\n    return Mesh(vertices = vertices, faces = faces, faceUVs = uvs, color = color, faceTextureNames = textureMapping, customTextures = customTextures)")
-        }
-        println("}")
+        println("    }")
+        print("    return Mesh(")
+        if(vertices.isNotEmpty()) print("vertices = vertices")
+        if(faces.isNotEmpty()) print(", faces = faces")
+        print(", faceUVs = uvs, color = color")
+        if(blushes.isNotEmpty()) print(", blushes = blushes")
+        if(faceTextureNames.isNotEmpty()) print(", faceTextureNames = textureMapping")
+        if(customTextures.isNotEmpty()) print(", customTextures = customTextures")
+        print(")")
+        println("\n}")
         println("\n")
     }
 
