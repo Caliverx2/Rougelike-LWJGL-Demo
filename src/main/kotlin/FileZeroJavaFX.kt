@@ -312,6 +312,7 @@ object CollisionUtils {
 
     fun testAABBTriangle(aabb: AABB, v0: Vector3d, v1: Vector3d, v2: Vector3d): Boolean {
         // Separating Axis Theorem
+        val collisionSkin = 0.1
         val axes = mutableListOf<Vector3d>()
 
         // axes world
@@ -340,7 +341,7 @@ object CollisionUtils {
             val aabbInterval = getInterval(aabb, axis)
             val triInterval = getInterval(v0, v1, v2, axis)
 
-            if (aabbInterval.second < triInterval.first || triInterval.second < aabbInterval.first) {
+            if (aabbInterval.second < triInterval.first - collisionSkin || triInterval.second < aabbInterval.first - collisionSkin) {
                 return false
             }
         }

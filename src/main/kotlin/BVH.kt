@@ -128,20 +128,21 @@ class BVH {
     }
 
     private fun rayIntersectsTriangle(rayOrigin: Vector3d, rayDir: Vector3d, v0: Vector3d, v1: Vector3d, v2: Vector3d): Double? {
+        val epsilon = 1e-5
         val edge1 = v1 - v0
         val edge2 = v2 - v0
         val h = rayDir.cross(edge2)
         val a = edge1.dot(h)
-        if (a > -1e-6 && a < 1e-6) return null
+        if (a > -epsilon && a < epsilon) return null
         val f = 1.0 / a
         val s = rayOrigin - v0
         val u = f * s.dot(h)
-        if (u < 0.0 || u > 1.0) return null
+        if (u < -epsilon || u > 1.0 + epsilon) return null
         val q = s.cross(edge1)
         val v = f * rayDir.dot(q)
-        if (v < 0.0 || u + v > 1.0) return null
+        if (v < -epsilon || u + v > 1.0 + epsilon) return null
         val t = f * edge2.dot(q)
-        return if (t > 1e-6) t else null
+        return if (t > epsilon) t else null
     }
 
     private fun rayIntersectsAABB(rayOrigin: Vector3d, invDir: Vector3d, maxDist: Double, aabb: AABB): Boolean {

@@ -2129,7 +2129,6 @@ class ModelEditor : Application() {
 
     private fun draw(gc: GraphicsContext, w: Double, h: Double, mouseX: Double, mouseY: Double) {
         gc.fill = Color.BLACK; gc.fillRect(0.0, 0.0, w, h)
-        drawGrid(gc, w, h); drawBlushes(gc, w, h)
 
         if (angleY > PI * 2) angleY -= PI * 2
         if (angleY < -PI * 2) angleY += PI * 2
@@ -2137,6 +2136,8 @@ class ModelEditor : Application() {
         if (angleX > PI * 2) angleX -= PI * 2
 
         initializeZBuffer(w.toInt(), h.toInt())
+
+        drawGrid(gc, w, h)
 
         val backgroundSnapshot = gc.canvas.snapshot(null, null)
         val backgroundReader = backgroundSnapshot.pixelReader
@@ -2235,6 +2236,10 @@ class ModelEditor : Application() {
             gc.setLineDashes()
         }
         drawOrientationGizmo(gc, w, h)
+
+        // Rysuj blushes na samym końcu, aby były zawsze na wierzchu
+        drawBlushes(gc, w, h)
+
         drawVertexInfo(gc, w, h)
         drawGizmo(gc, w, h)
     }
@@ -2348,9 +2353,11 @@ class ModelEditor : Application() {
                                         1.0
                                     )
                                     pixelWriter.setColor(px, py, blendedColor)
+                                } else if (blushMode) {
+                                    pixelWriter.setColor(px, py, texColor.deriveColor(0.0, 1.0, 1.0, 0.2))
                                 } else {
                                     pixelWriter.setColor(px, py, texColor)
-                                }
+                                }                            
                             }
                         }
                     }
@@ -2502,8 +2509,6 @@ class ModelEditor : Application() {
     }
 
     private fun drawBlushes(gc: GraphicsContext, w: Double, h: Double) {
-        if (!blushMode) return
-
         blushes.forEachIndexed { index, aabb ->
             gc.globalAlpha = 0.2
             gc.lineWidth = 1.5
@@ -2516,7 +2521,9 @@ class ModelEditor : Application() {
                 0 to 4, 1 to 5, 2 to 6, 3 to 7  // Krawędzie boczne
             )
             for ((i, j) in blushEdges) {
-                drawClippedLine(gc, corners[i], corners[j], w, h)
+                if (blushMode) {
+                    drawClippedLine(gc, corners[i], corners[j], w, h)
+                }
             }
 
             if (index == selectedBlushIndex) {

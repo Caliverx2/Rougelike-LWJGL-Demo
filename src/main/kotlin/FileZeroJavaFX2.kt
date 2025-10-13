@@ -27,6 +27,9 @@ import kotlin.math.*
 
 class DrawingPanel : StackPane() {
     private var lastUpdateTime = System.nanoTime()
+    private val physicsTimestep = 1.0 / 120.0
+    private var accumulator = 0.0
+
     private val isRendering = java.util.concurrent.atomic.AtomicBoolean(false)
     private val lightGizmoMeshes = Collections.synchronizedList(mutableListOf<PlacedMesh>())
     private val lightSources = Collections.synchronizedList(mutableListOf<LightSource>())
@@ -63,9 +66,9 @@ class DrawingPanel : StackPane() {
     private val scalePlayer = defaultScalePlayer
     private val playerHeight = ((cubeSize / 2 ) - (cubeSize / 20)) * scalePlayer
     private val playerWidth = ((cubeSize / 2 ) - (cubeSize / 20)) * scalePlayer
-    private val playerHalfWidth = playerWidth / 2.0
+    private val playerHalfWidth = playerWidth / 2.3
 
-    private var cameraPosition = Vector3d(0.0, 0.0, 0.0)
+    private var cameraPosition = Vector3d(0.0, 0.1, 0.0)
     private var cameraYaw = 2.4
     private var cameraPitch = 0.0
     private val baseFov = 90.0
@@ -317,16 +320,21 @@ class DrawingPanel : StackPane() {
 
         object : AnimationTimer() {
             override fun handle(now: Long) {
-                val deltaTime = (now - lastUpdateTime) / 1_000_000_000.0
+                val rawDeltaTime = (now - lastUpdateTime) / 1_000_000_000.0
                 lastUpdateTime = now
+                accumulator += rawDeltaTime
+
+                while (accumulator >= physicsTimestep) {
+                    updateCameraPosition(physicsTimestep)
+                    updateGameLogic(physicsTimestep)
+                    accumulator -= physicsTimestep
+                }
 
                 if (now - lastLightCheckTime > lightCheckInterval) {
                     lastLightCheckTime = now
                     updateDynamicLights()
                 }
 
-                updateCameraPosition(deltaTime)
-                updateGameLogic(deltaTime)
                 requestRender()
             }
         }.start()
@@ -438,7 +446,8 @@ class DrawingPanel : StackPane() {
                 val transformedCorners = blush.getCorners().map { corner -> mesh.transformMatrix.transform(corner) }
                 AABB.fromCube(transformedCorners)
             }
-            if (worldBlushes.any { it.contains(testPosition) }) {
+
+            if (worldBlushes.any { it.intersects(playerAABB) }) {
                 continue
             }
 
@@ -732,8 +741,8 @@ class DrawingPanel : StackPane() {
             val playerData = otherPlayers[id]
             if (playerData != null) {
                 val (pos, yaw) = playerData
-                val playerGizmoBaseMesh = createPlayerMesh(0.4 * cubeSize, Color.WHITE)
-                val gizmoTransform = Matrix4x4.translation(pos.x, pos.y - 0.5 * cubeSize, pos.z) * Matrix4x4.rotationY(yaw)
+                val playerGizmoBaseMesh = createPlayerMesh(0.3 * cubeSize, Color.WHITE)
+                val gizmoTransform = Matrix4x4.translation(pos.x, pos.y - 0.6 * cubeSize, pos.z) * Matrix4x4.rotationY(yaw)
                 val placedGizmo = PlacedMesh(playerGizmoBaseMesh, gizmoTransform, collision = true, texture = texCeiling, faceTextures = placedTextures("player", modelRegistry["player"]!!))
                 dynamicMeshes[id] = placedGizmo
                 meshAABBs[placedGizmo] = AABB.fromCube(placedGizmo.getTransformedVertices())
@@ -746,7 +755,7 @@ class DrawingPanel : StackPane() {
             val playerData = otherPlayers[id]
             if (mesh != null && playerData != null) {
                 val (pos, yaw) = playerData
-                mesh.transformMatrix = Matrix4x4.translation(pos.x, pos.y - 0.5 * cubeSize, pos.z) * Matrix4x4.rotationY(yaw)
+                mesh.transformMatrix = Matrix4x4.translation(pos.x, pos.y - 0.6 * cubeSize, pos.z) * Matrix4x4.rotationY(yaw)
                 meshAABBs[mesh] = AABB.fromCube(mesh.getTransformedVertices())
                 physicsNeedsRebuild = true // obiekt się poruszył
             }
@@ -754,7 +763,6 @@ class DrawingPanel : StackPane() {
 
         if (physicsNeedsRebuild) {
             rebuildPhysicsStructures()
-            // Nie przebudowujemy tutaj `staticMeshBatches`, bo dynamiczne obiekty są renderowane osobno.
         }
     }
 
