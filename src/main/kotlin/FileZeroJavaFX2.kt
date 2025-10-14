@@ -109,9 +109,9 @@ class DrawingPanel : StackPane() {
     private var modelRegistry: Map<String, Mesh>
 
     private var isMouseCaptured = false
-    private val mouseSensitivity = 0.003
-    private var accumulatedMouseDeltaX = 0.0
-    private var accumulatedMouseDeltaY = 0.0
+    private val mouseSensitivity = 0.008
+    private var accumulatedMouseDeltaX = 1.0
+    private var accumulatedMouseDeltaY = 1.0
 
     private val robot: Robot by lazy { Robot() }
     private var isRobotCentering = false
@@ -258,7 +258,7 @@ class DrawingPanel : StackPane() {
         meshes.add(PlacedMesh(modelRegistry["invertedPyramid"]!!, Matrix4x4.translation(pos2.x, pos2.y, pos2.z), faceTextures = placedTextures("invertedPyramid", modelRegistry["invertedPyramid"]!!)))
 
         val pos3 = Vector3d(9.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["tower"]!!, Matrix4x4.translation(pos3.x, pos3.y, pos3.z), texture = texBricks))
+        meshes.add(PlacedMesh(modelRegistry["tower"]!!, Matrix4x4.translation(pos3.x, pos3.y, pos3.z) * Matrix4x4.rotationY(PI/4), texture = texBricks))
 
         val pos4 = Vector3d(11.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(modelRegistry["kotlin"]!!, Matrix4x4.translation(pos4.x, pos4.y, pos4.z), texture = texFloor))
