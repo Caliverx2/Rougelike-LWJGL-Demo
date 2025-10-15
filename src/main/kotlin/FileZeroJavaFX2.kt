@@ -135,7 +135,13 @@ class DrawingPanel : StackPane() {
     private val dynamicMeshes = ConcurrentHashMap<String, PlacedMesh>()
 
     private val clientId: String = UUID.randomUUID().toString()
-    private val otherPlayers = ConcurrentHashMap<String, Pair<Vector3d, Double>>()
+    private data class PlayerState(
+        var currentPos: Vector3d,
+        var currentYaw: Double,
+        var targetPos: Vector3d,
+        var targetYaw: Double
+    )
+    private val otherPlayers = ConcurrentHashMap<String, PlayerState>()
 
     init {
         sceneProperty().addListener { _, _, newScene ->
@@ -354,7 +360,17 @@ class DrawingPanel : StackPane() {
                         val y = parts[2].toDouble()
                         val z = parts[3].toDouble()
                         val yaw = parts[4].toDouble()
-                        otherPlayers[receivedClientId] = Pair(Vector3d(x, y, z), yaw)
+                        val newPos = Vector3d(x, y, z)
+
+                        otherPlayers.compute(receivedClientId) { _, existingState ->
+                            if (existingState == null) {
+                                PlayerState(newPos, yaw, newPos, yaw)
+                            } else {
+                                existingState.targetPos = newPos
+                                existingState.targetYaw = yaw
+                                existingState
+                            }
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -791,6 +807,19 @@ class DrawingPanel : StackPane() {
             lightGizmoMeshes.add(placedGizmo)
         }
 
+        // Interpolate other players' positions
+        val interpolationFactor = (deltaTime * 10.0).coerceIn(0.0, 1.0) // Adjust the multiplier for faster/slower interpolation
+        otherPlayers.values.forEach { state ->
+            state.currentPos = state.currentPos.lerp(state.targetPos, interpolationFactor)
+
+            // Smooth yaw interpolation
+            var yawDiff = state.targetYaw - state.currentYaw
+            while (yawDiff < -PI) yawDiff += 2 * PI
+            while (yawDiff > PI) yawDiff -= 2 * PI
+            state.currentYaw += yawDiff * interpolationFactor
+        }
+
+
         // Update dynamic player meshes
         val currentDynamicMeshIds = dynamicMeshes.keys.toSet()
         val activePlayerIds = otherPlayers.keys.toSet()
@@ -810,7 +839,7 @@ class DrawingPanel : StackPane() {
         toAdd.forEach { id ->
             val playerData = otherPlayers[id]
             if (playerData != null) {
-                val (pos, yaw) = playerData
+                val (pos, yaw) = Pair(playerData.currentPos, playerData.currentYaw)
                 val playerGizmoBaseMesh = createPlayerMesh(0.3 * cubeSize, Color.WHITE)
                 val gizmoTransform = Matrix4x4.translation(pos.x, pos.y - 0.6 * cubeSize, pos.z) * Matrix4x4.rotationY(yaw)
                 val placedGizmo = PlacedMesh(playerGizmoBaseMesh, gizmoTransform, collision = true, texture = texCeiling, faceTextures = placedTextures("player", modelRegistry["player"]!!))
@@ -824,7 +853,7 @@ class DrawingPanel : StackPane() {
             val mesh = dynamicMeshes[id]
             val playerData = otherPlayers[id]
             if (mesh != null && playerData != null) {
-                val (pos, yaw) = playerData
+                val (pos, yaw) = Pair(playerData.currentPos, playerData.currentYaw)
                 mesh.transformMatrix = Matrix4x4.translation(pos.x, pos.y - 0.6 * cubeSize, pos.z) * Matrix4x4.rotationY(yaw)
                 meshAABBs[mesh] = AABB.fromCube(mesh.getTransformedVertices())
                 physicsNeedsRebuild = true // obiekt się poruszył
