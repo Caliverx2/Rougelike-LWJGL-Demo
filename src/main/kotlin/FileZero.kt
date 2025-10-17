@@ -291,7 +291,7 @@ fun main() {
             pack()
             setLocationRelativeTo(null)
             isVisible = true
-            iconImage = Toolkit.getDefaultToolkit().getImage(DrawingPanel::class.java.classLoader.getResource("textures/icon.jpeg"))
+            iconImage = Toolkit.getDefaultToolkit().getImage(DrawingPanel::class.java.classLoader.getResource("textures/icon.png"))
         }
     }
 }

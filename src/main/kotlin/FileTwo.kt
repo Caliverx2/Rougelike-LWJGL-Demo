@@ -452,6 +452,6 @@ fun main() {
         frame.pack()
         frame.setLocationRelativeTo(null)
         frame.isVisible = true
-        frame.iconImage = Toolkit.getDefaultToolkit().getImage(Simple3DRenderer::class.java.classLoader.getResource("textures/icon.jpeg"))
+        frame.iconImage = Toolkit.getDefaultToolkit().getImage(Simple3DRenderer::class.java.classLoader.getResource("textures/icon.png"))
     }
 }

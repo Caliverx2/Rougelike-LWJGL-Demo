@@ -418,7 +418,7 @@ class MainApp : Application() {
         }
 
         primaryStage.scene = scene
-        primaryStage.icons.add(Image(DrawingPanel::class.java.classLoader.getResourceAsStream("textures/icon.jpeg")))
+        primaryStage.icons.add(Image(DrawingPanel::class.java.classLoader.getResourceAsStream("textures/icon.png")))
         primaryStage.show()
     }
 }
