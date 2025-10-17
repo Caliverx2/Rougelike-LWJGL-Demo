@@ -695,7 +695,7 @@ class DrawingPanel : StackPane() {
         }
         if (pressedKeys.contains(KeyCode.O)) {
             val lightRadius = 6.0 * cubeSize
-            lightSources.add(LightSource(Vector3d(cameraPosition.x, cameraPosition.y, cameraPosition.z), lightRadius, Color.rgb(255, 255, 255), intensity = 1.0, type = LightType.RAYTRACED_GI))
+            lightSources.add(LightSource(Vector3d(cameraPosition.x, cameraPosition.y, cameraPosition.z), lightRadius, Color.rgb(160, 160, 160), intensity = 1.0, type = LightType.RAYTRACED_GI))
             pressedKeys.remove(KeyCode.O)
         }
         if (pressedKeys.contains(KeyCode.P)) {
@@ -1864,13 +1864,21 @@ class DrawingPanel : StackPane() {
                                 val dynamicLightG = dynamicLight.green * (ambientIntensity * globalLightIntensity)
                                 val dynamicLightB = dynamicLight.blue * (ambientIntensity * globalLightIntensity)
 
-                                val giLightR = giLight.red * (ambientIntensity * globalLightIntensity)
-                                val giLightG = giLight.green * (ambientIntensity * globalLightIntensity)
-                                val giLightB = giLight.blue * (ambientIntensity * globalLightIntensity)
+                                // Modyfikacja GI: im jaśniejsze światło bezpośrednie, tym słabszy efekt GI.
+                                // To sprawia, że GI jest bardziej widoczne w cieniach.
+                                val directLightLuminance = (dynamicLight.red + dynamicLight.green + dynamicLight.blue) / 3.0
+                                val giModulationFactor = (1.0 - directLightLuminance).coerceIn(0.0, 1.0)
 
-                                var r = ambientLitR + dynamicLightR / 4 + giLightR * GI_LightIntensity
-                                var g = ambientLitG + dynamicLightG / 4 + giLightG * GI_LightIntensity
-                                var b = ambientLitB + dynamicLightB / 4 + giLightB * GI_LightIntensity
+                                // Zastosuj modulację do światła GI
+                                val giLightR = giLight.red * (ambientIntensity * globalLightIntensity) * giModulationFactor
+                                val giLightG = giLight.green * (ambientIntensity * globalLightIntensity) * giModulationFactor
+                                val giLightB = giLight.blue * (ambientIntensity * globalLightIntensity) * giModulationFactor
+
+
+                                // Zsumuj wszystkie składowe światła
+                                var r = ambientLitR + dynamicLightR / 4 + giLightR * GI_LightIntensity * 2.0
+                                var g = ambientLitG + dynamicLightG / 4 + giLightG * GI_LightIntensity * 2.0
+                                var b = ambientLitB + dynamicLightB / 4 + giLightB * GI_LightIntensity * 2.0
 
                                 if (texture != this.texSkybox) {
                                     val distance = inv_z_prime
