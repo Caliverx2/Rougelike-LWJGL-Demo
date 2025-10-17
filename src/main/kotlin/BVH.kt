@@ -10,6 +10,7 @@ data class TrianglePrimitive(
     val mesh: PlacedMesh,
     val faceIndex: Int
 ) {
+    var barycentricCoords: Vector3d = Vector3d(0.0, 0.0, 0.0) // u, v, w
     val center: Vector3d = (v0 + v1 + v2) / 3.0
     val bounds: AABB by lazy {
         val minX = min(v0.x, min(v1.x, v2.x))
@@ -127,20 +128,67 @@ class BVH {
         return false
     }
 
-    private fun rayIntersectsTriangle(rayOrigin: Vector3d, rayDir: Vector3d, v0: Vector3d, v1: Vector3d, v2: Vector3d): Double? {
+    fun intersectWithDetails(rayOrigin: Vector3d, rayDir: Vector3d, maxDist: Double, ignoreMesh: PlacedMesh? = null, ignoreFaceIndex: Int = -1): Pair<TrianglePrimitive, Double>? {
+        val rootNode = root ?: return null
+        val invDir = Vector3d(1.0 / rayDir.x, 1.0 / rayDir.y, 1.0 / rayDir.z)
+
+        val nodesToVisit = ArrayDeque<BVHNode>()
+        nodesToVisit.add(rootNode)
+
+        var closestIntersection: Pair<TrianglePrimitive, Double>? = null
+
+        while (nodesToVisit.isNotEmpty()) {
+            val currentNode = nodesToVisit.removeLast()
+
+            if (!rayIntersectsAABB(rayOrigin, invDir, closestIntersection?.second ?: maxDist, currentNode.bounds)) {
+                continue
+            }
+
+            if (currentNode.isLeaf()) {
+                for (primitive in currentNode.primitives) {
+                    if (primitive.mesh === ignoreMesh && primitive.faceIndex == ignoreFaceIndex) {
+                        continue
+                    }
+
+                    val intersectionDist = rayIntersectsTriangle(rayOrigin, rayDir, primitive.v0, primitive.v1, primitive.v2, primitive)
+                    if (intersectionDist != null && intersectionDist > 1e-6 && intersectionDist < (closestIntersection?.second ?: maxDist)) {
+                        val intersectionPoint = rayOrigin + rayDir * intersectionDist
+                        val worldBlushes by lazy {
+                            primitive.mesh.mesh.blushes.map { blush ->
+                                val transformedCorners = blush.getCorners().map { corner -> primitive.mesh.transformMatrix.transform(corner) }
+                                AABB.fromCube(transformedCorners)
+                            }
+                        }
+                        if (worldBlushes.isEmpty() || !worldBlushes.any { it.contains(intersectionPoint) }) {
+                            closestIntersection = Pair(primitive, intersectionDist)
+                        }
+                    }
+                }
+            } else {
+                currentNode.left?.let { nodesToVisit.add(it) }
+                currentNode.right?.let { nodesToVisit.add(it) }
+            }
+        }
+        return closestIntersection
+    }
+
+    private fun rayIntersectsTriangle(rayOrigin: Vector3d, rayDir: Vector3d, v0: Vector3d, v1: Vector3d, v2: Vector3d, primitive: TrianglePrimitive? = null): Double? {
         val epsilon = 1e-5
         val edge1 = v1 - v0
         val edge2 = v2 - v0
         val h = rayDir.cross(edge2)
         val a = edge1.dot(h)
-        if (a > -epsilon && a < epsilon) return null
-        val f = 1.0 / a
+        if (a < epsilon) return null
+        val f = 1.0 / a // inv_a
         val s = rayOrigin - v0
         val u = f * s.dot(h)
         if (u < -epsilon || u > 1.0 + epsilon) return null
         val q = s.cross(edge1)
         val v = f * rayDir.dot(q)
-        if (v < -epsilon || u + v > 1.0 + epsilon) return null
+        if (v < -epsilon || u + v > 1.0 + epsilon) return null // u+v > 1
+
+        primitive?.barycentricCoords = Vector3d(u, v, 1.0 - u - v)
+
         val t = f * edge2.dot(q)
         return if (t > epsilon) t else null
     }

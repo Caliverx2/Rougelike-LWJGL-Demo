@@ -34,6 +34,13 @@ data class Vector3d(var x: Double, var y: Double, var z: Double) {
         return if (length != 0.0) Vector3d(x / length, y / length, z / length) else Vector3d(0.0, 0.0, 0.0)
     }
     fun length(): Double = sqrt(x * x + y * y + z * z)
+
+    fun distanceSquared(other: Vector3d): Double {
+        val dx = this.x - other.x
+        val dy = this.y - other.y
+        val dz = this.z - other.z
+        return dx * dx + dy * dy + dz * dz
+    }
 }
 
 data class Vector4d(val x: Double, val y: Double, val z: Double, val w: Double)
@@ -170,10 +177,11 @@ data class RenderableFace(
     val color: Color,
     val isTransparent: Boolean,
     val texture: Image? = null,
-    val worldVertices: List<Vector3d> = listOf(),
+    val worldVertices: List<Vector3d> = emptyList(),
     val lightGrid: Array<Array<Color>>? = null,
     val blushes: List<AABB> = emptyList(),
-    val blushContainerAABB: AABB?
+    val blushContainerAABB: AABB? = null,
+    val giGrid: Array<Array<Color>>? = null
 )
 
 data class Mesh(
@@ -382,7 +390,7 @@ val GRID_4 = arrayOf(
 
 val GRID_MAP: Array<Array<Array<Int>>> = Array(18) { Array(18) { Array(18) { 0 } } }
 
-enum class LightType { RAYTRACED, VERTEX }
+enum class LightType { RAYTRACED, VERTEX, RAYTRACED_GI }
 
 class LightSource(
     var position: Vector3d,

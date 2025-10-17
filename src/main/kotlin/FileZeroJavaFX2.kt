@@ -43,6 +43,13 @@ class DrawingPanel : StackPane() {
         val faceIndexToOriginal: Map<Int, Pair<PlacedMesh, Int>>
     )
 
+    private data class GI_LightPoint(
+        val targetFaceKey: Pair<PlacedMesh, Int>,
+        val gridX: Int,
+        val gridY: Int,
+        val color: Vector3d
+    )
+
     private data class FaceToProcess(
         val source: Any, // PlacedMesh or StaticMeshBatch
         val faceIndex: Int,
@@ -54,7 +61,10 @@ class DrawingPanel : StackPane() {
     private val textureTransparencyCache = ConcurrentHashMap<Image, Boolean>()
 
     private val faceLightGrids = ConcurrentHashMap<Pair<PlacedMesh, Int>, Array<Array<Color>>>()
+    private val giLightGrids = ConcurrentHashMap<Pair<PlacedMesh, Int>, Array<Array<Color>>>()
     private val lightingUpdateQueue = ConcurrentLinkedQueue<Pair<PlacedMesh, Int>>()
+    private val giUpdateQueue = ConcurrentLinkedQueue<Pair<PlacedMesh, Int>>()
+    private val giLightPoints = Collections.synchronizedList(mutableListOf<GI_LightPoint>())
     private val lightingExecutor = Executors.newSingleThreadExecutor()
     private val lightingUpdateJobQueue = ConcurrentLinkedQueue<LightSource>()
     private var lightingFuture: Future<*>? = null
@@ -85,6 +95,9 @@ class DrawingPanel : StackPane() {
     private val HIGH_QualityRes = 16
     private val LOW_QualityRes = 8
     private val globalLightIntensity = 6.0
+    private val GI_LightIntensity = 1.1
+    private val GI_SAMPLES = 4 // 4
+    private val bouncesLeft = 2 // 2
 
     private var retroScanLineMode = false
     private val renderDownscaleFactor = 4
@@ -245,6 +258,7 @@ class DrawingPanel : StackPane() {
             "colorPalette" to createColorPaletteMesh(cubeSize, Color.WHITE),
             "TNT" to createTNTMesh(cubeSize, Color.WHITE),
             "player" to createPlayerMesh(cubeSize, Color.WHITE),
+            "rtMap" to createRayTracingMapMesh(cubeSize, Color.WHITE),
         )
 
         modelRegistry.forEach { (modelName, mesh) ->
@@ -289,6 +303,9 @@ class DrawingPanel : StackPane() {
 
         val pos11 = Vector3d(21.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(modelRegistry["TNT"]!!, Matrix4x4.translation(pos11.x, pos11.y, pos11.z), faceTextures = placedTextures("TNT", modelRegistry["TNT"]!!)))
+
+        val pos12 = Vector3d(23.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(modelRegistry["rtMap"]!!, Matrix4x4.translation(pos12.x, pos12.y, pos12.z), faceTextures = placedTextures("rtMap", modelRegistry["rtMap"]!!)))
 
         for (x in 0 until gridDimension) {
             for (y in 0 until gridDimension) {
@@ -678,7 +695,7 @@ class DrawingPanel : StackPane() {
         }
         if (pressedKeys.contains(KeyCode.O)) {
             val lightRadius = 6.0 * cubeSize
-            lightSources.add(LightSource(Vector3d(cameraPosition.x, cameraPosition.y, cameraPosition.z), lightRadius, Color.rgb(255, 0, 0)))
+            lightSources.add(LightSource(Vector3d(cameraPosition.x, cameraPosition.y, cameraPosition.z), lightRadius, Color.rgb(255, 255, 255), intensity = 1.0, type = LightType.RAYTRACED_GI))
             pressedKeys.remove(KeyCode.O)
         }
         if (pressedKeys.contains(KeyCode.P)) {
@@ -710,8 +727,13 @@ class DrawingPanel : StackPane() {
             pressedKeys.remove(KeyCode.PERIOD)
         }
         if (pressedKeys.contains(KeyCode.X)) {
-            lightSources.clear()
+            lightingFuture?.cancel(true)
+            synchronized(lightSources) { lightSources.clear() }
+            synchronized(orbitingLights) { orbitingLights.clear() }
+            lightingUpdateJobQueue.clear()
             faceLightGrids.clear()
+            giLightGrids.clear()
+            giLightPoints.clear()
         }
 
         if (cameraYaw > 2 * PI) cameraYaw -= 2 * PI
@@ -1025,6 +1047,10 @@ class DrawingPanel : StackPane() {
         }
 
         for (item in sortedItems) {
+            if (Thread.currentThread().isInterrupted) {
+                break
+            }
+
             val (mesh, faceIndex) = item
 
             val faceIndices = mesh.mesh.faces[faceIndex]
@@ -1047,7 +1073,7 @@ class DrawingPanel : StackPane() {
                     continue
                 }
 
-                if (light.type == LightType.RAYTRACED) {
+                if (light.type == LightType.RAYTRACED || light.type == LightType.RAYTRACED_GI) {
                     val cornerUVs = if (worldVerts.size == 4) listOf(Pair(0.0, 0.0), Pair(1.0, 0.0), Pair(1.0, 1.0), Pair(0.0, 1.0)) else listOf(Pair(0.0, 0.0), Pair(1.0, 0.0), Pair(0.0, 1.0))
                     val cornerPoints = cornerUVs.map { (u, v) ->
                         if (worldVerts.size == 4) {
@@ -1119,7 +1145,7 @@ class DrawingPanel : StackPane() {
 
                                 if (!isOccluded(rayOrigin, rayTarget, mesh, faceIndex)) {
                                     val attenuation = 1.0 - (dist / light.radius).coerceIn(0.0, 10.0)
-                                    val influence = light.intensity * attenuation
+                                    val influence = (light.intensity * attenuation)//.coerceIn(0.0, 1.0)
                                     val existingColor = finalLightGrid[i_sub][j_sub]
                                     val lightColor = light.color
                                     val newR = (existingColor.red + lightColor.red * influence).coerceIn(0.0, 1.0)
@@ -1127,6 +1153,23 @@ class DrawingPanel : StackPane() {
                                     val newB = (existingColor.blue + lightColor.blue * influence).coerceIn(0.0, 1.0)
                                     finalLightGrid[i_sub][j_sub] = Color(newR, newG, newB, 1.0)
                                     isFaceLitAtAll = true
+
+                                    // --- Global Illumination (odbicia) ---
+                                    if (light.type == LightType.RAYTRACED_GI) {
+                                        for (i in 0 until GI_SAMPLES) {
+                                            val incidentDir = (pointOnFace - rayOrigin).normalize()
+                                            traceReflection(
+                                                reflectionOrigin = pointOnFace,
+                                                incidentDirection = incidentDir,
+                                                surfaceNormal = faceNormal,
+                                                incomingLight = Vector3d(lightColor.red * influence, lightColor.green * influence, lightColor.blue * influence),
+                                                bouncesLeft = bouncesLeft,
+                                                sourceMesh = mesh,
+                                                sourceFaceIndex = faceIndex,
+                                                remainingDistance = light.radius - dist
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1201,6 +1244,232 @@ class DrawingPanel : StackPane() {
                 Thread.currentThread().interrupt()
                 break
             }
+        }
+
+        applyGILightPoints(resolution)
+    }
+
+    private fun traceReflection(reflectionOrigin: Vector3d, incidentDirection: Vector3d, surfaceNormal: Vector3d, incomingLight: Vector3d, bouncesLeft: Int, sourceMesh: PlacedMesh, sourceFaceIndex: Int, remainingDistance: Double) {
+        if (bouncesLeft <= 0 || remainingDistance <= 0) {
+            return
+        }
+
+        var randomDir: Vector3d
+        do {
+            randomDir = Vector3d(Math.random() * 2 - 1, Math.random() * 2 - 1, Math.random() * 2 - 1)
+        } while (randomDir.length() > 1.0)
+        randomDir = randomDir.normalize()
+        if (randomDir.dot(surfaceNormal) < 0) {
+            randomDir *= -1.0
+        }
+        val bounceOrigin = reflectionOrigin + randomDir * 0.1
+
+        val bounceHitResult = bvh.intersectWithDetails(bounceOrigin, randomDir, remainingDistance, sourceMesh, sourceFaceIndex)
+
+        if (bounceHitResult != null) {
+            val (finalHitPrimitive, finalHitDist) = bounceHitResult
+            val finalHitPoint = bounceOrigin + randomDir * finalHitDist
+
+            // albedo
+            val surfaceTexture = sourceMesh.faceTextures[sourceFaceIndex] ?: sourceMesh.texture
+            val surfaceAlbedo = if (surfaceTexture != null) {
+                val texColor = surfaceTexture.pixelReader.getColor(0, 0)
+                Vector3d(texColor.red, texColor.green, texColor.blue)
+            } else {
+                val meshColor = sourceMesh.mesh.color
+                Vector3d(meshColor.red, meshColor.green, meshColor.blue)
+            }
+
+            val outgoingLight = Vector3d(
+                (incomingLight.x * surfaceAlbedo.x).coerceIn(0.0, 1.0),
+                (incomingLight.y * surfaceAlbedo.y).coerceIn(0.0, 1.0),
+                (incomingLight.z * surfaceAlbedo.z).coerceIn(0.0, 1.0)
+            )
+
+            // dodaj światło do siatki trafionej powierzchni (jeśli to ostatnie odbicie) lub kontynuuj rekurencję
+            if (bouncesLeft == 1) {
+                // w który piksel siatki światła trafił promień
+                val barycentricCoords = finalHitPrimitive.barycentricCoords
+                val allFaceUVs = finalHitPrimitive.mesh.mesh.faceUVs[finalHitPrimitive.faceIndex]
+
+                val u: Double
+                val v: Double
+
+                if (allFaceUVs.size == 4) {
+                    val triUVs: List<Vector3d>
+                    val meshFaceIndices = finalHitPrimitive.mesh.mesh.faces[finalHitPrimitive.faceIndex]
+                    val meshV1 = finalHitPrimitive.mesh.getTransformedVertices()[meshFaceIndices[1]]
+
+                    triUVs = if (finalHitPrimitive.v1 == meshV1) {
+                        // Pierwszy trójkąt (0, 1, 2)
+                        listOf(allFaceUVs[0], allFaceUVs[1], allFaceUVs[2])
+                    } else {
+                        // Drugi trójkąt (0, 2, 3)
+                        listOf(allFaceUVs[0], allFaceUVs[2], allFaceUVs[3])
+                    }
+                    // Interpolacja dla trójkąta
+                    u = triUVs[0].x * barycentricCoords.z + triUVs[1].x * barycentricCoords.x + triUVs[2].x * barycentricCoords.y
+                    v = triUVs[0].y * barycentricCoords.z + triUVs[1].y * barycentricCoords.x + triUVs[2].y * barycentricCoords.y
+                } else {
+                    u = allFaceUVs[0].x * barycentricCoords.z + allFaceUVs[1].x * barycentricCoords.x + allFaceUVs[2].x * barycentricCoords.y
+                    v = allFaceUVs[0].y * barycentricCoords.z + allFaceUVs[1].y * barycentricCoords.x + allFaceUVs[2].y * barycentricCoords.y
+                }
+
+
+                val gridX = (u * HIGH_QualityRes).toInt().coerceIn(0, HIGH_QualityRes - 1)
+                val gridY = ((1.0 - v) * HIGH_QualityRes).toInt().coerceIn(0, HIGH_QualityRes - 1)
+
+                // Zamiast modyfikować mapę, dodaj punkt do kolejki
+                giLightPoints.add(GI_LightPoint(
+                    targetFaceKey = Pair(finalHitPrimitive.mesh, finalHitPrimitive.faceIndex),
+                    gridX = gridX,
+                    gridY = gridY,
+                    color = outgoingLight
+                ))
+            } else {
+                val finalHitNormal = (finalHitPrimitive.v1 - finalHitPrimitive.v0).cross(finalHitPrimitive.v2 - finalHitPrimitive.v0).normalize()
+                traceReflection(finalHitPoint, randomDir, finalHitNormal, outgoingLight, bouncesLeft - 1, finalHitPrimitive.mesh, finalHitPrimitive.faceIndex, remainingDistance - finalHitDist)
+            }
+        }
+    }
+
+    private fun getPointOnFace(mesh: PlacedMesh, faceIndex: Int, u: Double, v: Double): Vector3d {
+        val worldVerts = mesh.mesh.faces[faceIndex].map { vi -> mesh.transformMatrix.transform(mesh.mesh.vertices[vi]) }
+        return if (worldVerts.size == 4) {
+            val p1 = worldVerts[0].lerp(worldVerts[1], u)
+            val p2 = worldVerts[3].lerp(worldVerts[2], u)
+            p1.lerp(p2, v)
+        } else {
+            var u_bary = u; var v_bary = v
+            if (u_bary + v_bary > 1.0) { u_bary = 1.0 - u_bary; v_bary = 1.0 - v_bary }
+            worldVerts[0] * (1.0 - u_bary - v_bary) + worldVerts[1] * u_bary + worldVerts[2] * v_bary
+        }
+    }
+
+    private fun applyGILightPoints(resolution: Int) {
+        synchronized(giLightPoints) {
+            if (giLightPoints.isEmpty()) return
+
+            // pogrupuj punkty GI według ściany, na którą padają
+            val pointsByFace = giLightPoints.groupBy { it.targetFaceKey }
+
+            // mapa wierzchołków do ścian dla szybkiego wyszukiwania sąsiadów
+            val vertexToFacesMap = mutableMapOf<Vector3d, MutableList<Pair<PlacedMesh, Int>>>()
+            for (faceKey in pointsByFace.keys) {
+                val (mesh, faceIndex) = faceKey
+                val worldVerts = mesh.mesh.faces[faceIndex].map { mesh.transformMatrix.transform(mesh.mesh.vertices[it]) }
+                worldVerts.forEach { vertex ->
+                    vertexToFacesMap.computeIfAbsent(vertex) { mutableListOf() }.add(faceKey)
+                }
+            }
+
+            for ((faceKey, pointsOnFace) in pointsByFace) {
+                if (Thread.currentThread().isInterrupted) {
+                    break
+                }
+
+                val giGrid = giLightGrids.computeIfAbsent(faceKey) { Array(resolution) { Array(resolution) { Color.BLACK } } }
+
+                // Znajdź sąsiadujące ściany
+                val (currentMesh, currentFaceIndex) = faceKey
+                val currentWorldVerts = currentMesh.mesh.faces[currentFaceIndex].map { currentMesh.transformMatrix.transform(currentMesh.mesh.vertices[it]) }
+                val neighborFaceKeys = currentWorldVerts.flatMap { vertex -> vertexToFacesMap[vertex] ?: emptyList() }
+                    .filter { it != faceKey }
+                    .distinct()
+
+                val allRelevantPoints = pointsOnFace.toMutableList()
+                neighborFaceKeys.forEach { neighborKey ->
+                    pointsByFace[neighborKey]?.let { allRelevantPoints.addAll(it) }
+                }
+
+                // wypełnij siatkę oświetlenia - metodą IDW
+                for (y in 0 until resolution) {
+                    for (x in 0 until resolution) {
+                        // Oblicz pozycję 3D piksela na siatce
+                        val u = (x + 0.5) / resolution
+                        val v = 1.0 - ((y + 0.5) / resolution) // Odwrócone V
+                        val pointOnFace3D = getPointOnFace(currentMesh, currentFaceIndex, u, v)
+
+                        var totalWeight = 0.0
+                        var weightedR = 0.0
+                        var weightedG = 0.0
+                        var weightedB = 0.0
+
+                        // Zbierz wpływy od wszystkich relevantnych punktów GI (z tej ściany i sąsiadów)
+                        for (point in allRelevantPoints) {
+                            val (pointMesh, pointFaceIndex) = point.targetFaceKey
+                            val pointU = (point.gridX + 0.5) / resolution
+                            val pointV = 1.0 - ((point.gridY + 0.5) / resolution)
+                            val point3D = getPointOnFace(pointMesh, pointFaceIndex, pointU, pointV)
+
+                            val distanceSq = pointOnFace3D.distanceSquared(point3D)
+
+                            val weight = 1.0 / (distanceSq + 0.01)
+
+                            weightedR += point.color.x * weight
+                            weightedG += point.color.y * weight
+                            weightedB += point.color.z * weight
+                            totalWeight += weight
+                        }
+
+                        // Oblicz ostateczny kolor jako średnią ważoną
+                        if (totalWeight > 0) {
+                            val finalR = (weightedR / totalWeight).coerceIn(0.0, 1.0)
+                            val finalG = (weightedG / totalWeight).coerceIn(0.0, 1.0)
+                            val finalB = (weightedB / totalWeight).coerceIn(0.0, 1.0)
+
+                            giGrid[x][y] = Color(
+                                finalR,
+                                finalG,
+                                finalB,
+                                1.0
+                            )
+                        }
+                    }
+                }
+
+                // --- POST-PROCESSING: Wygładzanie oryginalnych punktów odbicia ---
+                // Zastąp kolor w miejscu oryginalnego trafienia promienia GI średnią z sąsiadów,
+                // aby wtopić go w uśrednione otoczenie.
+                for (point in pointsOnFace) { // Iteruj tylko po punktach, które trafiły w TĘ ścianę
+                    val px = point.gridX
+                    val py = point.gridY
+
+                    var sumR = 0.0
+                    var sumG = 0.0
+                    var sumB = 0.0
+                    var count = 0
+
+                    val neighbors = listOf(
+                        Pair(px, py - 1), // Góra
+                        Pair(px, py + 1), // Dół
+                        Pair(px - 1, py), // Lewo
+                        Pair(px + 1, py)  // Prawo
+                    )
+
+                    for ((nx, ny) in neighbors) {
+                        if (nx >= 0 && nx < resolution && ny >= 0 && ny < resolution) {
+                            val neighborColor = giGrid[nx][ny]
+                            sumR += neighborColor.red
+                            sumG += neighborColor.green
+                            sumB += neighborColor.blue
+                            count++
+                        }
+                    }
+
+                    if (count > 0) {
+                        giGrid[px][py] = Color(
+                            (sumR / count).coerceIn(0.0, 1.0),
+                            (sumG / count).coerceIn(0.0, 1.0),
+                            (sumB / count).coerceIn(0.0, 1.0),
+                            1.0
+                        )
+                    }
+                }
+
+                giUpdateQueue.add(faceKey)
+            }
+            giLightPoints.clear()
         }
     }
 
@@ -1363,6 +1632,7 @@ class DrawingPanel : StackPane() {
                         val faceTexCoords: List<Vector3d>
                         val lightGrid: Array<Array<Color>>?
                         val faceTexture: Image?
+                        val giGrid: Array<Array<Color>>?
                         val meshColor: Color
                         val modelName: String?
                         val worldBlushes: List<AABB>
@@ -1372,6 +1642,7 @@ class DrawingPanel : StackPane() {
                             val mesh = faceData.source
                             faceTexCoords = mesh.mesh.faceUVs[faceData.faceIndex]
                             lightGrid = faceLightGrids[Pair(mesh, faceData.faceIndex)]
+                            giGrid = giLightGrids[Pair(mesh, faceData.faceIndex)]
                             meshColor = mesh.mesh.color
                             modelName = modelRegistry.entries.find { it.value === mesh.mesh }?.key
                             val textureName = mesh.mesh.faceTextureNames[faceData.faceIndex]
@@ -1393,6 +1664,7 @@ class DrawingPanel : StackPane() {
                             faceTexCoords = batch.mesh.faceUVs[faceData.faceIndex]
                             val originalFaceInfo = batch.faceIndexToOriginal[faceData.faceIndex]
                             lightGrid = if (originalFaceInfo != null) faceLightGrids[originalFaceInfo] else null
+                            giGrid = if (originalFaceInfo != null) giLightGrids[originalFaceInfo] else null
                             faceTexture = batch.texture
                             meshColor = batch.mesh.color
                             modelName = null
@@ -1422,23 +1694,7 @@ class DrawingPanel : StackPane() {
                         }
 
                         for ((triWorld, triUV) in triangles) {
-                            val clippedTriangles = clipTriangleAgainstNearPlane(triWorld, triUV, viewMatrix, 0.1)
-                            for ((clippedW, clippedUVs) in clippedTriangles) {
-                                val projectedVertices = mutableListOf<Vector3d>()
-                                val originalClipW = mutableListOf<Double>()
-                                for (vertex in clippedW) {
-                                    val projectedHomogeneous = combinedMatrix.transformHomogeneous(vertex)
-                                    val w = projectedHomogeneous.w
-                                    if (w.isCloseToZero()) continue
-                                    projectedVertices.add(Vector3d((projectedHomogeneous.x / w + 1) * virtualWidth / 2.0, (1 - projectedHomogeneous.y / w) * virtualHeight / 2.0, projectedHomogeneous.z / w))
-                                    originalClipW.add(w)
-                                }
-                                if (projectedVertices.size == 3) {
-                                    val isTransparent = isTextureTransparent(faceTexture)
-                                    val face = RenderableFace(projectedVertices, originalClipW, clippedUVs, meshColor, false, faceTexture, clippedW, lightGrid, worldBlushes, blushContainerAABB)
-                                    if (isTransparent) transparentRenderQueue.add(face) else renderQueue.add(face)
-                                }
-                            }
+                            processAndQueueRenderableFace(triWorld, triUV, meshColor, faceTexture, lightGrid, giGrid, worldBlushes, blushContainerAABB, combinedMatrix, viewMatrix)
                         }
                     }
                 }
@@ -1446,6 +1702,31 @@ class DrawingPanel : StackPane() {
         }
 
         for (task in tasks) { task.get() }
+
+        // Przetwarzanie ścian zaktualizowanych przez GI
+        while (giUpdateQueue.isNotEmpty()) {
+            val faceToUpdateKey = giUpdateQueue.poll() ?: continue
+            val (mesh, faceIndex) = faceToUpdateKey
+
+            val faceIndices = mesh.mesh.faces.getOrNull(faceIndex) ?: continue
+            val worldVertices = faceIndices.map { mesh.transformMatrix.transform(mesh.mesh.vertices[it]) }
+            val faceTexCoords = mesh.mesh.faceUVs.getOrNull(faceIndex) ?: continue
+            val lightGrid = faceLightGrids[faceToUpdateKey]
+            val faceTexture = mesh.faceTextures[faceIndex] ?: mesh.texture
+            val giGrid = giLightGrids[faceToUpdateKey]
+
+            // Ponownie trianguluj i dodaj do kolejki renderowania
+            val triangles = if (faceIndices.size == 4) {
+                listOf(
+                    Pair(listOf(worldVertices[0], worldVertices[1], worldVertices[2]), listOf(faceTexCoords[0], faceTexCoords[1], faceTexCoords[2])),
+                    Pair(listOf(worldVertices[0], worldVertices[2], worldVertices[3]), listOf(faceTexCoords[0], faceTexCoords[2], faceTexCoords[3]))
+                )
+            } else {
+                listOf(Pair(worldVertices, faceTexCoords))
+            }
+
+            triangles.forEach { (triWorld, triUV) -> processAndQueueRenderableFace(triWorld, triUV, mesh.mesh.color, faceTexture, lightGrid, giGrid, emptyList(), null, combinedMatrix, viewMatrix) }
+        }
 
         // Rasteryzuj kolejki
         while (renderQueue.isNotEmpty()) {
@@ -1467,7 +1748,7 @@ class DrawingPanel : StackPane() {
     }
 
     private fun rasterizeTexturedTriangle(pixelBuffer: IntArray, renderableFace: RenderableFace, screenWidth: Int, screenHeight: Int) {
-        val (screenVertices, originalClipW, textureVertices, color, _, texture, worldVertices, lightGrid, blushes, blushContainerAABB) = renderableFace
+        val (screenVertices, originalClipW, textureVertices, color, _, texture, worldVertices, lightGrid, blushes, blushContainerAABB, giGrid) = renderableFace
         if (screenVertices.size != 3 || textureVertices.size != 3 || originalClipW.size != 3) return
 
         val v0 = screenVertices[0]; val v1 = screenVertices[1]; val v2 = screenVertices[2]
@@ -1526,9 +1807,9 @@ class DrawingPanel : StackPane() {
                         val inv_z_prime = 1.0 / interpolated_z_inv_prime
                         val interpolatedWorldPos = (wVert0_prime * alpha + wVert1_prime * beta + wVert2_prime * gamma) * inv_z_prime
 
-                        val isInBlush = if (blushContainerAABB != null && blushContainerAABB.contains(interpolatedWorldPos)) {
-                            blushes.any { it.contains(interpolatedWorldPos) }
-                        } else false
+                        val isInBlush = blushContainerAABB?.contains(interpolatedWorldPos) == true && blushes.any { blush ->
+                            blush.contains(interpolatedWorldPos)
+                        }
 
                         if (!isInBlush) {
                             val pixelIndex = px + rowOffset
@@ -1566,6 +1847,15 @@ class DrawingPanel : StackPane() {
                                     Color.BLACK
                                 }
 
+                                val giLight = if (giGrid != null) {
+                                    val lightGridResolution = giGrid.size
+                                    val gridX = (u * lightGridResolution).toInt().coerceIn(0, lightGridResolution - 1)
+                                    val gridY = ((1.0 - v) * lightGridResolution).toInt().coerceIn(0, lightGridResolution - 1)
+                                    giGrid[gridX][gridY]
+                                } else {
+                                    Color.BLACK
+                                }
+
                                 val ambientLitR = texColor.red * (ambientR * 2)
                                 val ambientLitG = texColor.green * (ambientG * 2)
                                 val ambientLitB = texColor.blue * (ambientB * 2)
@@ -1574,9 +1864,13 @@ class DrawingPanel : StackPane() {
                                 val dynamicLightG = dynamicLight.green * (ambientIntensity * globalLightIntensity)
                                 val dynamicLightB = dynamicLight.blue * (ambientIntensity * globalLightIntensity)
 
-                                var r = ambientLitR + dynamicLightR / 4
-                                var g = ambientLitG + dynamicLightG / 4
-                                var b = ambientLitB + dynamicLightB / 4
+                                val giLightR = giLight.red * (ambientIntensity * globalLightIntensity)
+                                val giLightG = giLight.green * (ambientIntensity * globalLightIntensity)
+                                val giLightB = giLight.blue * (ambientIntensity * globalLightIntensity)
+
+                                var r = ambientLitR + dynamicLightR / 4 + giLightR * GI_LightIntensity
+                                var g = ambientLitG + dynamicLightG / 4 + giLightG * GI_LightIntensity
+                                var b = ambientLitB + dynamicLightB / 4 + giLightB * GI_LightIntensity
 
                                 if (texture != this.texSkybox) {
                                     val distance = inv_z_prime
@@ -1656,6 +1950,31 @@ class DrawingPanel : StackPane() {
             bary_w0_row += B12
             bary_w1_row += B20
             bary_w2_row += B01
+        }
+    }
+
+    private fun processAndQueueRenderableFace(worldVerts: List<Vector3d>, texCoords: List<Vector3d>, color: Color, texture: Image?, lightGrid: Array<Array<Color>>?, giGrid: Array<Array<Color>>?, blushes: List<AABB>, blushContainerAABB: AABB?, combinedMatrix: Matrix4x4, viewMatrix: Matrix4x4) {
+        val clippedTriangles = clipTriangleAgainstNearPlane(worldVerts, texCoords, viewMatrix, 0.1)
+
+        for ((clippedW, clippedUVs) in clippedTriangles) {
+            val projectedVertices = mutableListOf<Vector3d>()
+            val originalClipW = mutableListOf<Double>()
+            for (vertex in clippedW) {
+                val projectedHomogeneous = combinedMatrix.transformHomogeneous(vertex)
+                val w = projectedHomogeneous.w
+                if (w.isCloseToZero()) continue
+                projectedVertices.add(Vector3d((projectedHomogeneous.x / w + 1) * virtualWidth / 2.0, (1 - projectedHomogeneous.y / w) * virtualHeight / 2.0, projectedHomogeneous.z / w))
+                originalClipW.add(w)
+            }
+            if (projectedVertices.size == 3) {
+                val isTransparent = isTextureTransparent(texture)
+                val face = RenderableFace(projectedVertices, originalClipW, clippedUVs, color, false, texture, clippedW, lightGrid, blushes, blushContainerAABB, giGrid)
+                if (isTransparent) {
+                    transparentRenderQueue.add(face)
+                } else {
+                    renderQueue.add(face)
+                }
+            }
         }
     }
 
