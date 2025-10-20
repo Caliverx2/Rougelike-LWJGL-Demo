@@ -77,7 +77,7 @@ class DrawingPanel : StackPane() {
     private val playerHeight = ((cubeSize / 2) - (cubeSize / 20)) * scalePlayer
     private val playerRadius = 0.3 * cubeSize
 
-    private var cameraPosition = Vector3d(0.0, 0.1, 0.0)
+    private var cameraPosition = Vector3d(0.0, 0.0, 0.0)
     private var cameraYaw = 2.4
     private var cameraPitch = 0.0
     private val baseFov = 90.0
@@ -85,6 +85,7 @@ class DrawingPanel : StackPane() {
 
     private var debugFly = false
     private var debugNoclip = false
+    private var debugShowHitboxes = false
 
     private val fogColor = Color.rgb(180, 180, 180)
     private val fogStartDistance = 1.5 * cubeSize
@@ -221,7 +222,7 @@ class DrawingPanel : StackPane() {
 
         children.addAll(imageView, overlayCanvas)
 
-        cameraPosition = Vector3d(-2.5 * cubeSize, (-3.97 * cubeSize) + playerHeight, 1.5 * cubeSize)
+        cameraPosition = Vector3d(-2.5 * cubeSize, (-3.95 * cubeSize) + playerHeight, 1.5 * cubeSize)
 
         val grids = listOf(GRID_1, GRID_2, GRID_3, GRID_4)
         for (x in 0 until gridDimension) {
@@ -259,6 +260,7 @@ class DrawingPanel : StackPane() {
             "TNT" to createTNTMesh(cubeSize, Color.WHITE),
             "player" to createPlayerMesh(cubeSize, Color.WHITE),
             "rtMap" to createRayTracingMapMesh(cubeSize, Color.WHITE),
+            "ramp" to createRampMesh(cubeSize, Color.WHITE)
         )
 
         modelRegistry.forEach { (modelName, mesh) ->
@@ -306,6 +308,9 @@ class DrawingPanel : StackPane() {
 
         val pos12 = Vector3d(23.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(modelRegistry["rtMap"]!!, Matrix4x4.translation(pos12.x, pos12.y, pos12.z), faceTextures = placedTextures("rtMap", modelRegistry["rtMap"]!!)))
+
+        val pos13 = Vector3d(25.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(modelRegistry["ramp"]!!, Matrix4x4.translation(pos13.x, pos13.y, pos13.z), faceTextures = placedTextures("ramp", modelRegistry["ramp"]!!)))
 
         for (x in 0 until gridDimension) {
             for (y in 0 until gridDimension) {
@@ -463,6 +468,10 @@ class DrawingPanel : StackPane() {
         if (code == KeyCode.ESCAPE) {
             isMouseCaptured = false
             scene.cursor = Cursor.DEFAULT
+        }
+        if (code == KeyCode.B) {
+            debugShowHitboxes = !debugShowHitboxes
+            println("debugShowHitboxes: $debugShowHitboxes")
         }
     }
 
@@ -760,6 +769,44 @@ class DrawingPanel : StackPane() {
         gc.strokeLine(overlayCanvas.width/2-cursorSize, overlayCanvas.height/2, overlayCanvas.width/2+cursorSize, overlayCanvas.height/2)
         gc.strokeLine(overlayCanvas.width/2, overlayCanvas.height/2-cursorSize, overlayCanvas.width/2, overlayCanvas.height/2+cursorSize)
 
+        if (debugShowHitboxes) {
+            val lookDirection = Vector3d(cos(cameraPitch) * sin(cameraYaw), sin(cameraPitch), cos(cameraPitch) * cos(cameraYaw)).normalize()
+            val upVector = Vector3d(0.0, 1.0, 0.0)
+            val viewMatrix = Matrix4x4.lookAt(cameraPosition, cameraPosition + lookDirection, upVector)
+            val projectionMatrix = Matrix4x4.perspective(dynamicFov, overlayCanvas.width / overlayCanvas.height, 0.1, renderDistanceBlocks * 2)
+            val combinedMatrix = projectionMatrix * viewMatrix
+
+            val allMeshes = meshes + dynamicMeshes.values
+            for (mesh in allMeshes.filter { it.collision }) {
+                val aabb = meshAABBs[mesh] ?: continue
+                if (isAabbOutsideFrustum(aabb, combinedMatrix)) continue
+
+                // Draw collision mesh (green)
+                gc.stroke = Color.LIMEGREEN
+                gc.lineWidth = 1.5
+                val worldVertices = mesh.getTransformedVertices()
+                for (faceIndices in mesh.mesh.faces) {
+                    if (faceIndices.size < 3) continue
+                    drawFaceWireframe(gc, faceIndices.map { worldVertices[it] }, combinedMatrix)
+                }
+
+                // Draw blushes (red)
+                gc.stroke = Color.RED
+                gc.lineWidth = 1.0
+                for (blush in mesh.mesh.blushes) {
+                    val blushCorners = blush.getCorners().map { mesh.transformMatrix.transform(it) }
+                    val blushFaces = listOf(
+                        listOf(blushCorners[0], blushCorners[1], blushCorners[3], blushCorners[2]), // Bottom
+                        listOf(blushCorners[4], blushCorners[5], blushCorners[7], blushCorners[6]), // Top
+                        listOf(blushCorners[0], blushCorners[1], blushCorners[5], blushCorners[4]), // Front
+                        listOf(blushCorners[2], blushCorners[3], blushCorners[7], blushCorners[6]), // Back
+                        listOf(blushCorners[1], blushCorners[3], blushCorners[7], blushCorners[5]), // Right
+                        listOf(blushCorners[0], blushCorners[2], blushCorners[6], blushCorners[4])  // Left
+                    )
+                    blushFaces.forEach { drawFaceWireframe(gc, it, combinedMatrix) }
+                }
+            }
+        }
         for (x in 0 until gridDimension) {
             for (z in 0 until gridDimension) {
                 for (zLevel in 0 until 4) {
@@ -768,6 +815,29 @@ class DrawingPanel : StackPane() {
                     }
                 }
             }
+        }
+    }
+
+    private fun drawFaceWireframe(gc: javafx.scene.canvas.GraphicsContext, worldVertices: List<Vector3d>, combinedMatrix: Matrix4x4) {
+        // Triangulate face to draw edges for each triangle
+        for (i in 0 until worldVertices.size - 2) {
+            val triWorldVerts = listOf(worldVertices[0], worldVertices[i + 1], worldVertices[i + 2])
+
+            val screenPoints = triWorldVerts.mapNotNull { vertex ->
+                            val projected = combinedMatrix.transformHomogeneous(vertex)
+                            if (projected.w <= 0) return@mapNotNull null // Point behind camera
+                            Vector3d(
+                                (projected.x / projected.w + 1) * overlayCanvas.width / 2.0,
+                                (1 - projected.y / projected.w) * overlayCanvas.height / 2.0,
+                                projected.z / projected.w
+                            )
+                        }
+            if (screenPoints.size != 3) continue
+
+            // Draw the 3 edges of the triangle
+            gc.strokeLine(screenPoints[0].x, screenPoints[0].y, screenPoints[1].x, screenPoints[1].y)
+            gc.strokeLine(screenPoints[1].x, screenPoints[1].y, screenPoints[2].x, screenPoints[2].y)
+            gc.strokeLine(screenPoints[2].x, screenPoints[2].y, screenPoints[0].x, screenPoints[0].y)
         }
     }
 
@@ -942,8 +1012,6 @@ class DrawingPanel : StackPane() {
         }
         println("Rebuilt static batches. Found ${staticMeshBatches.size} batches.")
     }
-
-
 
     private fun updateDynamicLights() {
         synchronized(lightSources) {
