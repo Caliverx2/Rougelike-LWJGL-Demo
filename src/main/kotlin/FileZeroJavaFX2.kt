@@ -72,16 +72,17 @@ class DrawingPanel : StackPane() {
     private val cubeSize = 100.0
     private var gridDimension = 9
 
-    private val defaultScalePlayer = 1.25
-    private val scalePlayer = defaultScalePlayer
-    private val playerHeight = ((cubeSize / 2) - (cubeSize / 20)) * scalePlayer
-    private val playerRadius = 0.3 * cubeSize
+    private val playerHitboxScale = 0.3
+    private val baseHitboxScale = 0.3
+    private val playerHitboxOffset = Vector3d(0.0, -cubeSize * 1.0 * playerHitboxScale, 0.0)
+    private val playerVertexRadius = 0.1 * cubeSize * (playerHitboxScale / baseHitboxScale)
+    private lateinit var playerHitboxMesh: PlacedMesh
 
     private var cameraPosition = Vector3d(0.0, 0.0, 0.0)
     private var cameraYaw = 2.4
     private var cameraPitch = 0.0
     private val baseFov = 90.0
-    private val dynamicFov = (baseFov / sqrt(scalePlayer / defaultScalePlayer).coerceAtLeast(0.5)).coerceIn(60.0..120.0)
+    private val dynamicFov = (baseFov / sqrt(playerHitboxScale / baseHitboxScale).coerceAtLeast(0.5)).coerceIn(60.0..120.0)
 
     private var debugFly = false
     private var debugNoclip = false
@@ -222,7 +223,7 @@ class DrawingPanel : StackPane() {
 
         children.addAll(imageView, overlayCanvas)
 
-        cameraPosition = Vector3d(-2.5 * cubeSize, (-3.95 * cubeSize) + playerHeight, 1.5 * cubeSize)
+        cameraPosition = Vector3d(-2.5 * cubeSize, -3.4075 * cubeSize, 1.5 * cubeSize)
 
         val grids = listOf(GRID_1, GRID_2, GRID_3, GRID_4)
         for (x in 0 until gridDimension) {
@@ -262,6 +263,10 @@ class DrawingPanel : StackPane() {
             "rtMap" to createRayTracingMapMesh(cubeSize, Color.WHITE),
             "ramp" to createRampMesh(cubeSize, Color.WHITE)
         )
+
+        // Inicjalizacja hitboxa gracza
+        val playerCollisionModel = modelRegistry["player"] ?: throw IllegalStateException("Player model not found in registry")
+        playerHitboxMesh = PlacedMesh(playerCollisionModel, collision = true)
 
         modelRegistry.forEach { (modelName, mesh) ->
             mesh.customTextures.forEach { (localId, hexData) ->
@@ -476,105 +481,121 @@ class DrawingPanel : StackPane() {
     }
 
     private fun isCollidingAt(testPosition: Vector3d): Boolean {
-        val playerAABB = AABB(
-            min = Vector3d(testPosition.x - playerRadius, testPosition.y - playerHeight / 2, testPosition.z - playerRadius),
-            max = Vector3d(testPosition.x + playerRadius, testPosition.y + playerHeight / 2, testPosition.z + playerRadius)
-        )
+        // Zaktualizuj transformację hitboxa gracza do testowanej pozycji
+        val translation = Matrix4x4.translation(testPosition.x + playerHitboxOffset.x, testPosition.y + playerHitboxOffset.y, testPosition.z + playerHitboxOffset.z)
+        val rotation = Matrix4x4.rotationY(cameraYaw + PI)
+        val scale = Matrix4x4.scale(playerHitboxScale, playerHitboxScale, playerHitboxScale)
+        playerHitboxMesh.transformMatrix = translation * rotation * scale
 
+        val playerAABB = AABB.fromCube(playerHitboxMesh.getTransformedVertices())
         val potentialColliders = collisionGrid.query(playerAABB)
         for (mesh in potentialColliders) {
-            val meshAABB = AABB.fromCube(mesh.getTransformedVertices())
-            if (playerAABB.intersects(meshAABB)) {
-                if (checkCylinderCollision(testPosition, mesh)) {
-                    return true
-                }
+            if (checkMeshCollision(playerHitboxMesh, mesh)) {
+                return true
             }
         }
         return false
     }
 
-    private fun checkCylinderCollision(cylinderCenter: Vector3d, mesh: PlacedMesh): Boolean {
-        val worldVertices = mesh.getTransformedVertices()
-        val playerMinY = cylinderCenter.y - playerHeight / 2
-        val playerMaxY = cylinderCenter.y + playerHeight / 2
 
-        val worldBlushes = mesh.mesh.blushes.map { blush ->
-            val transformedCorners = blush.getCorners().map { corner -> mesh.transformMatrix.transform(corner) }
+    private fun checkMeshCollision(playerHitbox: PlacedMesh, worldMesh: PlacedMesh): Boolean {
+        // 1. Szybki, szeroki test AABB całych modeli
+        val playerAABB = AABB.fromCube(playerHitbox.getTransformedVertices())
+        val worldAABB = AABB.fromCube(worldMesh.getTransformedVertices())
+        if (!playerAABB.intersects(worldAABB)) {
+            return false
+        }
+
+        // 2. Testujemy każdy wierzchołek hitboxa gracza z każdym trójkątem siatki świata.
+        val playerVertices = playerHitbox.getTransformedVertices()
+        val worldVertices = worldMesh.getTransformedVertices()
+
+        val worldBlushes = worldMesh.mesh.blushes.map { blush ->
+            val transformedCorners = blush.getCorners().map { corner -> worldMesh.transformMatrix.transform(corner) }
             AABB.fromCube(transformedCorners)
         }
 
-        for (faceIndices in mesh.mesh.faces) {
-            if (faceIndices.size < 3) continue
+        // Iteruj po każdym wierzchołku hitboxa gracza
+        for (playerVertex in playerVertices) {
+            // Iteruj po każdym trójkącie siatki świata
+            for (faceIndices in worldMesh.mesh.faces) {
+                if (faceIndices.size < 3) continue
 
-            // Triangulate face
-            for (i in 0 until faceIndices.size - 2) {
-                val v0 = worldVertices[faceIndices[0]]
-                val v1 = worldVertices[faceIndices[i + 1]]
-                val v2 = worldVertices[faceIndices[i + 2]]
+                // Triangulacja ściany
+                for (i in 0 until faceIndices.size - 2) {
+                    val v0 = worldVertices[faceIndices[0]]
+                    val v1 = worldVertices[faceIndices[i + 1]]
+                    val v2 = worldVertices[faceIndices[i + 2]]
 
-                // Broad-phase check for triangle
-                val triMinY = minOf(v0.y, v1.y, v2.y)
-                val triMaxY = maxOf(v0.y, v1.y, v2.y)
-                if (playerMaxY < triMinY || playerMinY > triMaxY) {
-                    continue
-                }
+                    // Pełny test 3D
+                    // 1. Znajdź najbliższy punkt na trójkącie w przestrzeni 3D.
+                    val closestPointOnTri = closestPointOnTriangle(playerVertex, v0, v1, v2)
 
-                val closestPoint = closestPointOnTriangle(Vector3d(cylinderCenter.x, 0.0, cylinderCenter.z), Vector3d(v0.x, 0.0, v0.z), Vector3d(v1.x, 0.0, v1.z), Vector3d(v2.x, 0.0, v2.z))
+                    // 2. Oblicz kwadrat odległości w 3D.
+                    val distSq = (closestPointOnTri.x - playerVertex.x).pow(2) +
+                            (closestPointOnTri.y - playerVertex.y).pow(2) +
+                            (closestPointOnTri.z - playerVertex.z).pow(2)
 
-                val distSq = (closestPoint.x - cylinderCenter.x).pow(2) + (closestPoint.z - cylinderCenter.z).pow(2)
-
-                if (distSq < playerRadius.pow(2)) {
-                    val collisionPointY = (playerMinY + playerMaxY) / 2
-                    val collisionPoint = Vector3d(closestPoint.x, collisionPointY, closestPoint.z)
-                    if (worldBlushes.any { it.contains(collisionPoint) }) {
-                        continue
+                    if (distSq < playerVertexRadius.pow(2)) {
+                        // Kolizja w płaszczyźnie XZ. Teraz sprawdź `blushes`
+                        val collisionPoint = closestPointOnTri
+                        if (worldBlushes.any { it.contains(collisionPoint) }) {
+                            continue // Ignoruj kolizję, jeśli jest w strefie "blush"
+                        }
+                        return true // Prawdziwa kolizja
                     }
-
-                    return true
                 }
             }
         }
         return false
     }
 
+
     private fun closestPointOnTriangle(p: Vector3d, a: Vector3d, b: Vector3d, c: Vector3d): Vector3d {
-        // This is a 2D version for XZ plane
         val ab = b - a
         val ac = c - a
-        val ap = p - a
+        val bc = c - b
 
+        // Sprawdzenie, czy p jest w regionie wierzchołka A
+        val ap = p - a
         val d1 = ab.dot(ap)
         val d2 = ac.dot(ap)
         if (d1 <= 0.0 && d2 <= 0.0) return a
 
+        // Sprawdzenie, czy p jest w regionie wierzchołka B
         val bp = p - b
         val d3 = ab.dot(bp)
         val d4 = ac.dot(bp)
         if (d3 >= 0.0 && d4 <= d3) return b
 
+        // Sprawdzenie, czy p jest na krawędzi AB
         val vc = d1 * d4 - d3 * d2
         if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0) {
             val v = d1 / (d1 - d3)
             return a + ab * v
         }
 
+        // Sprawdzenie, czy p jest w regionie wierzchołka C
         val cp = p - c
         val d5 = ab.dot(cp)
         val d6 = ac.dot(cp)
         if (d6 >= 0.0 && d5 <= d6) return c
 
+        // Sprawdzenie, czy p jest na krawędzi AC
         val vb = d5 * d2 - d1 * d6
         if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0) {
             val w = d2 / (d2 - d6)
             return a + ac * w
         }
 
+        // Sprawdzenie, czy p jest na krawędzi BC
         val va = d3 * d6 - d5 * d4
         if (va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0) {
-            val w = (d4 - d3) / ((d4 - d3) + (d5 - d6))
-            return b + (c - b) * w
+            val w = (d4 - d3) / ((d4 - d3) + (d5 - d6)) // To jest dla krawędzi BC
+            return b + bc * w
         }
 
+        // p jest wewnątrz trójkąta, oblicz rzut
         val denom = 1.0 / (va + vb + vc)
         val v = vb * denom
         val w = vc * denom
@@ -601,10 +622,9 @@ class DrawingPanel : StackPane() {
         val forwardVector = lookDirection
 
         var newCameraPosition = cameraPosition.copy()
-
-        var currentMovementSpeed = 2.8 * cubeSize * scalePlayer
-        val playerSprintSpeed = 4.4 * cubeSize * scalePlayer
-
+        val scaleRatio = playerHitboxScale / baseHitboxScale
+        var currentMovementSpeed = 2.8 * cubeSize * scaleRatio
+        val playerSprintSpeed = 4.4 * cubeSize * scaleRatio
         if (pressedKeys.contains(KeyCode.SHIFT)) currentMovementSpeed = playerSprintSpeed
 
         if (pressedKeys.contains(KeyCode.W)) newCameraPosition += forwardVector * currentMovementSpeed * deltaTime
@@ -824,14 +844,14 @@ class DrawingPanel : StackPane() {
             val triWorldVerts = listOf(worldVertices[0], worldVertices[i + 1], worldVertices[i + 2])
 
             val screenPoints = triWorldVerts.mapNotNull { vertex ->
-                            val projected = combinedMatrix.transformHomogeneous(vertex)
-                            if (projected.w <= 0) return@mapNotNull null // Point behind camera
-                            Vector3d(
-                                (projected.x / projected.w + 1) * overlayCanvas.width / 2.0,
-                                (1 - projected.y / projected.w) * overlayCanvas.height / 2.0,
-                                projected.z / projected.w
-                            )
-                        }
+                val projected = combinedMatrix.transformHomogeneous(vertex)
+                if (projected.w <= 0) return@mapNotNull null // Point behind camera
+                Vector3d(
+                    (projected.x / projected.w + 1) * overlayCanvas.width / 2.0,
+                    (1 - projected.y / projected.w) * overlayCanvas.height / 2.0,
+                    projected.z / projected.w
+                )
+            }
             if (screenPoints.size != 3) continue
 
             // Draw the 3 edges of the triangle
