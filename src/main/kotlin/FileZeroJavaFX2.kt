@@ -261,7 +261,8 @@ class DrawingPanel : StackPane() {
             "TNT" to createTNTMesh(cubeSize, Color.WHITE),
             "player" to createPlayerMesh(cubeSize, Color.WHITE),
             "rtMap" to createRayTracingMapMesh(cubeSize, Color.WHITE),
-            "ramp" to createRampMesh(cubeSize, Color.WHITE)
+            "ramp" to createRampMesh(cubeSize, Color.WHITE),
+            "fence" to createFenceMesh(cubeSize, Color.WHITE),
         )
 
         // Inicjalizacja hitboxa gracza
@@ -314,8 +315,11 @@ class DrawingPanel : StackPane() {
         val pos12 = Vector3d(23.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(modelRegistry["rtMap"]!!, Matrix4x4.translation(pos12.x, pos12.y, pos12.z), faceTextures = placedTextures("rtMap", modelRegistry["rtMap"]!!)))
 
-        val pos13 = Vector3d(25.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        val pos13 = Vector3d(4.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(modelRegistry["ramp"]!!, Matrix4x4.translation(pos13.x, pos13.y, pos13.z), faceTextures = placedTextures("ramp", modelRegistry["ramp"]!!)))
+
+        val pos14 = Vector3d(25.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
+        meshes.add(PlacedMesh(modelRegistry["fence"]!!, Matrix4x4.translation(pos14.x, pos14.y, pos14.z), faceTextures = placedTextures("fence", modelRegistry["fence"]!!)))
 
         for (x in 0 until gridDimension) {
             for (y in 0 until gridDimension) {
@@ -497,7 +501,6 @@ class DrawingPanel : StackPane() {
         return false
     }
 
-
     private fun checkMeshCollision(playerHitbox: PlacedMesh, worldMesh: PlacedMesh): Boolean {
         // 1. Szybki, szeroki test AABB całych modeli
         val playerAABB = AABB.fromCube(playerHitbox.getTransformedVertices())
@@ -549,7 +552,6 @@ class DrawingPanel : StackPane() {
         }
         return false
     }
-
 
     private fun closestPointOnTriangle(p: Vector3d, a: Vector3d, b: Vector3d, c: Vector3d): Vector3d {
         val ab = b - a
