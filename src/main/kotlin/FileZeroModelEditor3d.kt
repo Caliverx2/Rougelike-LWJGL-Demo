@@ -496,12 +496,22 @@ class ModelEditor : Application() {
                     }
                 }
                 KeyCode.R -> {
-                    val verticesToTransform = if (groupSelectedVertices.isNotEmpty()) groupSelectedVertices else selectedVertex?.let { setOf(it) } ?: emptySet()
-                    verticesToTransform.forEach { index ->
-                        val v = vertices[index]
-                        v.x = v.x.roundToInt().toDouble()
-                        v.y = v.y.roundToInt().toDouble()
-                        v.z = v.z.roundToInt().toDouble()
+                    if (e.isControlDown && selectedFaceIndices.isNotEmpty()) {
+                        // Obrót UV przez zmianę kolejności wierzchołków w ścianie
+                        selectedFaceIndices.forEach { faceIndex ->
+                            val face = faces.getOrNull(faceIndex)
+                            if (face != null && face.indices.size == 4) {
+                                val oldIndices = face.indices
+                                val newIndices = listOf(oldIndices[3], oldIndices[0], oldIndices[1], oldIndices[2])
+                                faces[faceIndex] = Face(newIndices)
+                            }
+                        }
+                    } else {
+                        // Zaokrąglenie pozycji wierzchołków
+                        val verticesToTransform = if (groupSelectedVertices.isNotEmpty()) groupSelectedVertices else selectedVertex?.let { setOf(it) } ?: emptySet()
+                        verticesToTransform.forEach { index ->
+                            val v = vertices[index]; v.x = v.x.roundToInt().toDouble(); v.y = v.y.roundToInt().toDouble(); v.z = v.z.roundToInt().toDouble()
+                        }
                     }
                 }
 
