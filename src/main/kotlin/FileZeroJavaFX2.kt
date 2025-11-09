@@ -76,17 +76,27 @@ class DrawingPanel : StackPane() {
     private val baseHitboxScale = 0.3
     private val playerHitboxOffset = Vector3d(0.0, -cubeSize * 1.0 * playerHitboxScale, 0.0)
     private val playerVertexRadius = 0.1 * cubeSize * (playerHitboxScale / baseHitboxScale)
+    private val playerLegHeight = 0.27 * cubeSize
     private lateinit var playerHitboxMesh: PlacedMesh
+    private val maxStepHeight = 0.19 * cubeSize
 
     private var cameraPosition = Vector3d(0.0, 0.0, 0.0)
     private var cameraYaw = 2.4
     private var cameraPitch = 0.0
     private val baseFov = 90.0
+    private val floorLevel = -3.4075 * cubeSize
     private val dynamicFov = (baseFov / sqrt(playerHitboxScale / baseHitboxScale).coerceAtLeast(0.5)).coerceIn(60.0..120.0)
 
     private var debugFly = false
     private var debugNoclip = false
     private var debugShowHitboxes = false
+
+    // Stan opadania
+    private val GravityAcceleration = 9.8 * cubeSize // Przyspieszenie grawitacyjne (cubeSize/s2)
+    private var isGrounded = true
+    private var verticalVelocity = 0.0
+    private val groundedStateHistory = ConcurrentLinkedQueue<Boolean>()
+    private val groundCheckHistorySize = 15 // Liczba klatek do uśredniania (15: ok. 0.25s przy 60fps)
 
     private val fogColor = Color.rgb(180, 180, 180)
     private val fogStartDistance = 1.5 * cubeSize
@@ -158,6 +168,8 @@ class DrawingPanel : StackPane() {
     )
     private val otherPlayers = ConcurrentHashMap<String, PlayerState>()
 
+    private data class CollisionResult(val didCollide: Boolean, val surfaceNormal: Vector3d? = null)
+
     init {
         sceneProperty().addListener { _, _, newScene ->
             if (newScene != null) {
@@ -223,7 +235,7 @@ class DrawingPanel : StackPane() {
 
         children.addAll(imageView, overlayCanvas)
 
-        cameraPosition = Vector3d(-2.5 * cubeSize, -3.4075 * cubeSize, 1.5 * cubeSize)
+        cameraPosition = Vector3d(-2.5 * cubeSize, floorLevel, 1.5 * cubeSize)
 
         val grids = listOf(GRID_1, GRID_2, GRID_3, GRID_4)
         for (x in 0 until gridDimension) {
@@ -484,9 +496,10 @@ class DrawingPanel : StackPane() {
         }
     }
 
-    private fun isCollidingAt(testPosition: Vector3d): Boolean {
-        // Zaktualizuj transformację hitboxa gracza do testowanej pozycji
-        val translation = Matrix4x4.translation(testPosition.x + playerHitboxOffset.x, testPosition.y + playerHitboxOffset.y, testPosition.z + playerHitboxOffset.z)
+    private fun isCollidingAt(testPosition: Vector3d): CollisionResult {
+        // Oblicz pozycję stóp gracza na podstawie pozycji kamery
+        val feetPosition = testPosition.copy(y = testPosition.y - playerLegHeight)
+        val translation = Matrix4x4.translation(feetPosition.x + playerHitboxOffset.x, feetPosition.y + playerHitboxOffset.y, feetPosition.z + playerHitboxOffset.z)
         val rotation = Matrix4x4.rotationY(cameraYaw + PI)
         val scale = Matrix4x4.scale(playerHitboxScale, playerHitboxScale, playerHitboxScale)
         playerHitboxMesh.transformMatrix = translation * rotation * scale
@@ -494,19 +507,20 @@ class DrawingPanel : StackPane() {
         val playerAABB = AABB.fromCube(playerHitboxMesh.getTransformedVertices())
         val potentialColliders = collisionGrid.query(playerAABB)
         for (mesh in potentialColliders) {
-            if (checkMeshCollision(playerHitboxMesh, mesh)) {
-                return true
+            val result = checkMeshCollision(playerHitboxMesh, mesh)
+            if (result.didCollide) {
+                return result
             }
         }
-        return false
+        return CollisionResult(false)
     }
 
-    private fun checkMeshCollision(playerHitbox: PlacedMesh, worldMesh: PlacedMesh): Boolean {
+    private fun checkMeshCollision(playerHitbox: PlacedMesh, worldMesh: PlacedMesh): CollisionResult {
         // 1. Szybki, szeroki test AABB całych modeli
         val playerAABB = AABB.fromCube(playerHitbox.getTransformedVertices())
         val worldAABB = AABB.fromCube(worldMesh.getTransformedVertices())
         if (!playerAABB.intersects(worldAABB)) {
-            return false
+            return CollisionResult(false)
         }
 
         // 2. Testujemy każdy wierzchołek hitboxa gracza z każdym trójkątem siatki świata.
@@ -545,12 +559,13 @@ class DrawingPanel : StackPane() {
                         if (worldBlushes.any { it.contains(collisionPoint) }) {
                             continue // Ignoruj kolizję, jeśli jest w strefie "blush"
                         }
-                        return true // Prawdziwa kolizja
+                        val normal = (v1 - v0).cross(v2 - v0).normalize()
+                        return CollisionResult(true, normal) // Prawdziwa kolizja
                     }
                 }
             }
         }
-        return false
+        return CollisionResult(false)
     }
 
     private fun closestPointOnTriangle(p: Vector3d, a: Vector3d, b: Vector3d, c: Vector3d): Vector3d {
@@ -604,6 +619,40 @@ class DrawingPanel : StackPane() {
         return a + ab * v + ac * w
     }
 
+    private fun checkGroundStatus(): Boolean {
+        if (cameraPosition.y <= floorLevel + 1e-4) {
+            return true
+        }
+
+        // Sprawdź kolizję nieco poniżej gracza
+        val groundCheckDistance = 0.1 * cubeSize
+        val groundCheckPosition = cameraPosition.copy(y = cameraPosition.y - groundCheckDistance)
+
+        val collisionResult = isCollidingAt(groundCheckPosition)
+
+        if (collisionResult.didCollide && collisionResult.surfaceNormal != null) {
+            val upVector = Vector3d(0.0, 1.0, 0.0)
+            val dot = collisionResult.surfaceNormal.dot(upVector)
+            // Sprawdzamy, czy normalna jest skierowana w górę (dot > 0) i czy kąt jest akceptowalny dla chodzenia
+            if (dot > 0) {
+                val angleRad = acos(dot)
+                val angleDeg = Math.toDegrees(angleRad)
+                // Jeśli kąt nachylenia jest mniejszy niż liczba stopni, to jest to podłoże
+                if (angleDeg < 56.0) {
+                    // Korekta pozycji, aby "przykleić" gracza do rampy podczas schodzenia
+                    // Sprawdzamy, czy pozycja tuż pod stopami jest wolna
+                    val stepDownCameraPosition = cameraPosition.copy(y = cameraPosition.y - groundCheckDistance)
+                    if (!isCollidingAt(stepDownCameraPosition).didCollide) {
+                        // Jeśli tak, obniżamy pozycję kamery, aby stopy dotknęły podłoża
+                        cameraPosition.y = groundCheckPosition.y
+                    }
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     private fun updateCameraPosition(deltaTime: Double) {
         var lookDirection = Vector3d(
             cos(cameraPitch) * sin(cameraYaw),
@@ -636,29 +685,72 @@ class DrawingPanel : StackPane() {
         if (pressedKeys.contains(KeyCode.SPACE) && debugFly) newCameraPosition += Vector3d(0.0, currentMovementSpeed, 0.0) * deltaTime
         if (pressedKeys.contains(KeyCode.CONTROL) && debugFly) newCameraPosition -= Vector3d(0.0, currentMovementSpeed, 0.0) * deltaTime
 
-        val oldCameraPosition = cameraPosition.copy()
+        // Logika opadania
+        if (!debugFly) {
+            // Aktualizuj historię stanu "na ziemi"
+            groundedStateHistory.add(checkGroundStatus())
+            if (groundedStateHistory.size > groundCheckHistorySize) {
+                groundedStateHistory.poll()
+            }
 
-        if (debugNoclip || !isCollidingAt(newCameraPosition)) {
+            // Ustal, czy gracz jest stabilnie na ziemi
+            val groundedCount = groundedStateHistory.count { it }
+            isGrounded = groundedCount > groundCheckHistorySize / 2
+
+            if (!isGrounded) {
+                verticalVelocity -= GravityAcceleration * deltaTime
+                newCameraPosition.y += verticalVelocity * deltaTime
+            } else {
+                verticalVelocity = 0.0 // Zresetuj prędkość pionową, gdy gracz jest na ziemi
+            }
+        }
+
+        val isMovingForward = pressedKeys.contains(KeyCode.W)
+
+        if (debugNoclip) {
             cameraPosition = newCameraPosition
         } else {
-            val resolvedPosition = oldCameraPosition.copy()
+            val collisionResult = isCollidingAt(newCameraPosition)
+            if (!collisionResult.didCollide) {
+                cameraPosition = newCameraPosition
+            } else {
+                val oldCameraPosition = cameraPosition.copy()
+                // logika wchodzenia na progi
+                var steppedUp = false
+                if (isMovingForward && isGrounded && !debugFly) {
+                    // 1. Spróbuj podnieść gracza o maksymalną wysokość progu
+                    val stepTestPosition = oldCameraPosition.copy(y = oldCameraPosition.y + maxStepHeight)
+                    // 2. Z tej podniesionej pozycji, spróbuj przesunąć się do przodu
+                    val finalStepPosition = stepTestPosition.copy(x = newCameraPosition.x, z = newCameraPosition.z)
 
-            val tempPosX = resolvedPosition.copy(x = newCameraPosition.x)
-            if (!isCollidingAt(tempPosX)) {
-                resolvedPosition.x = newCameraPosition.x
+                    // 3. Jeśli ruch się powiedzie, zaakceptuj nową pozycję
+                    if (!isCollidingAt(finalStepPosition).didCollide) {
+                        // Zamiast teleportacji, zainicjuj płynne wejście na stopień
+                        val stepUpSpeed = 8.0 * cubeSize // Szybkość wchodzenia na stopień
+                        cameraPosition = finalStepPosition.copy(y = oldCameraPosition.y + stepUpSpeed * deltaTime)
+                        steppedUp = true
+                    }
+                }
+
+                if (!steppedUp) {
+                    // Standardowe rozwiązywanie kolizji (przesuwanie wzdłuż ścian)
+                    val resolvedPosition = cameraPosition.copy()
+
+                    // Próba przesunięcia tylko w osi X
+                    val tempPosX = oldCameraPosition.copy(x = newCameraPosition.x)
+                    if (!isCollidingAt(tempPosX).didCollide) resolvedPosition.x = newCameraPosition.x
+
+                    // Próba przesunięcia tylko w osi Z
+                    val tempPosZ = oldCameraPosition.copy(z = newCameraPosition.z)
+                    if (!isCollidingAt(tempPosZ).didCollide) resolvedPosition.z = newCameraPosition.z
+
+                    val tempPosY = resolvedPosition.copy(y = newCameraPosition.y)
+                    if (!isCollidingAt(tempPosY).didCollide) {
+                        resolvedPosition.y = newCameraPosition.y
+                    }
+                    cameraPosition = resolvedPosition
+                }
             }
-
-            val tempPosZ = resolvedPosition.copy(z = newCameraPosition.z)
-            if (!isCollidingAt(tempPosZ)) {
-                resolvedPosition.z = newCameraPosition.z
-            }
-
-            val tempPosY = resolvedPosition.copy(y = newCameraPosition.y)
-            if (!isCollidingAt(tempPosY)) {
-                resolvedPosition.y = newCameraPosition.y
-            }
-
-            cameraPosition = resolvedPosition
         }
 
         if (isMouseCaptured) {
@@ -769,6 +861,10 @@ class DrawingPanel : StackPane() {
 
         if (cameraYaw > 2 * PI) cameraYaw -= 2 * PI
         if (cameraYaw < -2 * PI) cameraYaw += 2 * PI
+
+        if (!debugFly) {
+            cameraPosition.y = max(cameraPosition.y, floorLevel)
+        }
 
         val message = "$clientId,${cameraPosition.x},${cameraPosition.y},${cameraPosition.z},${cameraYaw - PI}".toByteArray()
         val packet = DatagramPacket(message, message.size, serverAddress, serverPort)
