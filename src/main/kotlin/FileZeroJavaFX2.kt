@@ -54,7 +54,8 @@ class DrawingPanel : StackPane() {
         val source: Any, // PlacedMesh or StaticMeshBatch
         val faceIndex: Int,
         val indices: List<Int>,
-        val worldVertices: List<Vector3d>
+        val worldVertices: List<Vector3d>,
+        val hasCollision: Boolean
     )
 
     private var staticMeshBatches = listOf<StaticMeshBatch>()
@@ -102,6 +103,7 @@ class DrawingPanel : StackPane() {
     private val fogStartDistance = 1.5 * cubeSize
     private val fogEndDistance = 7.0 * cubeSize
     private val fogDensity = 0.5
+    private var fogAffectsNonCollidables = false
 
     private val ambientIntensity = 0.5
     private val HIGH_QualityRes = 16
@@ -259,7 +261,7 @@ class DrawingPanel : StackPane() {
             "cube" to createCubeMesh(cubeSize, Color.GRAY),
             "cubeRed" to createCubeMesh(cubeSize, Color.RED),
             "cubeGates" to createCubeMesh(cubeSize, Color.rgb(40, 255, 40)),
-            "skybox" to createCubeMesh(1000.0 * cubeSize, Color.rgb(80, 80, 80), inverted = true),
+            "skybox" to createSkyboxMesh(1000.0 * cubeSize, Color.rgb(80, 80, 80), inverted = true),
             "pyramid" to createPyramidMesh(cubeSize, Color.RED),
             "invertedPyramid" to createInvertedPyramidMesh(cubeSize, Color.DEEPSKYBLUE),
             "tower" to createTowerMesh(cubeSize, Color.WHITE),
@@ -289,7 +291,7 @@ class DrawingPanel : StackPane() {
         }
 
         val pos0 = Vector3d(0.0, 0.0, 0.0)
-        meshes.add(PlacedMesh(modelRegistry["skybox"]!!, Matrix4x4.translation(pos0.x, pos0.y, pos0.z), texture = texSkybox, collision=false))
+        meshes.add(PlacedMesh(modelRegistry["skybox"]!!, Matrix4x4.translation(pos0.x, pos0.y, pos0.z), faceTextures = placedTextures("skybox", modelRegistry["skybox"]!!), collision = false))
 
         val pos1 = Vector3d(5.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(modelRegistry["pyramid"]!!, Matrix4x4.translation(pos1.x, pos1.y, pos1.z), faceTextures = placedTextures("pyramid", modelRegistry["pyramid"]!!)))
@@ -925,7 +927,7 @@ class DrawingPanel : StackPane() {
                 }
             }
         }
-        for (x in 0 until gridDimension) {
+        /*for (x in 0 until gridDimension) {
             for (z in 0 until gridDimension) {
                 for (zLevel in 0 until 4) {
                     if (GRID_MAP[x][zLevel][z] == 1) {
@@ -933,7 +935,7 @@ class DrawingPanel : StackPane() {
                     }
                 }
             }
-        }
+        }*/
     }
 
     private fun drawFaceWireframe(gc: javafx.scene.canvas.GraphicsContext, worldVertices: List<Vector3d>, combinedMatrix: Matrix4x4) {
@@ -1782,7 +1784,7 @@ class DrawingPanel : StackPane() {
             if (mesh.texture == texSkybox || meshAABB == null || !isAabbOutsideFrustum(meshAABB, combinedMatrix)) {
                 val worldVertices = mesh.mesh.vertices.map { mesh.transformMatrix.transform(it) }
                 mesh.mesh.faces.forEachIndexed { faceIndex, faceIndices ->
-                    facesToProcess.add(FaceToProcess(mesh, faceIndex, faceIndices, worldVertices))
+                    facesToProcess.add(FaceToProcess(mesh, faceIndex, faceIndices, worldVertices, mesh.collision))
                 }
             }
         }
@@ -1792,7 +1794,7 @@ class DrawingPanel : StackPane() {
             if (isAabbOutsideFrustum(batch.aabb, combinedMatrix)) continue
             val worldVertices = batch.mesh.vertices
             batch.mesh.faces.forEachIndexed { faceIndex, faceIndices ->
-                facesToProcess.add(FaceToProcess(batch, faceIndex, faceIndices, worldVertices))
+                facesToProcess.add(FaceToProcess(batch, faceIndex, faceIndices, worldVertices, false))
             }
         }
 
@@ -1821,6 +1823,7 @@ class DrawingPanel : StackPane() {
                         val giGrid: Array<Array<Color>>?
                         val meshColor: Color
                         val modelName: String?
+                        val hasCollision: Boolean
                         val worldBlushes: List<AABB>
                         val blushContainerAABB: AABB?
 
@@ -1831,6 +1834,7 @@ class DrawingPanel : StackPane() {
                             giGrid = giLightGrids[Pair(mesh, faceData.faceIndex)]
                             meshColor = mesh.mesh.color
                             modelName = modelRegistry.entries.find { it.value === mesh.mesh }?.key
+                            hasCollision = mesh.collision
                             val textureName = mesh.mesh.faceTextureNames[faceData.faceIndex]
                             faceTexture = if (textureName != null && textureName.startsWith("custom_")) {
                                 val textureId = textureName.substringAfter("custom_").toIntOrNull()
@@ -1854,6 +1858,7 @@ class DrawingPanel : StackPane() {
                             faceTexture = batch.texture
                             meshColor = batch.mesh.color
                             modelName = null
+                            hasCollision = false
 
                             // blushes system
                             if (originalFaceInfo != null) {
@@ -1880,7 +1885,7 @@ class DrawingPanel : StackPane() {
                         }
 
                         for ((triWorld, triUV) in triangles) {
-                            processAndQueueRenderableFace(triWorld, triUV, meshColor, faceTexture, lightGrid, giGrid, worldBlushes, blushContainerAABB, combinedMatrix, viewMatrix)
+                            processAndQueueRenderableFace(triWorld, triUV, meshColor, faceTexture, lightGrid, giGrid, worldBlushes, blushContainerAABB, combinedMatrix, viewMatrix, hasCollision)
                         }
                     }
                 }
@@ -1911,7 +1916,7 @@ class DrawingPanel : StackPane() {
                 listOf(Pair(worldVertices, faceTexCoords))
             }
 
-            triangles.forEach { (triWorld, triUV) -> processAndQueueRenderableFace(triWorld, triUV, mesh.mesh.color, faceTexture, lightGrid, giGrid, emptyList(), null, combinedMatrix, viewMatrix) }
+            triangles.forEach { (triWorld, triUV) -> processAndQueueRenderableFace(triWorld, triUV, mesh.mesh.color, faceTexture, lightGrid, giGrid, emptyList(), null, combinedMatrix, viewMatrix, mesh.collision) }
         }
 
         // Rasteryzuj kolejki
@@ -1934,7 +1939,7 @@ class DrawingPanel : StackPane() {
     }
 
     private fun rasterizeTexturedTriangle(pixelBuffer: IntArray, renderableFace: RenderableFace, screenWidth: Int, screenHeight: Int) {
-        val (screenVertices, originalClipW, textureVertices, color, _, texture, worldVertices, lightGrid, blushes, blushContainerAABB, giGrid) = renderableFace
+        val (screenVertices, originalClipW, textureVertices, color, _, texture, worldVertices, lightGrid, blushes, blushContainerAABB, giGrid) = renderableFace // hasCollision is destructured implicitly
         if (screenVertices.size != 3 || textureVertices.size != 3 || originalClipW.size != 3) return
 
         val v0 = screenVertices[0]; val v1 = screenVertices[1]; val v2 = screenVertices[2]
@@ -2066,7 +2071,7 @@ class DrawingPanel : StackPane() {
                                 var g = ambientLitG + dynamicLightG / 4 + giLightG * GI_LightIntensity * 2.0
                                 var b = ambientLitB + dynamicLightB / 4 + giLightB * GI_LightIntensity * 2.0
 
-                                if (texture != this.texSkybox) {
+                                if (renderableFace.hasCollision || fogAffectsNonCollidables) {
                                     val distance = inv_z_prime
                                     val fogFactor = ((distance - fogStartDistance) / (fogEndDistance - fogStartDistance)).coerceIn(0.0, 1.0) * fogDensity
 
@@ -2147,7 +2152,7 @@ class DrawingPanel : StackPane() {
         }
     }
 
-    private fun processAndQueueRenderableFace(worldVerts: List<Vector3d>, texCoords: List<Vector3d>, color: Color, texture: Image?, lightGrid: Array<Array<Color>>?, giGrid: Array<Array<Color>>?, blushes: List<AABB>, blushContainerAABB: AABB?, combinedMatrix: Matrix4x4, viewMatrix: Matrix4x4) {
+    private fun processAndQueueRenderableFace(worldVerts: List<Vector3d>, texCoords: List<Vector3d>, color: Color, texture: Image?, lightGrid: Array<Array<Color>>?, giGrid: Array<Array<Color>>?, blushes: List<AABB>, blushContainerAABB: AABB?, combinedMatrix: Matrix4x4, viewMatrix: Matrix4x4, hasCollision: Boolean) {
         val clippedTriangles = clipTriangleAgainstNearPlane(worldVerts, texCoords, viewMatrix, 0.1)
 
         for ((clippedW, clippedUVs) in clippedTriangles) {
@@ -2163,6 +2168,7 @@ class DrawingPanel : StackPane() {
             if (projectedVertices.size == 3) {
                 val isTransparent = isTextureTransparent(texture)
                 val face = RenderableFace(projectedVertices, originalClipW, clippedUVs, color, false, texture, clippedW, lightGrid, blushes, blushContainerAABB, giGrid)
+                face.hasCollision = hasCollision
                 if (isTransparent) {
                     transparentRenderQueue.add(face)
                 } else {

@@ -465,22 +465,21 @@ class ModelEditor : Application() {
                         selectedBlushIndex = null
                         selectedBlushCorner = null
                     } else if (selectedFaceIndices.isNotEmpty()) {
-                        val indicesToRemove = selectedFaceIndices.sortedDescending()
-                        indicesToRemove.forEach { removedIndex ->
-                            faces.removeAt(removedIndex)
+                        val newFaces = mutableListOf<Face>()
+                        val newFaceTextures = mutableMapOf<Int, String>()
 
-                            val newFaceTextures = mutableMapOf<Int, String>()
-                            faceTextureNames.forEach { (index, name) ->
-                                if (index > removedIndex) {
-                                    newFaceTextures[index - 1] = name
-                                } else if (index < removedIndex) {
-                                    newFaceTextures[index] = name
+                        faces.forEachIndexed { oldIndex, face ->
+                            if (oldIndex !in selectedFaceIndices) {
+                                val newIndex = newFaces.size
+                                newFaces.add(face)
+                                faceTextureNames[oldIndex]?.let { textureName ->
+                                    newFaceTextures[newIndex] = textureName
                                 }
                             }
-                            faceTextureNames.clear()
-                            faceTextureNames.putAll(newFaceTextures)
                         }
 
+                        faces.clear(); faces.addAll(newFaces)
+                        faceTextureNames.clear(); faceTextureNames.putAll(newFaceTextures)
                         selectedFaceIndices.clear()
                         groupSelectedVertices.clear()
                         groupGizmoPosition = null
@@ -1075,6 +1074,20 @@ class ModelEditor : Application() {
         val indicesToDelete = (groupSelectedVertices + (selectedVertex ?: -1)).filter { it != -1 }.toSortedSet(compareByDescending { it })
         if (indicesToDelete.isEmpty()) return
 
+        val facesToRemoveIndices = faces.withIndex()
+            .filter { (_, face) -> face.indices.any { it in indicesToDelete } }
+            .map { it.index }
+            .toSortedSet(compareByDescending { it })
+
+        val newFaceTextures = mutableMapOf<Int, String>()
+        var newIndexCounter = 0
+        for (i in faces.indices) {
+            if (i !in facesToRemoveIndices) {
+                faceTextureNames[i]?.let { newFaceTextures[newIndexCounter] = it }
+                newIndexCounter++
+            }
+        }
+
         faces.removeIf { face -> face.indices.any { it in indicesToDelete } }
         edges.removeIf { edge -> edge.a in indicesToDelete || edge.b in indicesToDelete }
 
@@ -1093,6 +1106,9 @@ class ModelEditor : Application() {
 
         edges.replaceAll { edge -> Edge(indexMap[edge.a]!!, indexMap[edge.b]!!) }
         faces.replaceAll { face -> Face(face.indices.map { indexMap[it]!! }) }
+
+        faceTextureNames.clear()
+        faceTextureNames.putAll(newFaceTextures)
 
         selectedVertex = null
         groupSelectedVertices.clear()
@@ -1602,18 +1618,22 @@ class ModelEditor : Application() {
         for (e in edges) println("        $e,")
         println("    )")
 
-        println("\n    val customTextures = mapOf(")
-        customTextures.withIndex().forEach { (id, data) ->
-            val dataString = data.joinToString(", ") { "0x%08X".format(it) }
-            if ("$dataString" != "") println("        $id to listOf($dataString).map { it.toInt() },")
+        if(customTextures.isNotEmpty()) {
+            println("\n    val customTextures = mapOf(")
+            customTextures.withIndex().forEach { (id, data) ->
+                val dataString = data.joinToString(", ") { "0x%08X".format(it) }
+                if ("$dataString" != "") println("        $id to listOf($dataString).map { it.toInt() },")
+            }
+            println("    )")
         }
-        println("    )")
 
-        println("\n    val textureMapping = mapOf(")
-        faceTextureNames.entries.sortedBy { it.key }.forEach { (index, name) ->
-            println("        $index to \"$name\",")
+        if(faceTextureNames.isNotEmpty()) {
+            println("\n    val textureMapping = mapOf(")
+            faceTextureNames.entries.sortedBy { it.key }.forEach { (index, name) ->
+                println("        $index to \"$name\",")
+            }
+            println("    )")
         }
-        println("    )")
 
         if (blushes.size > 0) {
             println("\n    val blushes = listOf(")

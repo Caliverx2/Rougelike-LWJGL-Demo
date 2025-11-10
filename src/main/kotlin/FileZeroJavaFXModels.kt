@@ -2,6 +2,63 @@ package org.lewapnoob.FileZero2
 
 import javafx.scene.paint.Color
 
+fun createSkyboxMesh(size: Double, color: Color, inverted: Boolean = false): Mesh {
+    val hs = size / 100.0
+    val vertices = listOf(
+        Vector3d(-50.0 * hs, -50.0 * hs, 50.0 * hs),
+        Vector3d(50.0 * hs, -50.0 * hs, 50.0 * hs),
+        Vector3d(50.0 * hs, 50.0 * hs, 50.0 * hs),
+        Vector3d(-50.0 * hs, 50.0 * hs, 50.0 * hs),
+        Vector3d(-50.0 * hs, -50.0 * hs, -50.0 * hs),
+        Vector3d(50.0 * hs, -50.0 * hs, -50.0 * hs),
+        Vector3d(50.0 * hs, 50.0 * hs, -50.0 * hs),
+        Vector3d(-50.0 * hs, 50.0 * hs, -50.0 * hs)
+    )
+    var faces: List<List<Int>> = listOf(
+        listOf(0, 1, 2, 3),
+        listOf(5, 4, 7, 6),
+        listOf(3, 2, 6, 7),
+        listOf(0, 4, 5, 1),
+        listOf(1, 5, 6, 2),
+        listOf(4, 0, 3, 7),
+    )
+    if (inverted) {
+        faces = faces.map { it.reversed() }
+    }
+    data class Edge(val a: Int, val b: Int)
+    val edges: List<Edge> = listOf(
+        Edge(a=0, b=4),
+        Edge(a=4, b=5),
+        Edge(a=5, b=1),
+        Edge(a=1, b=0),
+        Edge(a=3, b=7),
+        Edge(a=7, b=6),
+        Edge(a=6, b=2),
+        Edge(a=2, b=3),
+        Edge(a=3, b=0),
+        Edge(a=4, b=7),
+        Edge(a=6, b=5),
+        Edge(a=1, b=2),
+    )
+
+    val textureMapping = mapOf(
+        0 to "skybox",
+        1 to "skybox",
+        2 to "skybox",
+        3 to "skybox",
+        4 to "skybox",
+        5 to "skybox",
+    )
+    val uvs: List<List<Vector3d>> = faces.map { face ->
+        when(face.size) {
+            3 -> listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))
+            4 -> listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0))
+            else -> face.map { Vector3d(0.0,0.0,0.0) }
+        }
+    }
+    return Mesh(vertices = vertices, faces = faces, faceUVs = uvs, color = color, faceTextureNames = textureMapping)
+}
+
 fun createCubeMesh(size: Double, color: Color, inverted: Boolean = false): Mesh {
     val hs = size / 100.0
     val vertices = listOf(
@@ -40,6 +97,7 @@ fun createCubeMesh(size: Double, color: Color, inverted: Boolean = false): Mesh 
         Edge(a=6, b=5),
         Edge(a=1, b=2),
     )
+
     val uvs: List<List<Vector3d>> = faces.map { face ->
         when(face.size) {
             3 -> listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))

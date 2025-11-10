@@ -182,7 +182,9 @@ data class RenderableFace(
     val blushes: List<AABB> = emptyList(),
     val blushContainerAABB: AABB? = null,
     val giGrid: Array<Array<Color>>? = null
-)
+) {
+    var hasCollision: Boolean = true
+}
 
 data class Mesh(
     val vertices: List<Vector3d>,
