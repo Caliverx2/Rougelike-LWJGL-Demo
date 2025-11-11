@@ -706,7 +706,7 @@ class DrawingPanel : StackPane() {
             }
         }
 
-        val isMovingForward = pressedKeys.contains(KeyCode.W)
+        val isMovingHorizontally = pressedKeys.contains(KeyCode.W) || pressedKeys.contains(KeyCode.A) || pressedKeys.contains(KeyCode.S) || pressedKeys.contains(KeyCode.D)
 
         if (debugNoclip) {
             cameraPosition = newCameraPosition
@@ -718,7 +718,7 @@ class DrawingPanel : StackPane() {
                 val oldCameraPosition = cameraPosition.copy()
                 // logika wchodzenia na progi
                 var steppedUp = false
-                if (isMovingForward && isGrounded && !debugFly) {
+                if (isMovingHorizontally && isGrounded && !debugFly) {
                     // 1. Spróbuj podnieść gracza o maksymalną wysokość progu
                     val stepTestPosition = oldCameraPosition.copy(y = oldCameraPosition.y + maxStepHeight)
                     // 2. Z tej podniesionej pozycji, spróbuj przesunąć się do przodu
@@ -749,8 +749,6 @@ class DrawingPanel : StackPane() {
                     if (!isCollidingAt(tempPosY).didCollide) {
                         resolvedPosition.y = newCameraPosition.y
                     } else {
-                        // KLUCZOWA ZMIANA: Jeśli kolizja zablokowała ruch w dół,
-                        // oznacza to, że stoimy na czymś. Zresetuj prędkość pionową.
                         verticalVelocity = 0.0
                     }
                     cameraPosition = resolvedPosition
