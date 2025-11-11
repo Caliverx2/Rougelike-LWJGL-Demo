@@ -626,32 +626,31 @@ class DrawingPanel : StackPane() {
             return true
         }
 
-        // Sprawdź kolizję nieco poniżej gracza
-        val groundCheckDistance = 0.1 * cubeSize
-        val groundCheckPosition = cameraPosition.copy(y = cameraPosition.y - groundCheckDistance)
-
+        // 1. Sprawdź, czy pod graczem jest podłoże w zasięgu "przyklejenia" (stepHeight) [Używamy pełnego hitboxa do tego testu]
+        val groundSnapDistance = maxStepHeight
+        val groundCheckPosition = cameraPosition.copy(y = cameraPosition.y - groundSnapDistance)
         val collisionResult = isCollidingAt(groundCheckPosition)
 
-        if (collisionResult.didCollide && collisionResult.surfaceNormal != null) {
-            val upVector = Vector3d(0.0, 1.0, 0.0)
-            val dot = collisionResult.surfaceNormal.dot(upVector)
-            // Sprawdzamy, czy normalna jest skierowana w górę (dot > 0) i czy kąt jest akceptowalny dla chodzenia
-            if (dot > 0) {
-                val angleRad = acos(dot)
-                val angleDeg = Math.toDegrees(angleRad)
-                // Jeśli kąt nachylenia jest mniejszy niż liczba stopni, to jest to podłoże
-                if (angleDeg < 56.0) {
-                    // Korekta pozycji, aby "przykleić" gracza do rampy podczas schodzenia
-                    // Sprawdzamy, czy pozycja tuż pod stopami jest wolna
-                    val stepDownCameraPosition = cameraPosition.copy(y = cameraPosition.y - groundCheckDistance)
-                    if (!isCollidingAt(stepDownCameraPosition).didCollide) {
-                        // Jeśli tak, obniżamy pozycję kamery, aby stopy dotknęły podłoża
-                        cameraPosition.y = groundCheckPosition.y
-                    }
-                    return true
-                }
-            }
+        if (!collisionResult.didCollide || collisionResult.surfaceNormal == null) {
+            // Jeśli nic nie ma pod nami w zasięgu, na pewno jesteśmy w powietrzu.
+            return false
         }
+
+        // 2. Sprawdź, czy powierzchnia, na której stoimy, jest "chodliwa"
+        val upVector = Vector3d(0.0, 1.0, 0.0)
+        val dot = collisionResult.surfaceNormal.dot(upVector)
+        val angleRad = acos(dot.coerceIn(-1.0, 1.0))
+        val angleDeg = Math.toDegrees(angleRad)
+
+        if (angleDeg < 56.0) {
+            // 3. Przyklej gracza do podłoża, aby zapobiec mikro-spadkom.
+            val feetPosition = cameraPosition.copy(y = cameraPosition.y - playerLegHeight)
+            if (feetPosition.y > groundCheckPosition.y) { // Zapobiegaj zapadaniu się w ziemię
+                cameraPosition.y = groundCheckPosition.y + playerLegHeight
+            }
+            return true // Jesteśmy na ziemi.
+        }
+        // Powierzchnia jest zbyt stroma (gracz będzie się zsuwać).
         return false
     }
 
@@ -749,6 +748,10 @@ class DrawingPanel : StackPane() {
                     val tempPosY = resolvedPosition.copy(y = newCameraPosition.y)
                     if (!isCollidingAt(tempPosY).didCollide) {
                         resolvedPosition.y = newCameraPosition.y
+                    } else {
+                        // KLUCZOWA ZMIANA: Jeśli kolizja zablokowała ruch w dół,
+                        // oznacza to, że stoimy na czymś. Zresetuj prędkość pionową.
+                        verticalVelocity = 0.0
                     }
                     cameraPosition = resolvedPosition
                 }
@@ -780,7 +783,9 @@ class DrawingPanel : StackPane() {
                         " YAW:${((cameraYaw*10).toInt()/10.0)}" +
                         " PITCH:${((cameraPitch*10).toInt()/10.0)}" +
                         " SPEED:$currentMovementSpeed" +
-                        " FOV: $dynamicFov")
+                        " FOV: $dynamicFov" +
+                        " IS_GROUNDED: $isGrounded" +
+                        " VERTICAL_VELOCITY: $verticalVelocity")
         }
 
         if (pressedKeys.contains(KeyCode.H)) {
