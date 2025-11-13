@@ -162,6 +162,7 @@ class DrawingPanel : StackPane() {
     private val dynamicMeshes = ConcurrentHashMap<String, PlacedMesh>()
 
     private val clientId: String = UUID.randomUUID().toString()
+    private var lastSentPacketData: String? = null
     private data class PlayerState(
         var currentPos: Vector3d,
         var currentYaw: Double,
@@ -882,11 +883,15 @@ class DrawingPanel : StackPane() {
             cameraPosition.y = max(cameraPosition.y, floorLevel)
         }
 
-        val message = "$clientId,${cameraPosition.x},${cameraPosition.y},${cameraPosition.z},${cameraYaw - PI}".toByteArray()
-        val packet = DatagramPacket(message, message.size, serverAddress, serverPort)
-        try {
-            clientSocket.send(packet)
-        } catch (e: Exception) {
+        val messageString = "$clientId,${cameraPosition.x},${cameraPosition.y},${cameraPosition.z},${cameraYaw - PI}"
+        if (messageString != lastSentPacketData) {
+            lastSentPacketData = messageString
+            val message = messageString.toByteArray()
+            val packet = DatagramPacket(message, message.size, serverAddress, serverPort)
+            try {
+                clientSocket.send(packet)
+            } catch (e: Exception) {
+            }
         }
     }
 
