@@ -93,7 +93,7 @@ class DrawingPanel : StackPane() {
     private var debugShowHitboxes = false
 
     // Stan opadania
-    private val GravityAcceleration = 9.8 * cubeSize // Przyspieszenie grawitacyjne (cubeSize/s2)
+    private val gravityAcceleration = 9.8 * cubeSize // Przyspieszenie grawitacyjne (cubeSize/s2)
     private var isGrounded = true
     private var verticalVelocity = 0.0
     private val groundedStateHistory = ConcurrentLinkedQueue<Boolean>()
@@ -684,6 +684,14 @@ class DrawingPanel : StackPane() {
         if (pressedKeys.contains(KeyCode.D)) newCameraPosition += rightVector * currentMovementSpeed * deltaTime
         if (pressedKeys.contains(KeyCode.A)) newCameraPosition -= rightVector * currentMovementSpeed * deltaTime
         if (pressedKeys.contains(KeyCode.SPACE) && debugFly) newCameraPosition += Vector3d(0.0, currentMovementSpeed, 0.0) * deltaTime
+
+        // Logika skoku
+        if (pressedKeys.contains(KeyCode.SPACE) && !debugFly && isGrounded) {
+            val jumpHeight = 0.75 * cubeSize
+            verticalVelocity = sqrt(2 * gravityAcceleration * jumpHeight)
+            isGrounded = false
+            groundedStateHistory.clear()
+        }
         if (pressedKeys.contains(KeyCode.CONTROL) && debugFly) newCameraPosition -= Vector3d(0.0, currentMovementSpeed, 0.0) * deltaTime
 
         // Logika opadania
@@ -699,7 +707,7 @@ class DrawingPanel : StackPane() {
             isGrounded = groundedCount > groundCheckHistorySize / 2
 
             if (!isGrounded) {
-                verticalVelocity -= GravityAcceleration * deltaTime
+                verticalVelocity -= gravityAcceleration * deltaTime
                 newCameraPosition.y += verticalVelocity * deltaTime
             } else {
                 verticalVelocity = 0.0 // Zresetuj prędkość pionową, gdy gracz jest na ziemi
@@ -750,6 +758,9 @@ class DrawingPanel : StackPane() {
                         resolvedPosition.y = newCameraPosition.y
                     } else {
                         verticalVelocity = 0.0
+                        if (newCameraPosition.y < oldCameraPosition.y) {
+                            isGrounded = true
+                        }
                     }
                     cameraPosition = resolvedPosition
                 }
