@@ -43,6 +43,15 @@ class DrawingPanel : StackPane() {
         val faceIndexToOriginal: Map<Int, Pair<PlacedMesh, Int>>
     )
 
+    private data class SubLightmap(
+        val grid: Array<Array<Color>>,
+        val texture: WritableImage,
+        val worldPosition: Vector3d,
+        val aabb: AABB,
+        var needsUpdate: Boolean = true,
+        var lastLitTime: Long = System.nanoTime()
+    )
+
     private data class GI_LightPoint(
         val targetFaceKey: Pair<PlacedMesh, Int>,
         val gridX: Int,
@@ -62,6 +71,7 @@ class DrawingPanel : StackPane() {
     private val textureTransparencyCache = ConcurrentHashMap<Image, Boolean>()
 
     private val faceLightGrids = ConcurrentHashMap<Pair<PlacedMesh, Int>, Array<Array<Color>>>()
+    private val largeFaceSubLightmaps = ConcurrentHashMap<Pair<PlacedMesh, Int>, MutableList<SubLightmap>>()
     private val giLightGrids = ConcurrentHashMap<Pair<PlacedMesh, Int>, Array<Array<Color>>>()
     private val lightingUpdateQueue = ConcurrentLinkedQueue<Pair<PlacedMesh, Int>>()
     private val giUpdateQueue = ConcurrentLinkedQueue<Pair<PlacedMesh, Int>>()
@@ -113,6 +123,8 @@ class DrawingPanel : StackPane() {
     private val GI_SAMPLES = 4 // 4
     private val bouncesLeft = 2 // 2
 
+    private val subLightmap_offset = 0.01 * cubeSize
+    private val largeFaceThreshold = 4.0 * cubeSize
     private var retroScanLineMode = false
     private val renderDownscaleFactor = 4
     private val renderDistanceBlocks = 24.0 * cubeSize
@@ -278,6 +290,7 @@ class DrawingPanel : StackPane() {
             "rtMap" to createRayTracingMapMesh(cubeSize, Color.WHITE),
             "ramp" to createRampMesh(cubeSize, Color.WHITE),
             "fence" to createFenceMesh(cubeSize, Color.WHITE),
+            "plate" to createPlateMesh(100 * cubeSize, Color.WHITE),
         )
 
         // Inicjalizacja hitboxa gracza
@@ -335,6 +348,9 @@ class DrawingPanel : StackPane() {
 
         val pos14 = Vector3d(25.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
         meshes.add(PlacedMesh(modelRegistry["fence"]!!, Matrix4x4.translation(pos14.x, pos14.y, pos14.z), faceTextures = placedTextures("fence", modelRegistry["fence"]!!)))
+
+        val pos15 = Vector3d(0.5 * cubeSize, -4.01 * cubeSize, 0 * cubeSize)
+        meshes.add(PlacedMesh(modelRegistry["plate"]!!, Matrix4x4.translation(pos15.x, pos15.y, pos15.z), faceTextures = placedTextures("plate", modelRegistry["plate"]!!)))
 
         for (x in 0 until gridDimension) {
             for (y in 0 until gridDimension) {
@@ -873,6 +889,7 @@ class DrawingPanel : StackPane() {
             lightingUpdateJobQueue.clear()
             faceLightGrids.clear()
             giLightGrids.clear()
+            largeFaceSubLightmaps.clear()
             giLightPoints.clear()
         }
 
@@ -1185,6 +1202,21 @@ class DrawingPanel : StackPane() {
         }
     }
 
+    private fun isFaceLarge(worldVerts: List<Vector3d>): Boolean {
+        if (worldVerts.isEmpty()) return false
+        var minX = Double.POSITIVE_INFINITY
+        var minY = Double.POSITIVE_INFINITY
+        var minZ = Double.POSITIVE_INFINITY
+        var maxX = Double.NEGATIVE_INFINITY
+        var maxY = Double.NEGATIVE_INFINITY
+        var maxZ = Double.NEGATIVE_INFINITY
+        worldVerts.forEach { v ->
+            minX = min(minX, v.x); minY = min(minY, v.y); minZ = min(minZ, v.z)
+            maxX = max(maxX, v.x); maxY = max(maxY, v.y); maxZ = max(maxZ, v.z)
+        }
+        return Vector3d(maxX - minX, maxY - minY, maxZ - minZ).length() > largeFaceThreshold
+    }
+
     private fun scheduleLightingUpdate(lightToProcess: LightSource, resolution: Int): Future<*> {
         val lightSnapshot = LightSource(
             position = lightToProcess.position.copy(),
@@ -1205,15 +1237,57 @@ class DrawingPanel : StackPane() {
 
         for (mesh in meshesInRadius) {
             if (mesh.mesh.faces.isNotEmpty() && mesh.texture != texSkybox) {
-                (0 until mesh.mesh.faces.size).forEach { faceIndex -> facesToUpdate.add(Pair(mesh, faceIndex)) }
+                mesh.mesh.faces.forEachIndexed { faceIndex, faceIndices ->
+                    val faceKey = Pair(mesh, faceIndex)
+                    val worldVerts = faceIndices.map { mesh.transformMatrix.transform(mesh.mesh.vertices[it]) }
+                    if (isFaceLarge(worldVerts)) {
+                        generateSubLightmapsForLargeFace(lightSnapshot, mesh, faceIndex, resolution) //generowanie pod-lightmap
+                        // Nie dodajemy dużej ściany do standardowej kolejki
+                    } else {
+                        // Standardowa obsługa
+                        facesToUpdate.add(faceKey)
+                    }
+                }
             }
         }
 
         lightingUpdateQueue.clear()
         lightingUpdateQueue.addAll(facesToUpdate)
 
+
         return lightingExecutor.submit {
             processLightingQueue(resolution)
+        }
+    }
+
+    private fun generateSubLightmapsForLargeFace(light: LightSource, mesh: PlacedMesh, faceIndex: Int, resolution: Int) {
+        val faceKey = Pair(mesh, faceIndex)
+        val subLightmaps = largeFaceSubLightmaps.computeIfAbsent(faceKey) { Collections.synchronizedList(mutableListOf()) }
+
+        val lightGridMinX = floor((light.position.x - light.radius) / cubeSize).toInt()
+        val lightGridMaxX = ceil((light.position.x + light.radius) / cubeSize).toInt()
+        val lightGridMinZ = floor((light.position.z - light.radius) / cubeSize).toInt()
+        val lightGridMaxZ = ceil((light.position.z + light.radius) / cubeSize).toInt()
+
+        val faceWorldVerts = mesh.mesh.faces[faceIndex].map { mesh.transformMatrix.transform(mesh.mesh.vertices[it]) }
+        val faceY = faceWorldVerts.firstOrNull()?.y ?: return
+
+        for (gx in lightGridMinX..lightGridMaxX) {
+            for (gz in lightGridMinZ..lightGridMaxZ) {
+                val subLightmapCenter = Vector3d(gx * cubeSize, faceY, gz * cubeSize)
+
+                var subLightmap = subLightmaps.find { it.worldPosition == subLightmapCenter }
+                if (subLightmap == null) {
+                    val halfSize = cubeSize / 2.0
+                    val aabb = AABB(subLightmapCenter - Vector3d(halfSize, 0.1, halfSize), subLightmapCenter + Vector3d(halfSize, 0.1, halfSize))
+                    val newGrid = Array(resolution) { Array(resolution) { Color.TRANSPARENT } }
+                    val newTexture = WritableImage(resolution, resolution)
+
+                    subLightmap = SubLightmap(newGrid, newTexture, subLightmapCenter, aabb, needsUpdate = true, lastLitTime = System.nanoTime())
+                    subLightmaps.add(subLightmap)
+                }
+                subLightmap.needsUpdate = true
+            }
         }
     }
 
@@ -1253,12 +1327,11 @@ class DrawingPanel : StackPane() {
             }
         }
 
-        for (item in sortedItems) {
+        for (faceKey in sortedItems) {
             if (Thread.currentThread().isInterrupted) {
                 break
             }
-
-            val (mesh, faceIndex) = item
+            val (mesh, faceIndex) = faceKey
 
             val faceIndices = mesh.mesh.faces[faceIndex]
             if (faceIndices.size < 3) continue
@@ -1440,9 +1513,9 @@ class DrawingPanel : StackPane() {
             }
 
             if (isFaceLitAtAll) {
-                faceLightGrids[item] = finalLightGrid
+                faceLightGrids[faceKey] = finalLightGrid
             } else {
-                faceLightGrids.remove(item)
+                faceLightGrids.remove(faceKey)
             }
 
             try {
@@ -1452,6 +1525,111 @@ class DrawingPanel : StackPane() {
                 break
             }
         }
+
+        // Przetwarzanie pod-lightmap dla dużych ścian
+        val largeFacesToUpdate = largeFaceSubLightmaps.filterValues { list -> list.any { it.needsUpdate } }
+        for ((faceKey, subLightmaps) in largeFacesToUpdate) {
+            val (mesh, faceIndex) = faceKey
+            val faceWorldVerts = mesh.mesh.faces[faceIndex].map { mesh.transformMatrix.transform(mesh.mesh.vertices[it]) }
+            val faceNormal = (faceWorldVerts[1] - faceWorldVerts[0]).cross(faceWorldVerts[2] - faceWorldVerts[0]).normalize()
+
+            val litSubLightmaps = ConcurrentHashMap.newKeySet<SubLightmap>()
+
+            for (subLightmap in subLightmaps.filter { it.needsUpdate }) {
+                if (Thread.currentThread().isInterrupted) break
+
+                val grid = subLightmap.grid
+                grid.forEach { row -> row.fill(Color.TRANSPARENT) } // Reset
+                var isLit = false
+
+                for (light in allLightsSnapshot) {
+                    // Szybki test AABB
+                    val lightAABB = AABB(light.position - Vector3d(light.radius, light.radius, light.radius), light.position + Vector3d(light.radius, light.radius, light.radius))
+                    if (!lightAABB.intersects(subLightmap.aabb.copy(min = subLightmap.aabb.min - Vector3d(0.0, 0.2, 0.0), max = subLightmap.aabb.max + Vector3d(0.0, 0.2, 0.0)))) continue
+
+                    for (y in 0 until resolution) {
+                        for (x in 0 until resolution) {
+                            val u = (x + 0.5) / resolution
+                            val v = (y + 0.5) / resolution
+
+                            val pointOnSubLightmap = Vector3d(
+                                subLightmap.worldPosition.x + (u - 0.5) * cubeSize,
+                                subLightmap.worldPosition.y,
+                                subLightmap.worldPosition.z + (v - 0.5) * cubeSize
+                            )
+
+                            val toLightDir = (light.position - pointOnSubLightmap).normalize()
+                            if (faceNormal.dot(toLightDir) <= 0) continue
+
+                            val dist = (light.position - pointOnSubLightmap).length()
+                            if (dist > light.radius) continue
+
+                            if (!isOccluded(light.position, pointOnSubLightmap, mesh, faceIndex)) {
+                                val attenuation = 1.0 - (dist / light.radius).coerceIn(0.0, 1.0)
+                                val influence = light.intensity * attenuation
+                                val existingColor = grid[x][y]
+                                val lightColor = light.color
+
+                                val srcR = lightColor.red
+                                val srcG = lightColor.green
+                                val srcB = lightColor.blue
+                                val srcA = influence.coerceIn(0.0, 1.0)
+
+                                val invSrcA = 1.0 - srcA
+                                val finalR = srcR * srcA + existingColor.red * invSrcA
+                                val finalG = srcG * srcA + existingColor.green * invSrcA
+                                val finalB = srcB * srcA + existingColor.blue * invSrcA
+                                val finalA = srcA + existingColor.opacity * invSrcA
+
+                                grid[x][y] = Color(finalR.coerceIn(0.0, 1.0), finalG.coerceIn(0.0, 1.0), finalB.coerceIn(0.0, 1.0), finalA.coerceIn(0.0, 1.0))
+                                isLit = true
+
+                                if (light.type == LightType.RAYTRACED_GI) {
+                                    for (i in 0 until GI_SAMPLES) {
+                                        val incidentDir = (pointOnSubLightmap - light.position).normalize()
+                                        traceReflection(
+                                            reflectionOrigin = pointOnSubLightmap,
+                                            incidentDirection = incidentDir,
+                                            surfaceNormal = faceNormal,
+                                            incomingLight = Vector3d(lightColor.red * influence, lightColor.green * influence, lightColor.blue * influence),
+                                            bouncesLeft = bouncesLeft,
+                                            sourceMesh = mesh,
+                                            sourceFaceIndex = faceIndex,
+                                            remainingDistance = light.radius - dist
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (isLit) {
+                    litSubLightmaps.add(subLightmap)
+                    subLightmap.lastLitTime = System.nanoTime()
+                }
+                subLightmap.needsUpdate = false
+
+                // Wypal siatkę kolorów na teksturę WritableImage
+                val pixelWriter = subLightmap.texture.pixelWriter
+                for (y in 0 until resolution) {
+                    for (x in 0 until resolution) {
+                        val color = grid[x][y]
+                        val r = (color.red * 255).toInt().coerceIn(0, 255)
+                        val g = (color.green * 255).toInt().coerceIn(0, 255)
+                        val b = (color.blue * 255).toInt().coerceIn(0, 255)
+                        val a = (color.opacity * 255).toInt().coerceIn(0, 255)
+                        pixelWriter.setArgb(x, y, (a shl 24) or (r shl 16) or (g shl 8) or b)
+                    }
+                }
+            }
+            if (Thread.currentThread().isInterrupted) break
+
+            // Usuń sub-lightmapy, które nie są już oświetlane
+            val removalThreshold = 1_000_000_000L // 1 sekunda w nanosekundach
+            val currentTime = System.nanoTime()
+            subLightmaps.removeIf { !it.needsUpdate && (currentTime - it.lastLitTime) > removalThreshold }
+        }
+
 
         applyGILightPoints(resolution)
     }
@@ -1817,6 +1995,33 @@ class DrawingPanel : StackPane() {
             }
         }
 
+        // Dodaj pod-lightmapy dla dużych ścian
+        largeFaceSubLightmaps.forEach { (faceKey, subLightmaps) ->
+            val (mesh, faceIndex) = faceKey
+            val faceWorldVerts = mesh.mesh.faces[faceIndex].map { mesh.transformMatrix.transform(mesh.mesh.vertices[it]) }
+            val faceNormal = (faceWorldVerts[1] - faceWorldVerts[0]).cross(faceWorldVerts[2] - faceWorldVerts[0]).normalize()
+            val offsetVector = faceNormal * subLightmap_offset
+
+            val subLightmapsSnapshot = synchronized(subLightmaps) { subLightmaps.toList() }
+            for (subLightmap in subLightmapsSnapshot) {
+                val halfSize = cubeSize / 2.0
+                val corners = listOf(
+                    subLightmap.worldPosition + Vector3d(-halfSize, 0.0, -halfSize) + offsetVector,
+                    subLightmap.worldPosition + Vector3d( halfSize, 0.0, -halfSize) + offsetVector,
+                    subLightmap.worldPosition + Vector3d( halfSize, 0.0,  halfSize) + offsetVector,
+                    subLightmap.worldPosition + Vector3d(-halfSize, 0.0,  halfSize) + offsetVector
+                )
+                // UVs for a quad
+                val uvs = listOf(Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(0.0, 1.0, 0.0))
+
+                // Render the sub-lightmap as a textured quad, with its own light texture. No base texture, no lightgrid.
+                // Triangle 1: 0, 1, 2
+                processAndQueueRenderableFace(listOf(corners[0], corners[1], corners[2]), listOf(uvs[0], uvs[1], uvs[2]), mesh.mesh.color, subLightmap.texture, null, null, emptyList(), null, combinedMatrix, viewMatrix, false)
+                // Triangle 2: 0, 2, 3
+                processAndQueueRenderableFace(listOf(corners[0], corners[2], corners[3]), listOf(uvs[0], uvs[2], uvs[3]), mesh.mesh.color, subLightmap.texture, null, null, emptyList(), null, combinedMatrix, viewMatrix, false)
+            }
+        }
+
         val tasks = mutableListOf<Future<*>>()
         val chunkSize = (facesToProcess.size / Runtime.getRuntime().availableProcessors()).coerceAtLeast(100)
         val chunks = facesToProcess.chunked(chunkSize)
@@ -1893,14 +2098,40 @@ class DrawingPanel : StackPane() {
                             }
                         }
 
-                        // Triangulation
-                        val triangles = if (faceData.indices.size == 4) {
-                            listOf(
-                                Pair(listOf(faceWorldVertices[0], faceWorldVertices[1], faceWorldVertices[2]), listOf(faceTexCoords[0], faceTexCoords[1], faceTexCoords[2])),
-                                Pair(listOf(faceWorldVertices[0], faceWorldVertices[2], faceWorldVertices[3]), listOf(faceTexCoords[0], faceTexCoords[2], faceTexCoords[3]))
-                            )
+                        var finalWorldVertices = faceWorldVertices
+                        var finalUVs = faceTexCoords
+                        var isRightAngledTriangle = false
+
+                        if (faceData.indices.size == 3) {
+                            val (v0, v1, v2) = faceWorldVertices
+                            val vectors = listOf(v1 - v0, v2 - v1, v0 - v2)
+                            val dotProducts = listOf(vectors[0].dot(vectors[1]), vectors[1].dot(vectors[2]), vectors[2].dot(vectors[0]))
+                            val rightAngleIndex = dotProducts.indexOfFirst { abs(it) < 1e-4 }
+
+                            if (rightAngleIndex != -1) {
+                                isRightAngledTriangle = true
+                                val rightAngleVertex = faceWorldVertices[(rightAngleIndex + 1) % 3]
+                                val adjacentVertex1 = faceWorldVertices[rightAngleIndex]
+                                val adjacentVertex2 = faceWorldVertices[(rightAngleIndex + 2) % 3]
+
+                                val v4 = adjacentVertex1 + adjacentVertex2 - rightAngleVertex
+                                finalWorldVertices = listOf(adjacentVertex2, rightAngleVertex, adjacentVertex1, v4)
+                                finalUVs = listOf(Vector3d(1.0, 1.0, 0.0), Vector3d(0.0, 1.0, 0.0), Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0))
+                            }
+                        }
+
+                        val triangles = if (finalWorldVertices.size == 4) {
+                            if (isRightAngledTriangle) {
+                                // Renderuj tylko oryginalny trójkąt (adj1, rightAngle, adj2) z UV z kwadratu
+                                listOf(Pair(listOf(finalWorldVertices[0], finalWorldVertices[1], finalWorldVertices[2]), listOf(finalUVs[0], finalUVs[1], finalUVs[2])))
+                            } else { // Zwykły kwadrat
+                                listOf(
+                                    Pair(listOf(finalWorldVertices[0], finalWorldVertices[1], finalWorldVertices[2]), listOf(finalUVs[0], finalUVs[1], finalUVs[2])),
+                                    Pair(listOf(finalWorldVertices[0], finalWorldVertices[2], finalWorldVertices[3]), listOf(finalUVs[0], finalUVs[2], finalUVs[3]))
+                                )
+                            }
                         } else {
-                            listOf(Pair(faceWorldVertices, faceTexCoords))
+                            listOf(Pair(finalWorldVertices, finalUVs))
                         }
 
                         for ((triWorld, triUV) in triangles) {
@@ -2043,7 +2274,7 @@ class DrawingPanel : StackPane() {
 
                                 val texColor = texReader.getColor(texX, texY)
 
-                                if (texColor.opacity == 0.0) {
+                                if (texColor.opacity < 0.01) { // Treat nearly transparent as fully transparent
                                     barycentric_w0 += A12; barycentric_w1 += A20; barycentric_w2 += A01
                                     continue
                                 }

@@ -30,6 +30,7 @@ fun Vector3d.cross(other: Vector3d): Vector3d = Vector3d(
     this.x * other.y - this.y * other.x
 )
 fun Vector3d.length(): Double = sqrt(x*x + y*y + z*z)
+fun Vector3d.dot(other: Vector3d): Double = this.x * other.x + this.y * other.y + this.z * other.z
 fun Vector3d.normalize(): Vector3d {
     val len = this.length()
     return if (len > 0.00001) Vector3d(x / len, y / len, z / len) else Vector3d(0.0, 0.0, 0.0)
@@ -499,9 +500,9 @@ class ModelEditor : Application() {
                         // Obrót UV przez zmianę kolejności wierzchołków w ścianie
                         selectedFaceIndices.forEach { faceIndex ->
                             val face = faces.getOrNull(faceIndex)
-                            if (face != null && face.indices.size == 4) {
+                            if (face != null && face.indices.size >= 3) {
                                 val oldIndices = face.indices
-                                val newIndices = listOf(oldIndices[3], oldIndices[0], oldIndices[1], oldIndices[2])
+                                val newIndices = listOf(oldIndices.last()) + oldIndices.dropLast(1)
                                 faces[faceIndex] = Face(newIndices)
                             }
                         }
@@ -962,6 +963,19 @@ class ModelEditor : Application() {
             }
         }
 
+        val uvRotateButton = Button("Obróć UV")
+        uvRotateButton.tooltip = Tooltip("Obraca mapowanie UV ściany o 90°")
+        uvRotateButton.setOnAction {
+            selectedFaceIndices.forEach { faceIdx ->
+                val face = faces.getOrNull(faceIdx)
+                if (face != null && face.indices.size >= 3) {
+                    val oldIndices = face.indices
+                    val newIndices = listOf(oldIndices.last()) + oldIndices.dropLast(1)
+                    faces[faceIdx] = Face(newIndices)
+                }
+            }
+        }
+
         val pencilButton = ToggleButton(" ✏️ ")
         pencilButton.tooltip = Tooltip("Ołówek")
         pencilButton.toggleGroup = toolGroup
@@ -988,7 +1002,7 @@ class ModelEditor : Application() {
         eyedropperButton.toggleGroup = toolGroup
         eyedropperButton.setOnAction { currentTool = TextureEditTool.EYEDROPPER }
 
-        val toolbar = VBox(5.0, pencilButton, fillButton, eraserButton, lineButton, eyedropperButton, Separator(), rotateButton)
+        val toolbar = VBox(5.0, pencilButton, fillButton, eraserButton, lineButton, eyedropperButton, Separator(), rotateButton, uvRotateButton)
         toolbar.padding = Insets(10.0)
         toolbar.style = "-fx-background-color: #444;"
 
@@ -2297,7 +2311,7 @@ class ModelEditor : Application() {
         return image
     }
 
-    private fun rasterizeFaceWithTexture(gc: GraphicsContext, projectedVertices: List<Triple<Double, Double, Double>>, texture: Image, screenWidth: Double, screenHeight: Double, backgroundReader: javafx.scene.image.PixelReader) {
+    private fun rasterizeFaceWithTexture(gc: GraphicsContext, projectedVertices: List<Triple<Double, Double, Vector3d>>, texture: Image, screenWidth: Double, screenHeight: Double, backgroundReader: javafx.scene.image.PixelReader) {
         if (projectedVertices.size < 3) return
 
         val pixelWriter = gc.pixelWriter
@@ -2306,38 +2320,91 @@ class ModelEditor : Application() {
         val texHeight = texture.height.toInt()
         val screenWidthInt = screenWidth.toInt()
 
-        val uvs = if (projectedVertices.size == 4) {
-            listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0))
-        } else {
-            listOf(Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.5, 1.0, 0.0))
+        var uvs: List<Vector3d>
+        var finalVertices: List<Triple<Double, Double, Vector3d>> = projectedVertices
+        var finalUVs: List<Vector3d>
+        var isRightAngledTriangle = false
+
+        if (projectedVertices.size == 3) {
+            val v0_3d = projectedVertices[0].third
+            val v1_3d = projectedVertices[1].third
+            val v2_3d = projectedVertices[2].third
+
+            val vectors = listOf(v1_3d.subtract(v0_3d), v2_3d.subtract(v1_3d), v0_3d.subtract(v2_3d))
+            val dotProducts = listOf(vectors[0].dot(vectors[1]), vectors[1].dot(vectors[2]), vectors[2].dot(vectors[0]))
+            val rightAngleIndex = dotProducts.indexOfFirst { abs(it) < 1e-4 }
+
+            if (rightAngleIndex != -1) {
+                isRightAngledTriangle = true
+                // Znaleziono kąt prosty, traktujemy jak prostokąt
+                // rightAngleIndex wskazuje na indeks w liście dotProducts.
+                // dotProducts[k] sprawdza kąt przy wierzchołku (k+1)%3.
+                // Więc wierzchołek z kątem prostym to projectedVertices[(rightAngleIndex + 1) % 3]
+
+                val rightAngleVertex = projectedVertices[(rightAngleIndex + 1) % 3]
+                val adjacentVertex1 = projectedVertices[rightAngleIndex]
+                val adjacentVertex2 = projectedVertices[(rightAngleIndex + 2) % 3]
+
+                // Oblicz czwarty wierzchołek D = A + C - B, gdzie B to wierzchołek z kątem prostym
+                val v4_3d = adjacentVertex1.third.add(adjacentVertex2.third).subtract(rightAngleVertex.third)
+                val p3 = project(v4_3d, screenWidth, screenHeight)
+
+                // Ustawiamy wierzchołki w kolejności, np. A, B, C, D (gdzie B to kąt prosty)
+                // A = adjacentVertex1, B = rightAngleVertex, C = adjacentVertex2, D = p3
+                // Poprawiona kolejność wierzchołków i UV, aby uniknąć obrotu i odbicia lustrzanego.
+                // Kolejność UV (0,1), (1,1), (1,0), (0,0) odpowiada wierzchołkom:
+                // adjacentVertex2 (A), p3 (D), adjacentVertex1 (C), rightAngleVertex (B)
+                // przy założeniu, że A, B, C tworzą trójkąt, a D jest dopełnieniem do prostokąta.
+                finalVertices = listOf(adjacentVertex1, p3, adjacentVertex2, rightAngleVertex)
+                finalUVs = listOf(Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(0.0, 1.0, 0.0))
+            } else {
+                // Standardowe UV dla trójkąta
+                finalUVs = listOf(Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.5, 1.0, 0.0))
+            }
+        } else { // 4 lub więcej wierzchołków
+            finalUVs = listOf(Vector3d(0.0, 1.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(0.0, 0.0, 0.0))
         }
 
-        val triangles = if (projectedVertices.size == 4) {
-            listOf(
+        val triangles = if (finalVertices.size == 4) {
+            if (isRightAngledTriangle) {
+                // Renderuj tylko oryginalny trójkąt, ale z UV z kwadratu
                 Pair(
-                    listOf(projectedVertices[0], projectedVertices[1], projectedVertices[2]),
-                    listOf(uvs[0], uvs[1], uvs[2])
-                ),
-                Pair(
-                    listOf(projectedVertices[0], projectedVertices[2], projectedVertices[3]),
-                    listOf(uvs[0], uvs[2], uvs[3])
+                    listOf(finalVertices[0], finalVertices[2], finalVertices[3]),
+                    listOf(finalUVs[0], finalUVs[2], finalUVs[3])
+                ).let { listOf(it) }
+            } else {
+                // Standardowe renderowanie kwadratu (dwóch trójkątów)
+                listOf(
+                    Pair(
+                        listOf(finalVertices[0], finalVertices[1], finalVertices[2]),
+                        listOf(finalUVs[0], finalUVs[1], finalUVs[2])
+                    ),
+                    Pair(
+                        listOf(finalVertices[0], finalVertices[2], finalVertices[3]),
+                        listOf(finalUVs[0], finalUVs[2], finalUVs[3])
+                    )
                 )
-            )
+            }
         } else {
-            listOf(Pair(projectedVertices, uvs))
+            listOf(Pair(finalVertices, finalUVs))
         }
 
         for ((triVertices, triUVs) in triangles) {
             val (v0, v1, v2) = triVertices
             val (uv0, uv1, uv2) = triUVs
 
+            // Musimy pobrać głębokość (z) z oryginalnego wektora 3D po transformacji, a nie z samego wektora
+            val z0 = getZInViewSpace(v0.third)
+            val z1 = getZInViewSpace(v1.third)
+            val z2 = getZInViewSpace(v2.third)
+
             val p0 = Pair(v0.first, v0.second)
             val p1 = Pair(v1.first, v1.second)
             val p2 = Pair(v2.first, v2.second)
 
-            val w0_inv = 1.0 / v0.third
-            val w1_inv = 1.0 / v1.third
-            val w2_inv = 1.0 / v2.third
+            val w0_inv = 1.0 / (z0 / 400 + 1)
+            val w1_inv = 1.0 / (z1 / 400 + 1)
+            val w2_inv = 1.0 / (z2 / 400 + 1)
 
             val uv0_w = Pair(uv0.x * w0_inv, uv0.y * w0_inv)
             val uv1_w = Pair(uv1.x * w1_inv, uv1.y * w1_inv)
@@ -2391,7 +2458,7 @@ class ModelEditor : Application() {
                                     pixelWriter.setColor(px, py, texColor.deriveColor(0.0, 1.0, 1.0, 0.2))
                                 } else {
                                     pixelWriter.setColor(px, py, texColor)
-                                }                            
+                                }
                             }
                         }
                     }
@@ -2400,7 +2467,7 @@ class ModelEditor : Application() {
         }
     }
 
-    private fun rasterizeFaceWithColor(gc: GraphicsContext, projectedVertices: List<Triple<Double, Double, Double>>, color: Color, screenWidth: Double, screenHeight: Double, backgroundReader: javafx.scene.image.PixelReader) {
+    private fun rasterizeFaceWithColor(gc: GraphicsContext, projectedVertices: List<Triple<Double, Double, Vector3d>>, color: Color, screenWidth: Double, screenHeight: Double, backgroundReader: javafx.scene.image.PixelReader) {
         if (projectedVertices.size < 3 || color.opacity == 0.0) return
 
         val pixelWriter = gc.pixelWriter
@@ -2422,9 +2489,13 @@ class ModelEditor : Application() {
             val p1 = Pair(v1.first, v1.second)
             val p2 = Pair(v2.first, v2.second)
 
-            val w0_inv = 1.0 / v0.third
-            val w1_inv = 1.0 / v1.third
-            val w2_inv = 1.0 / v2.third
+            val z0 = getZInViewSpace(v0.third)
+            val z1 = getZInViewSpace(v1.third)
+            val z2 = getZInViewSpace(v2.third)
+
+            val w0_inv = 1.0 / (z0 / 400 + 1)
+            val w1_inv = 1.0 / (z1 / 400 + 1)
+            val w2_inv = 1.0 / (z2 / 400 + 1)
 
             val triMinX = minOf(p0.first, p1.first, p2.first)
             val triMaxX = maxOf(p0.first, p1.first, p2.first)
@@ -2655,7 +2726,7 @@ class ModelEditor : Application() {
         }
     }
 
-    private fun project(v: Vector3d, w: Double, h: Double): Triple<Double, Double, Double> {
+    private fun project(v: Vector3d, w: Double, h: Double): Triple<Double, Double, Vector3d> {
         val cosY = cos(angleY); val sinY = sin(angleY)
         val cosX = cos(angleX); val sinX = sin(angleX)
         val x = v.x * cosY - v.z * sinY
@@ -2666,13 +2737,13 @@ class ModelEditor : Application() {
 
         val denominator = z2 / 400 + 1
         if (denominator <= 0) {
-            return Triple(Double.NaN, Double.NaN, Double.NaN)
+            return Triple(Double.NaN, Double.NaN, v)
         }
 
         val y = y2
         val sx = w / 2 + x / denominator * (zoom / 100)
         val sy = h / 2 + y / denominator * (zoom / 100)
-        return Triple(sx, sy, denominator)
+        return Triple(sx, sy, v)
     }
 
     private fun pointToLineSegmentDistance(px: Double, py: Double, x1: Double, y1: Double, x2: Double, y2: Double): Double {

@@ -116,25 +116,31 @@ fun createPyramidMesh(size: Double, color: Color): Mesh {
         Vector3d(-50.0 * hs, 0.0 * hs, 50.0 * hs),
         Vector3d(50.0 * hs, 0.0 * hs, 50.0 * hs),
         Vector3d(0.0 * hs, 100.0 * hs, 0.0 * hs),
-        Vector3d(0.0 * hs, 100.0 * hs, 0.0 * hs),
     )
     val faces: List<List<Int>> = listOf(
         listOf(1, 3, 2, 0),
-        listOf(1, 0, 4, 5),
-        listOf(0, 2, 4, 5),
-        listOf(2, 3, 4, 5),
-        listOf(3, 1, 4, 5),
+        listOf(2, 3, 4),
+        listOf(3, 1, 4),
+        listOf(1, 0, 4),
+        listOf(0, 2, 4),
     )
     data class Edge(val a: Int, val b: Int)
-    val edges: List<List<Edge>> = listOf(
-        listOf(Edge(a=1, b=0)),
-        listOf(Edge(a=0, b=2)),
-        listOf(Edge(a=2, b=3)),
-        listOf(Edge(a=3, b=1)),
-        listOf(Edge(a=1, b=5)),
-        listOf(Edge(a=5, b=0)),
-        listOf(Edge(a=5, b=2)),
-        listOf(Edge(a=5, b=3)),
+    val edges: List<Edge> = listOf(
+        Edge(a=1, b=0),
+        Edge(a=0, b=2),
+        Edge(a=2, b=3),
+        Edge(a=3, b=1),
+        Edge(a=1, b=4),
+        Edge(a=4, b=0),
+        Edge(a=4, b=2),
+        Edge(a=4, b=3),
+    )
+    val textureMapping = mapOf(
+        0 to "floor",
+        1 to "bricks",
+        2 to "bricks",
+        3 to "bricks",
+        4 to "bricks",
     )
     val uvs: List<List<Vector3d>> = faces.map { face ->
         when(face.size) {
@@ -143,20 +149,12 @@ fun createPyramidMesh(size: Double, color: Color): Mesh {
             else -> face.map { Vector3d(0.0,0.0,0.0) }
         }
     }
-    val textureMapping = mapOf(
-        0 to "floor",
-        1 to "bricks",
-        2 to "bricks",
-        3 to "bricks",
-        4 to "bricks"
-    )
-    return Mesh(vertices, faces, uvs, color, faceTextureNames = textureMapping)
+    return Mesh(vertices = vertices, faces = faces, faceUVs = uvs, color = color, faceTextureNames = textureMapping)
 }
 
 fun createInvertedPyramidMesh(size: Double, color: Color): Mesh {
     val hs = size / 100.0
     val vertices = listOf(
-        Vector3d(0.0 * hs, 0.0 * hs, 0.0 * hs),
         Vector3d(0.0 * hs, 0.0 * hs, 0.0 * hs),
         Vector3d(50.0 * hs, 100.0 * hs, -50.0 * hs),
         Vector3d(-50.0 * hs, 100.0 * hs, -50.0 * hs),
@@ -164,22 +162,29 @@ fun createInvertedPyramidMesh(size: Double, color: Color): Mesh {
         Vector3d(50.0 * hs, 100.0 * hs, 50.0 * hs),
     )
     val faces: List<List<Int>> = listOf(
-        listOf(5, 2, 3, 4),
-        listOf(3, 2, 1, 0),
-        listOf(4, 3, 1, 0),
-        listOf(5, 4, 1, 0),
-        listOf(2, 5, 1, 0),
+        listOf(4, 1, 2, 3),
+        listOf(4, 3, 0),
+        listOf(1, 4, 0),
+        listOf(2, 1, 0),
+        listOf(3, 2, 0),
     )
     data class Edge(val a: Int, val b: Int)
-    val edges: List<List<Edge>> = listOf(
-        listOf(Edge(a=4, b=3)),
-        listOf(Edge(a=3, b=2)),
-        listOf(Edge(a=2, b=5)),
-        listOf(Edge(a=5, b=4)),
-        listOf(Edge(a=5, b=0)),
-        listOf(Edge(a=0, b=4)),
-        listOf(Edge(a=3, b=0)),
-        listOf(Edge(a=0, b=2)),
+    val edges: List<Edge> = listOf(
+        Edge(a=3, b=2),
+        Edge(a=2, b=1),
+        Edge(a=1, b=4),
+        Edge(a=4, b=3),
+        Edge(a=4, b=0),
+        Edge(a=0, b=3),
+        Edge(a=2, b=0),
+        Edge(a=0, b=1),
+    )
+    val textureMapping = mapOf(
+        0 to "floor",
+        1 to "bricks",
+        2 to "bricks",
+        3 to "bricks",
+        4 to "bricks",
     )
     val uvs: List<List<Vector3d>> = faces.map { face ->
         when(face.size) {
@@ -188,14 +193,7 @@ fun createInvertedPyramidMesh(size: Double, color: Color): Mesh {
             else -> face.map { Vector3d(0.0,0.0,0.0) }
         }
     }
-    val textureMapping = mapOf(
-        0 to "floor",
-        1 to "bricks",
-        2 to "bricks",
-        3 to "bricks",
-        4 to "bricks"
-    )
-    return Mesh(vertices, faces, uvs, color, faceTextureNames = textureMapping)
+    return Mesh(vertices = vertices, faces = faces, faceUVs = uvs, color = color, faceTextureNames = textureMapping)
 }
 
 fun createTowerMesh(size: Double, color: Color): Mesh {
@@ -2888,62 +2886,62 @@ fun createRayTracingMapMesh(size: Double, color: Color): Mesh {
     val vertices = listOf(
         Vector3d(-100.0 * hs, 200.0 * hs, -100.0 * hs),
         Vector3d(100.0 * hs, 200.0 * hs, -100.0 * hs),
-        Vector3d(100.0 * hs, -10.0 * hs, -100.0 * hs),
-        Vector3d(-100.0 * hs, -10.0 * hs, -100.0 * hs),
+        Vector3d(100.0 * hs, 0.0 * hs, -100.0 * hs),
+        Vector3d(-100.0 * hs, 0.0 * hs, -100.0 * hs),
         Vector3d(-100.0 * hs, 200.0 * hs, -100.0 * hs),
-        Vector3d(-100.0 * hs, -10.0 * hs, -100.0 * hs),
-        Vector3d(-100.0 * hs, -10.0 * hs, 100.0 * hs),
+        Vector3d(-100.0 * hs, 0.0 * hs, -100.0 * hs),
+        Vector3d(-100.0 * hs, 0.0 * hs, 100.0 * hs),
         Vector3d(-100.0 * hs, 200.0 * hs, 100.0 * hs),
-        Vector3d(100.0 * hs, -10.0 * hs, -100.0 * hs),
+        Vector3d(100.0 * hs, 0.0 * hs, -100.0 * hs),
         Vector3d(100.0 * hs, 200.0 * hs, -100.0 * hs),
         Vector3d(100.0 * hs, 200.0 * hs, 100.0 * hs),
-        Vector3d(100.0 * hs, -10.0 * hs, 100.0 * hs),
+        Vector3d(100.0 * hs, 0.0 * hs, 100.0 * hs),
         Vector3d(-100.0 * hs, 200.0 * hs, -100.0 * hs),
         Vector3d(100.0 * hs, 200.0 * hs, -100.0 * hs),
         Vector3d(100.0 * hs, 200.0 * hs, 100.0 * hs),
         Vector3d(-100.0 * hs, 200.0 * hs, 100.0 * hs),
-        Vector3d(-100.0 * hs, -10.0 * hs, -100.0 * hs),
-        Vector3d(100.0 * hs, -10.0 * hs, -100.0 * hs),
-        Vector3d(100.0 * hs, -10.0 * hs, 100.0 * hs),
-        Vector3d(-100.0 * hs, -10.0 * hs, 100.0 * hs),
-        Vector3d(-25.0 * hs, -10.0 * hs, -25.0 * hs),
-        Vector3d(25.0 * hs, -10.0 * hs, -25.0 * hs),
-        Vector3d(25.0 * hs, -10.0 * hs, 25.0 * hs),
-        Vector3d(-25.0 * hs, -10.0 * hs, 25.0 * hs),
-        Vector3d(-25.0 * hs, 40.0 * hs, -25.0 * hs),
-        Vector3d(25.0 * hs, 40.0 * hs, -25.0 * hs),
-        Vector3d(25.0 * hs, 40.0 * hs, 25.0 * hs),
-        Vector3d(-25.0 * hs, 40.0 * hs, 25.0 * hs),
-        Vector3d(0.0 * hs, 95.0 * hs, -100.0 * hs),
-        Vector3d(0.0 * hs, -10.0 * hs, -100.0 * hs),
-        Vector3d(100.0 * hs, 95.0 * hs, -100.0 * hs),
+        Vector3d(-100.0 * hs, 0.0 * hs, -100.0 * hs),
+        Vector3d(100.0 * hs, 0.0 * hs, -100.0 * hs),
+        Vector3d(100.0 * hs, 0.0 * hs, 100.0 * hs),
+        Vector3d(-100.0 * hs, 0.0 * hs, 100.0 * hs),
+        Vector3d(-25.0 * hs, 0.0 * hs, -25.0 * hs),
+        Vector3d(25.0 * hs, 0.0 * hs, -25.0 * hs),
+        Vector3d(25.0 * hs, 0.0 * hs, 25.0 * hs),
+        Vector3d(-25.0 * hs, 0.0 * hs, 25.0 * hs),
+        Vector3d(-25.0 * hs, 50.0 * hs, -25.0 * hs),
+        Vector3d(25.0 * hs, 50.0 * hs, -25.0 * hs),
+        Vector3d(25.0 * hs, 50.0 * hs, 25.0 * hs),
+        Vector3d(-25.0 * hs, 50.0 * hs, 25.0 * hs),
+        Vector3d(0.0 * hs, 100.0 * hs, -100.0 * hs),
+        Vector3d(0.0 * hs, 0.0 * hs, -100.0 * hs),
+        Vector3d(100.0 * hs, 100.0 * hs, -100.0 * hs),
         Vector3d(0.0 * hs, 200.0 * hs, -100.0 * hs),
-        Vector3d(-100.0 * hs, 95.0 * hs, -100.0 * hs),
-        Vector3d(0.0 * hs, 95.0 * hs, -100.0 * hs),
-        Vector3d(-100.0 * hs, 95.0 * hs, 0.0 * hs),
-        Vector3d(-100.0 * hs, 95.0 * hs, 100.0 * hs),
-        Vector3d(-100.0 * hs, -10.0 * hs, 0.0 * hs),
-        Vector3d(-100.0 * hs, 95.0 * hs, -100.0 * hs),
+        Vector3d(-100.0 * hs, 100.0 * hs, -100.0 * hs),
+        Vector3d(0.0 * hs, 100.0 * hs, -100.0 * hs),
+        Vector3d(-100.0 * hs, 100.0 * hs, 0.0 * hs),
+        Vector3d(-100.0 * hs, 100.0 * hs, 100.0 * hs),
+        Vector3d(-100.0 * hs, 0.0 * hs, 0.0 * hs),
+        Vector3d(-100.0 * hs, 100.0 * hs, -100.0 * hs),
         Vector3d(-100.0 * hs, 200.0 * hs, 0.0 * hs),
-        Vector3d(-100.0 * hs, 95.0 * hs, 0.0 * hs),
+        Vector3d(-100.0 * hs, 100.0 * hs, 0.0 * hs),
         Vector3d(0.0 * hs, 200.0 * hs, 0.0 * hs),
         Vector3d(0.0 * hs, 200.0 * hs, 100.0 * hs),
         Vector3d(-100.0 * hs, 200.0 * hs, 0.0 * hs),
         Vector3d(0.0 * hs, 200.0 * hs, -100.0 * hs),
         Vector3d(100.0 * hs, 200.0 * hs, 0.0 * hs),
         Vector3d(0.0 * hs, 200.0 * hs, 0.0 * hs),
-        Vector3d(100.0 * hs, 95.0 * hs, 0.0 * hs),
-        Vector3d(100.0 * hs, 95.0 * hs, 100.0 * hs),
+        Vector3d(100.0 * hs, 100.0 * hs, 0.0 * hs),
+        Vector3d(100.0 * hs, 100.0 * hs, 100.0 * hs),
         Vector3d(100.0 * hs, 200.0 * hs, 0.0 * hs),
-        Vector3d(100.0 * hs, 95.0 * hs, -100.0 * hs),
-        Vector3d(100.0 * hs, -10.0 * hs, 0.0 * hs),
-        Vector3d(100.0 * hs, 95.0 * hs, 0.0 * hs),
-        Vector3d(0.0 * hs, -10.0 * hs, 0.0 * hs),
-        Vector3d(0.0 * hs, -10.0 * hs, 100.0 * hs),
-        Vector3d(100.0 * hs, -10.0 * hs, 0.0 * hs),
-        Vector3d(0.0 * hs, -10.0 * hs, -100.0 * hs),
-        Vector3d(-100.0 * hs, -10.0 * hs, 0.0 * hs),
-        Vector3d(0.0 * hs, -10.0 * hs, 0.0 * hs),
+        Vector3d(100.0 * hs, 100.0 * hs, -100.0 * hs),
+        Vector3d(100.0 * hs, 0.0 * hs, 0.0 * hs),
+        Vector3d(100.0 * hs, 100.0 * hs, 0.0 * hs),
+        Vector3d(0.0 * hs, 0.0 * hs, 0.0 * hs),
+        Vector3d(0.0 * hs, 0.0 * hs, 100.0 * hs),
+        Vector3d(100.0 * hs, 0.0 * hs, 0.0 * hs),
+        Vector3d(0.0 * hs, 0.0 * hs, -100.0 * hs),
+        Vector3d(-100.0 * hs, 0.0 * hs, 0.0 * hs),
+        Vector3d(0.0 * hs, 0.0 * hs, 0.0 * hs),
     )
 
     val faces: List<List<Int>> = listOf(
@@ -3148,7 +3146,7 @@ fun createRayTracingMapMesh(size: Double, color: Color): Mesh {
     )
 
     val blushes = listOf(
-        AABB(min = Vector3d(-50.0 * hs, 175.0 * hs, -50.0 * hs), max = Vector3d(50.0 * hs, 225.0 * hs, 50.0 * hs)),
+        AABB(min = Vector3d(-50.0 * hs, 195.0 * hs, -50.0 * hs), max = Vector3d(50.0 * hs, 205.0 * hs, 50.0 * hs)),
     )
 
     val uvs: List<List<Vector3d>> = faces.map { face ->
@@ -3255,13 +3253,56 @@ fun createFenceMesh(size: Double, color: Color): Mesh {
     val customTextures = mapOf(
         0 to listOf(0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0xFF000000, 0xFF000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFF000000, 0xFF000000, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0xFF000000, 0xFF000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFF000000, 0xFF000000, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0xFF000000, 0xFF000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFF000000, 0xFF000000, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0xFF000000, 0xFF000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFF000000, 0xFF000000, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0xFF000000, 0xFF000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFF000000, 0xFF000000, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0xFF000000, 0xFF000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFF000000, 0xFF000000, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0xFF000000, 0xFF000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFFB3B3B3, 0x00000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000, 0xFF000000).map { it.toInt() },
         1 to listOf(0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333, 0xFF333333).map { it.toInt() },
+        2 to listOf(0xFFFEFEFE, 0xFFFEFEFE, 0xFFFEFEFE, 0x00000000, 0xFFFEFEFE, 0xFFFEFEFE, 0xFFFEFEFE, 0xFFFEFEFE, 0xFFFEFEFE, 0xFFFEFEFE, 0xFFFEFEFE, 0xFFFEFEFE, 0xFFFEFEFE, 0xFFFEFEFE, 0xFFFEFEFE, 0xFFC0F5FE, 0xFFFEFEFE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFC0F5FE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFB3D6DB, 0xFFFEFEFE, 0x00000000, 0x00000000, 0xFFFEFEFE, 0x00000000, 0x00000000, 0xFFC0F5FE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFFEFEFE, 0x00000000, 0xFFFEFEFE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFC0F5FE, 0xFFB3D6DB, 0xFFFEFEFE, 0xFFFEFEFE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFFEFEFE, 0x00000000, 0x00000000, 0x00000000, 0xFFC0F5FE, 0x00000000, 0xFFB3D6DB, 0xFFFEFEFE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFFEFEFE, 0x00000000, 0x00000000, 0x00000000, 0xFFC0F5FE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFC0F5FE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFB3D6DB, 0xFFFEFEFE, 0x00000000, 0xFFC0F5FE, 0x00000000, 0x00000000, 0x00000000, 0xFFC0F5FE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFB3D6DB, 0xFFFEFEFE, 0xFFC0F5FE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFB3D6DB, 0xFFFEFEFE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFFEFEFE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFFEFEFE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFFEFEFE, 0x00000000, 0x00000000, 0xFFFEFEFE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFC0F5FE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFFEFEFE, 0x00000000, 0x00000000, 0xFFB3D6DB, 0x00000000, 0xFFC0F5FE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFFEFEFE, 0x00000000, 0x00000000, 0x00000000, 0xFFB3D6DB, 0xFFC0F5FE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFC0F5FE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFB3D6DB, 0xFFFEFEFE, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFC0F5FE, 0xFFC0F5FE, 0xFFB3D6DB, 0xFFB3D6DB, 0xFFB3D6DB, 0xFFB3D6DB, 0xFFB3D6DB, 0x00000000, 0x00000000, 0xFFB3D6DB, 0xFFB3D6DB, 0x00000000, 0xFFB3D6DB, 0xFFB3D6DB, 0xFFB3D6DB, 0xFFB3D6DB, 0xFFC0F5FE).map { it.toInt() },
     )
 
     val textureMapping = mapOf(
         0 to "custom_1",
         1 to "custom_1",
-        2 to "custom_0",
-        3 to "custom_0",
+        2 to "custom_2",
+        3 to "custom_2",
+    )
+
+    val uvs: List<List<Vector3d>> = faces.map { face ->
+        when(face.size) {
+            3 -> listOf(Vector3d(0.0,0.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.5,1.0,0.0))
+            4 -> listOf(Vector3d(0.0,1.0,0.0), Vector3d(1.0,1.0,0.0), Vector3d(1.0,0.0,0.0), Vector3d(0.0,0.0,0.0))
+            else -> face.map { Vector3d(0.0,0.0,0.0) }
+        }
+    }
+    return Mesh(vertices = vertices, faces = faces, faceUVs = uvs, color = color, faceTextureNames = textureMapping, customTextures = customTextures)
+}
+
+fun createPlateMesh(size: Double, color: Color): Mesh {
+    val hs = size / 100.0
+
+    val vertices = listOf(
+        Vector3d(-50.0 * hs, 0.0 * hs, -50.0 * hs),
+        Vector3d(50.0 * hs, 0.0 * hs, -50.0 * hs),
+        Vector3d(-50.0 * hs, 0.0 * hs, 50.0 * hs),
+        Vector3d(50.0 * hs, 0.0 * hs, 50.0 * hs),
+    )
+
+    val faces: List<List<Int>> = listOf(
+        listOf(2, 3, 1, 0),
+        listOf(3, 2, 0, 1),
+    )
+
+    data class Edge(val a: Int, val b: Int)
+    val edges: List<Edge> = listOf(
+        Edge(a=0, b=1),
+        Edge(a=1, b=3),
+        Edge(a=3, b=2),
+        Edge(a=2, b=0),
+    )
+
+    val customTextures = mapOf(
+        0 to listOf(0xFFFFFFFF, 0xFF666666, 0xFFFFFFFF, 0xFF666666, 0xFFFFFFFF, 0xFF666666, 0xFFFFFFFF, 0xFF666666, 0xFFFFFFFF, 0xFF666666, 0xFFFFFFFF, 0xFF666666, 0xFFFFFFFF, 0xFF666666, 0xFFFFFFFF, 0xFF666666, 0xFF666666, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF4D4D4D, 0xFFFFFFFF, 0xFF666666, 0xFF666666, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF666666, 0xFF666666, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF666666, 0xFF666666, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF666666, 0xFF666666, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF666666, 0xFF666666, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF666666, 0xFF666666, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, 0xFF666666, 0xFF666666, 0xFFFFFFFF, 0xFF666666, 0xFFFFFFFF, 0xFF666666, 0xFFFFFFFF, 0xFF666666, 0xFFFFFFFF, 0xFF666666, 0xFFFFFFFF, 0xFF666666, 0xFFFFFFFF, 0xFF666666, 0xFFFFFFFF, 0xFF666666, 0xFFFFFFFF).map { it.toInt() },
+    )
+
+    val textureMapping = mapOf(
+        0 to "custom_0",
+        1 to "custom_0",
     )
 
     val uvs: List<List<Vector3d>> = faces.map { face ->
