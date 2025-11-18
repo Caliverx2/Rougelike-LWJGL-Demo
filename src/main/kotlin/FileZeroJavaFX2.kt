@@ -11,6 +11,7 @@ import javafx.scene.input.KeyCode
 import javafx.scene.input.MouseEvent
 import javafx.scene.layout.StackPane
 import javafx.scene.image.PixelFormat
+import javafx.scene.text.Font
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -27,6 +28,10 @@ import kotlin.math.*
 
 class DrawingPanel : StackPane() {
     private var lastUpdateTime = System.nanoTime()
+    private var frameCount = 0
+    private var lastFpsTime = 0L
+    private var fps = 0
+
     private val physicsTimestep = 1.0 / 120.0
     private var accumulator = 0.0
 
@@ -165,6 +170,7 @@ class DrawingPanel : StackPane() {
     private val transparentRenderQueue = ConcurrentLinkedQueue<RenderableFace>()
 
     private var lastLightCheckTime = 0L
+    private val fpsFont: Font
     private val lightCheckInterval = (1_000_000_000.0 / 30.0).toLong() // 30 Hz
 
     private val clientSocket: DatagramSocket = DatagramSocket()
@@ -196,6 +202,14 @@ class DrawingPanel : StackPane() {
                     }
                 }
             }
+        }
+
+        fpsFont = try {
+            Font.loadFont(DrawingPanel::class.java.classLoader.getResourceAsStream("fonts/mojangles.ttf"), 30.0)
+                ?: Font.font("Consolas", 16.0)
+        } catch (e: Exception) {
+            println("Failed to load font 'mojangles.ttf', using default.")
+            Font.font("Consolas", 16.0)
         }
 
         depthBuffer = DoubleArray(virtualWidth * virtualHeight) { Double.MAX_VALUE }
@@ -390,6 +404,12 @@ class DrawingPanel : StackPane() {
                 val rawDeltaTime = (now - lastUpdateTime) / 1_000_000_000.0
                 lastUpdateTime = now
                 accumulator += rawDeltaTime
+
+                if (now - lastFpsTime >= 1_000_000_000) {
+                    fps = frameCount
+                    frameCount = 0
+                    lastFpsTime = now
+                }
 
                 while (accumulator >= physicsTimestep) {
                     updateCameraPosition(physicsTimestep)
@@ -924,6 +944,11 @@ class DrawingPanel : StackPane() {
         gc.stroke = Color.WHITE // cursor
         gc.strokeLine(overlayCanvas.width/2-cursorSize, overlayCanvas.height/2, overlayCanvas.width/2+cursorSize, overlayCanvas.height/2)
         gc.strokeLine(overlayCanvas.width/2, overlayCanvas.height/2-cursorSize, overlayCanvas.width/2, overlayCanvas.height/2+cursorSize)
+
+        gc.font = fpsFont
+        gc.fill = Color.WHITE
+        val fpsText = "$fps"
+        gc.fillText(fpsText, overlayCanvas.width - gc.font.size*2, gc.font.size + 4)
 
         if (debugShowHitboxes) {
             val lookDirection = Vector3d(cos(cameraPitch) * sin(cameraYaw), sin(cameraPitch), cos(cameraPitch) * cos(cameraYaw)).normalize()
@@ -1977,18 +2002,14 @@ class DrawingPanel : StackPane() {
         }
 
         for (mesh in individualMeshesToRender) {
-            val meshAABB = meshAABBs[mesh]
-            if (mesh.texture == texSkybox || meshAABB == null || !isAabbOutsideFrustum(meshAABB, combinedMatrix)) {
-                val worldVertices = mesh.mesh.vertices.map { mesh.transformMatrix.transform(it) }
-                mesh.mesh.faces.forEachIndexed { faceIndex, faceIndices ->
-                    facesToProcess.add(FaceToProcess(mesh, faceIndex, faceIndices, worldVertices, mesh.collision))
-                }
+            val worldVertices = mesh.mesh.vertices.map { mesh.transformMatrix.transform(it) }
+            mesh.mesh.faces.forEachIndexed { faceIndex, faceIndicies ->
+                facesToProcess.add(FaceToProcess(mesh, faceIndex, faceIndicies, worldVertices, mesh.collision))
             }
         }
 
         // add walls from batched objects
         for (batch in staticMeshBatches) {
-            if (isAabbOutsideFrustum(batch.aabb, combinedMatrix)) continue
             val worldVertices = batch.mesh.vertices
             batch.mesh.faces.forEachIndexed { faceIndex, faceIndices ->
                 facesToProcess.add(FaceToProcess(batch, faceIndex, faceIndices, worldVertices, false))
@@ -2030,6 +2051,37 @@ class DrawingPanel : StackPane() {
             tasks.add(executor.submit {
                 for (faceData in chunk) {
                     if (faceData.indices.size < 3) continue
+
+                    // Face-level Culling1
+                    var isSkyboxFace = false
+                    if (faceData.source is PlacedMesh) {
+                        val mesh = faceData.source
+                        val modelName = modelRegistry.entries.find { it.value === mesh.mesh }?.key
+                        if (modelName == "skybox") {
+                            isSkyboxFace = true
+                        }
+                    }
+
+                    if (!isSkyboxFace) {
+                        val faceWorldVerticesForDist = faceData.indices.map { faceData.worldVertices[it] }
+                        var minDistanceSq = Double.MAX_VALUE
+
+                        // Triangulate the face to find the closest point to the camera
+                        for (i in 0 until faceWorldVerticesForDist.size - 2) {
+                            val v0 = faceWorldVerticesForDist[0]
+                            val v1 = faceWorldVerticesForDist[i + 1]
+                            val v2 = faceWorldVerticesForDist[i + 2]
+                            val closestPoint = closestPointOnTriangle(cameraPosition, v0, v1, v2)
+                            val distanceSq = cameraPosition.distanceSquared(closestPoint)
+                            if (distanceSq < minDistanceSq) {
+                                minDistanceSq = distanceSq
+                            }
+                        }
+
+                        if (minDistanceSq > renderDistanceBlocks * renderDistanceBlocks) {
+                            continue // Cull this face as it's too far
+                        }
+                    }
 
                     val worldVertices = faceData.worldVertices
                     val p0View = viewMatrix.transform(worldVertices[faceData.indices[0]])
@@ -2185,6 +2237,8 @@ class DrawingPanel : StackPane() {
         backBuffer.pixelWriter.setPixels(0, 0, virtualWidth, virtualHeight, PixelFormat.getIntArgbInstance(), pixelBuffer, 0, virtualWidth)
         imageView.image = backBuffer
         drawOverlay()
+
+        frameCount++
         isRendering.set(false)
     }
 
