@@ -1648,6 +1648,7 @@ class DrawingPanel : StackPane() {
                         pixelWriter.setArgb(x, y, (a shl 24) or (r shl 16) or (g shl 8) or b)
                     }
                 }
+                textureCache.remove(subLightmap.texture)
             }
             if (Thread.currentThread().isInterrupted) break
 
@@ -2038,10 +2039,10 @@ class DrawingPanel : StackPane() {
                 val uvs = listOf(Vector3d(0.0, 0.0, 0.0), Vector3d(1.0, 0.0, 0.0), Vector3d(1.0, 1.0, 0.0), Vector3d(0.0, 1.0, 0.0))
 
                 // Render the sub-lightmap as a textured quad, with its own light texture. No base texture, no lightgrid.
-                // Triangle 1: 0, 1, 2
-                processAndQueueRenderableFace(listOf(corners[0], corners[1], corners[2]), listOf(uvs[0], uvs[1], uvs[2]), mesh.mesh.color, subLightmap.texture, null, null, emptyList(), null, combinedMatrix, viewMatrix, false)
-                // Triangle 2: 0, 2, 3
-                processAndQueueRenderableFace(listOf(corners[0], corners[2], corners[3]), listOf(uvs[0], uvs[2], uvs[3]), mesh.mesh.color, subLightmap.texture, null, null, emptyList(), null, combinedMatrix, viewMatrix, false)
+                // Triangle 1: 0, 3, 2
+                processAndQueueRenderableFace(listOf(corners[0], corners[3], corners[2]), listOf(uvs[0], uvs[3], uvs[2]), mesh.mesh.color, subLightmap.texture, null, null, emptyList(), null, combinedMatrix, viewMatrix, false)
+                // Triangle 2: 0, 2, 1
+                processAndQueueRenderableFace(listOf(corners[0], corners[2], corners[1]), listOf(uvs[0], uvs[2], uvs[1]), mesh.mesh.color, subLightmap.texture, null, null, emptyList(), null, combinedMatrix, viewMatrix, false)
             }
         }
 
@@ -2303,8 +2304,24 @@ class DrawingPanel : StackPane() {
 
         val fogR = fogColor.red; val fogG = fogColor.green; val fogB = fogColor.blue
 
-        val texPixels: IntArray? = if (texture != null) getTexturePixels(texture) else null
-        val texDim: Pair<Int, Int>? = if (texture != null) textureDimensions[texture] else null
+        val texPixels: IntArray?
+        val texDim: Pair<Int, Int>?
+        if (texture != null && texture is WritableImage) {
+            // cache for WritableImage, as their content may change dynamically (e.g. SubLightmap)
+            val width = texture.width.toInt()
+            val height = texture.height.toInt()
+            if (width > 0 && height > 0) {
+                texDim = width to height
+                texPixels = IntArray(width * height)
+                texture.pixelReader.getPixels(0, 0, width, height, PixelFormat.getIntArgbInstance(), texPixels, 0, width)
+            } else {
+                texDim = null
+                texPixels = null
+            }
+        } else {
+            texPixels = if (texture != null) getTexturePixels(texture) else null
+            texDim = if (texture != null) textureDimensions[texture] else null
+        }
 
         var bary_w0_row = A12 * minX + B12 * minY + C12_base
         var bary_w1_row = A20 * minX + B20 * minY + C20_base

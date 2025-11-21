@@ -3169,16 +3169,14 @@ fun createRampMesh(size: Double, color: Color): Mesh {
         Vector3d(-50.0 * hs, 0.0 * hs, 50.0 * hs),
         Vector3d(50.0 * hs, 100.0 * hs, 50.0 * hs),
         Vector3d(-50.0 * hs, 100.0 * hs, 50.0 * hs),
-        Vector3d(-50.0 * hs, 100.0 * hs, 50.0 * hs),
-        Vector3d(50.0 * hs, 100.0 * hs, 49.9 * hs),
     )
 
     val faces: List<List<Int>> = listOf(
         listOf(3, 2, 4, 5),
         listOf(0, 1, 2, 3),
         listOf(1, 0, 5, 4),
-        listOf(0, 3, 5, 6),
-        listOf(1, 7, 4, 2),
+        listOf(0, 3, 5),
+        listOf(2, 1, 4),
     )
 
     data class Edge(val a: Int, val b: Int)
@@ -3203,8 +3201,8 @@ fun createRampMesh(size: Double, color: Color): Mesh {
         0 to "custom_0",
         1 to "custom_0",
         2 to "custom_0",
-        3 to "custom_0",
-        4 to "custom_1",
+        3 to "custom_1",
+        4 to "custom_0",
     )
 
     val uvs: List<List<Vector3d>> = faces.map { face ->
