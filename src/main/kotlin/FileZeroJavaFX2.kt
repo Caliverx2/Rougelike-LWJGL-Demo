@@ -557,52 +557,45 @@ class DrawingPanel : StackPane() {
     }
 
     private fun checkMeshCollision(playerHitbox: PlacedMesh, worldMesh: PlacedMesh): CollisionResult {
-        // 1. Szybki, szeroki test AABB całych modeli
         val playerAABB = AABB.fromCube(playerHitbox.getTransformedVertices())
         val worldAABB = AABB.fromCube(worldMesh.getTransformedVertices())
         if (!playerAABB.intersects(worldAABB)) {
             return CollisionResult(false)
         }
 
-        // 2. Testujemy każdy wierzchołek hitboxa gracza z każdym trójkątem siatki świata.
         val playerVertices = playerHitbox.getTransformedVertices()
-        val worldVertices = worldMesh.getTransformedVertices()
 
         val worldBlushes = worldMesh.mesh.blushes.map { blush ->
             val transformedCorners = blush.getCorners().map { corner -> worldMesh.transformMatrix.transform(corner) }
             AABB.fromCube(transformedCorners)
         }
 
-        // Iteruj po każdym wierzchołku hitboxa gracza
         for (playerVertex in playerVertices) {
-            // Iteruj po każdym trójkącie siatki świata
-            for (faceIndices in worldMesh.mesh.faces) {
-                if (faceIndices.size < 3) continue
+            val vertexAABB = AABB(
+                playerVertex - Vector3d(playerVertexRadius, playerVertexRadius, playerVertexRadius),
+                playerVertex + Vector3d(playerVertexRadius, playerVertexRadius, playerVertexRadius)
+            )
 
-                // Triangulacja ściany
-                for (i in 0 until faceIndices.size - 2) {
-                    val v0 = worldVertices[faceIndices[0]]
-                    val v1 = worldVertices[faceIndices[i + 1]]
-                    val v2 = worldVertices[faceIndices[i + 2]]
+            val potentialPrimitives = bvh.queryPrimitives(vertexAABB).filter { it.mesh === worldMesh }
 
-                    // Pełny test 3D
-                    // 1. Znajdź najbliższy punkt na trójkącie w przestrzeni 3D.
-                    val closestPointOnTri = closestPointOnTriangle(playerVertex, v0, v1, v2)
+            for (primitive in potentialPrimitives) {
+                val v0 = primitive.v0
+                val v1 = primitive.v1
+                val v2 = primitive.v2
 
-                    // 2. Oblicz kwadrat odległości w 3D.
-                    val distSq = (closestPointOnTri.x - playerVertex.x).pow(2) +
-                            (closestPointOnTri.y - playerVertex.y).pow(2) +
-                            (closestPointOnTri.z - playerVertex.z).pow(2)
+                val closestPointOnTri = closestPointOnTriangle(playerVertex, v0, v1, v2)
 
-                    if (distSq < playerVertexRadius.pow(2)) {
-                        // Kolizja w płaszczyźnie XZ. Teraz sprawdź `blushes`
-                        val collisionPoint = closestPointOnTri
-                        if (worldBlushes.any { it.contains(collisionPoint) }) {
-                            continue // Ignoruj kolizję, jeśli jest w strefie "blush"
-                        }
-                        val normal = (v1 - v0).cross(v2 - v0).normalize()
-                        return CollisionResult(true, normal) // Prawdziwa kolizja
+                val distSq = (closestPointOnTri.x - playerVertex.x).pow(2) +
+                        (closestPointOnTri.y - playerVertex.y).pow(2) +
+                        (closestPointOnTri.z - playerVertex.z).pow(2)
+
+                if (distSq < playerVertexRadius.pow(2)) {
+                    val collisionPoint = closestPointOnTri
+                    if (worldBlushes.any { it.contains(collisionPoint) }) {
+                        continue
                     }
+                    val normal = (v1 - v0).cross(v2 - v0).normalize()
+                    return CollisionResult(true, normal)
                 }
             }
         }
@@ -1222,10 +1215,11 @@ class DrawingPanel : StackPane() {
         }
 
         if ((lightingFuture == null || lightingFuture!!.isDone) && lightingUpdateJobQueue.isNotEmpty()) {
-            val nextLightToProcess = lightingUpdateJobQueue.poll()
-            val isMoving = orbitingLights.any { it.light === nextLightToProcess }
-            val resolution = if (isMoving) LOW_QualityRes else HIGH_QualityRes
-            lightingFuture = scheduleLightingUpdate(nextLightToProcess, resolution)
+            lightingUpdateJobQueue.poll()?.let { nextLightToProcess ->
+                val isMoving = orbitingLights.any { it.light === nextLightToProcess }
+                val resolution = if (isMoving || nextLightToProcess.type == LightType.VERTEX) LOW_QualityRes else HIGH_QualityRes
+                lightingFuture = scheduleLightingUpdate(nextLightToProcess, resolution)
+            }
         }
     }
 
@@ -2303,6 +2297,7 @@ class DrawingPanel : StackPane() {
         val ambientB = color.blue * ambientIntensity
 
         val fogR = fogColor.red; val fogG = fogColor.green; val fogB = fogColor.blue
+        val fogRange = fogEndDistance - fogStartDistance
 
         val texPixels: IntArray?
         val texDim: Pair<Int, Int>?
@@ -2322,6 +2317,12 @@ class DrawingPanel : StackPane() {
             texPixels = if (texture != null) getTexturePixels(texture) else null
             texDim = if (texture != null) textureDimensions[texture] else null
         }
+
+        val hasLightGrid = lightGrid != null
+        val hasGiGrid = giGrid != null
+        val hasTexture = texPixels != null && texDim != null
+        val applyFog = renderableFace.hasCollision || fogAffectsNonCollidables
+        val lightGridResolution = lightGrid?.size ?: 1
 
         var bary_w0_row = A12 * minX + B12 * minY + C12_base
         var bary_w1_row = A20 * minX + B20 * minY + C20_base
@@ -2354,7 +2355,7 @@ class DrawingPanel : StackPane() {
                         val isInBlush = blushContainerAABB?.contains(interpolatedWorldPos) == true && blushes.any { it.contains(interpolatedWorldPos) }
 
                         if (!isInBlush) {
-                            if (texPixels == null || texDim == null) { // This is a gizmo or untextured face
+                            if (!hasTexture) { // This is a gizmo or untextured face
                                 val finalColor = colorToInt(color)
                                 pixelBuffer[pixelIndex] = finalColor
                                 depthBuffer[pixelIndex] = interpolatedZ
@@ -2380,20 +2381,18 @@ class DrawingPanel : StackPane() {
                             val texG = ((texColorArgb ushr 8) and 0xFF) / 255.0
                             val texB = (texColorArgb and 0xFF) / 255.0
 
-                            val dynamicLight = if (lightGrid != null) {
-                                val lightGridResolution = lightGrid.size
+                            val dynamicLight = if (hasLightGrid) {
                                 val gridX = (u * lightGridResolution).toInt().coerceIn(0, lightGridResolution - 1)
                                 val gridY = ((1.0 - v) * lightGridResolution).toInt().coerceIn(0, lightGridResolution - 1)
-                                lightGrid[gridX][gridY]
+                                lightGrid!![gridX][gridY]
                             } else {
                                 Color.BLACK
                             }
 
-                            val giLight = if (giGrid != null) {
-                                val lightGridResolution = giGrid.size
+                            val giLight = if (hasGiGrid) {
                                 val gridX = (u * lightGridResolution).toInt().coerceIn(0, lightGridResolution - 1)
                                 val gridY = ((1.0 - v) * lightGridResolution).toInt().coerceIn(0, lightGridResolution - 1)
-                                giGrid[gridX][gridY]
+                                giGrid!![gridX][gridY]
                             } else {
                                 Color.BLACK
                             }
@@ -2417,9 +2416,9 @@ class DrawingPanel : StackPane() {
                             var g = ambientLitG + dynamicLightG / 4 + giLightG * GI_LightIntensity * 2.0
                             var b = ambientLitB + dynamicLightB / 4 + giLightB * GI_LightIntensity * 2.0
 
-                            if (renderableFace.hasCollision || fogAffectsNonCollidables) {
+                            if (applyFog) {
                                 val distance = inv_z_prime
-                                val fogFactor = ((distance - fogStartDistance) / (fogEndDistance - fogStartDistance)).coerceIn(0.0, 1.0) * fogDensity
+                                val fogFactor = ((distance - fogStartDistance) / fogRange).coerceIn(0.0, 1.0) * fogDensity
 
                                 r = r * (1 - fogFactor) + fogR * fogFactor
                                 g = g * (1 - fogFactor) + fogG * fogFactor

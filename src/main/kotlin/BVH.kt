@@ -172,6 +172,30 @@ class BVH {
         return closestIntersection
     }
 
+    fun queryPrimitives(queryAABB: AABB): List<TrianglePrimitive> {
+        val primitives = mutableListOf<TrianglePrimitive>()
+        val rootNode = root ?: return primitives
+
+        val nodesToVisit = ArrayDeque<BVHNode>()
+        nodesToVisit.add(rootNode)
+
+        while (nodesToVisit.isNotEmpty()) {
+            val currentNode = nodesToVisit.removeLast()
+
+            if (!queryAABB.intersects(currentNode.bounds)) {
+                continue
+            }
+
+            if (currentNode.isLeaf()) {
+                primitives.addAll(currentNode.primitives.filter { queryAABB.intersects(it.bounds) })
+            } else {
+                currentNode.left?.let { nodesToVisit.add(it) }
+                currentNode.right?.let { nodesToVisit.add(it) }
+            }
+        }
+        return primitives
+    }
+
     private fun rayIntersectsTriangle(rayOrigin: Vector3d, rayDir: Vector3d, v0: Vector3d, v1: Vector3d, v2: Vector3d, primitive: TrianglePrimitive? = null): Double? {
         val epsilon = 1e-5
         val edge1 = v1 - v0
