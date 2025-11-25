@@ -1656,7 +1656,7 @@ class DrawingPanel : StackPane() {
         applyGILightPoints(resolution)
     }
 
-    private fun traceReflection(reflectionOrigin: Vector3d, incidentDirection: Vector3d, surfaceNormal: Vector3d, incomingLight: Vector3d, bouncesLeft: Int, sourceMesh: PlacedMesh, sourceFaceIndex: Int, remainingDistance: Double) {
+    private fun traceReflection(reflectionOrigin: Vector3d, incidentDirection: Vector3d, surfaceNormal: Vector3d, incomingLight: Vector3d, bouncesLeft: Int, sourceMesh: PlacedMesh, sourceFaceIndex: Int, remainingDistance: Double, resolution: Int = HIGH_QualityRes) {
         if (bouncesLeft <= 0 || remainingDistance <= 0) {
             return
         }
@@ -1695,44 +1695,62 @@ class DrawingPanel : StackPane() {
 
             // dodaj światło do siatki trafionej powierzchni (jeśli to ostatnie odbicie) lub kontynuuj rekurencję
             if (bouncesLeft == 1) {
-                // w który piksel siatki światła trafił promień
-                val barycentricCoords = finalHitPrimitive.barycentricCoords
-                val allFaceUVs = finalHitPrimitive.mesh.mesh.faceUVs[finalHitPrimitive.faceIndex]
+                val hitFaceKey = Pair(finalHitPrimitive.mesh, finalHitPrimitive.faceIndex)
+                val subLightmapsForHitFace = largeFaceSubLightmaps[hitFaceKey]
 
-                val u: Double
-                val v: Double
+                if (subLightmapsForHitFace != null) {
+                    // Trafiono w dużą ścianę z sub-lightmapami
+                    val subLightmap = subLightmapsForHitFace.find { it.aabb.contains(finalHitPoint) }
+                    if (subLightmap != null) {
+                        val localPos = finalHitPoint - subLightmap.worldPosition
+                        val u = (localPos.x / cubeSize) + 0.5
+                        val v = (localPos.z / cubeSize) + 0.5
 
-                if (allFaceUVs.size == 4) {
-                    val triUVs: List<Vector3d>
-                    val meshFaceIndices = finalHitPrimitive.mesh.mesh.faces[finalHitPrimitive.faceIndex]
-                    val meshV1 = finalHitPrimitive.mesh.getTransformedVertices()[meshFaceIndices[1]]
+                        val gridX = (u * resolution).toInt().coerceIn(0, resolution - 1)
+                        val gridY = (v * resolution).toInt().coerceIn(0, resolution - 1)
 
-                    triUVs = if (finalHitPrimitive.v1 == meshV1) {
-                        // Pierwszy trójkąt (0, 1, 2)
-                        listOf(allFaceUVs[0], allFaceUVs[1], allFaceUVs[2])
-                    } else {
-                        // Drugi trójkąt (0, 2, 3)
-                        listOf(allFaceUVs[0], allFaceUVs[2], allFaceUVs[3])
+                        val existingColor = subLightmap.grid[gridX][gridY]
+                        val newR = (existingColor.red + outgoingLight.x * GI_LightIntensity).coerceIn(0.0, 1.0)
+                        val newG = (existingColor.green + outgoingLight.y * GI_LightIntensity).coerceIn(0.0, 1.0)
+                        val newB = (existingColor.blue + outgoingLight.z * GI_LightIntensity).coerceIn(0.0, 1.0)
+                        subLightmap.grid[gridX][gridY] = Color(newR, newG, newB, 1.0)
+                        subLightmap.needsUpdate = true // Oznacz do ponownego wypalenia tekstury
                     }
-                    // Interpolacja dla trójkąta
-                    u = triUVs[0].x * barycentricCoords.z + triUVs[1].x * barycentricCoords.x + triUVs[2].x * barycentricCoords.y
-                    v = triUVs[0].y * barycentricCoords.z + triUVs[1].y * barycentricCoords.x + triUVs[2].y * barycentricCoords.y
                 } else {
-                    u = allFaceUVs[0].x * barycentricCoords.z + allFaceUVs[1].x * barycentricCoords.x + allFaceUVs[2].x * barycentricCoords.y
-                    v = allFaceUVs[0].y * barycentricCoords.z + allFaceUVs[1].y * barycentricCoords.x + allFaceUVs[2].y * barycentricCoords.y
+                    // Trafiono w normalną ścianę, użyj starego systemu giLightPoints
+                    val barycentricCoords = finalHitPrimitive.barycentricCoords
+                    val allFaceUVs = finalHitPrimitive.mesh.mesh.faceUVs[finalHitPrimitive.faceIndex]
+
+                    val u: Double
+                    val v: Double
+
+                    if (allFaceUVs.size == 4) {
+                        val triUVs: List<Vector3d>
+                        val meshFaceIndices = finalHitPrimitive.mesh.mesh.faces[finalHitPrimitive.faceIndex]
+                        val meshV1 = finalHitPrimitive.mesh.getTransformedVertices()[meshFaceIndices[1]]
+
+                        triUVs = if (finalHitPrimitive.v1 == meshV1) {
+                            listOf(allFaceUVs[0], allFaceUVs[1], allFaceUVs[2])
+                        } else {
+                            listOf(allFaceUVs[0], allFaceUVs[2], allFaceUVs[3])
+                        }
+                        u = triUVs[0].x * barycentricCoords.z + triUVs[1].x * barycentricCoords.x + triUVs[2].x * barycentricCoords.y
+                        v = triUVs[0].y * barycentricCoords.z + triUVs[1].y * barycentricCoords.x + triUVs[2].y * barycentricCoords.y
+                    } else {
+                        u = allFaceUVs[0].x * barycentricCoords.z + allFaceUVs[1].x * barycentricCoords.x + allFaceUVs[2].x * barycentricCoords.y
+                        v = allFaceUVs[0].y * barycentricCoords.z + allFaceUVs[1].y * barycentricCoords.x + allFaceUVs[2].y * barycentricCoords.y
+                    }
+
+                    val gridX = (u * resolution).toInt().coerceIn(0, resolution - 1)
+                    val gridY = ((1.0 - v) * resolution).toInt().coerceIn(0, resolution - 1)
+
+                    giLightPoints.add(GI_LightPoint(
+                        targetFaceKey = hitFaceKey,
+                        gridX = gridX,
+                        gridY = gridY,
+                        color = outgoingLight
+                    ))
                 }
-
-
-                val gridX = (u * HIGH_QualityRes).toInt().coerceIn(0, HIGH_QualityRes - 1)
-                val gridY = ((1.0 - v) * HIGH_QualityRes).toInt().coerceIn(0, HIGH_QualityRes - 1)
-
-                // Zamiast modyfikować mapę, dodaj punkt do kolejki
-                giLightPoints.add(GI_LightPoint(
-                    targetFaceKey = Pair(finalHitPrimitive.mesh, finalHitPrimitive.faceIndex),
-                    gridX = gridX,
-                    gridY = gridY,
-                    color = outgoingLight
-                ))
             } else {
                 val finalHitNormal = (finalHitPrimitive.v1 - finalHitPrimitive.v0).cross(finalHitPrimitive.v2 - finalHitPrimitive.v0).normalize()
                 traceReflection(finalHitPoint, randomDir, finalHitNormal, outgoingLight, bouncesLeft - 1, finalHitPrimitive.mesh, finalHitPrimitive.faceIndex, remainingDistance - finalHitDist)
