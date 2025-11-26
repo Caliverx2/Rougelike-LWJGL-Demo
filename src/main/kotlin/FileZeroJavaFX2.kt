@@ -16,7 +16,6 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.util.Collections
-import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
@@ -174,15 +173,15 @@ class DrawingPanel : StackPane() {
     private var lastLightCheckTime = 0L
     private val fpsFont: Font
     private val lightCheckInterval = (1_000_000_000.0 / 30.0).toLong() // 30 Hz
-
-    private val clientSocket: DatagramSocket = DatagramSocket()
-    private val serverAddress: InetAddress = InetAddress.getByName("lewapnoob.ddns.net")
+    
     private val serverPort: Int = 1027
+    private val serverAddress: InetAddress = InetAddress.getByName("lewapnoob.ddns.net")
+    private val clientSocket: DatagramSocket = DatagramSocket()
+    private var lastPacketSendTime = 0L
     private val meshes = mutableListOf<PlacedMesh>()
+    private val keepAliveTimer = java.util.Timer()
     private val dynamicMeshes = ConcurrentHashMap<String, PlacedMesh>()
 
-    private val clientId: String = UUID.randomUUID().toString()
-    private var lastSentPacketData: String? = null
     private data class PlayerState(
         var currentPos: Vector3d,
         var currentYaw: Double,
@@ -190,6 +189,8 @@ class DrawingPanel : StackPane() {
         var targetYaw: Double
     )
     private val otherPlayers = ConcurrentHashMap<String, PlayerState>()
+
+    private var lastSentPacketData: String? = null
 
     private data class CollisionResult(val didCollide: Boolean, val surfaceNormal: Vector3d? = null)
 
@@ -399,7 +400,27 @@ class DrawingPanel : StackPane() {
         rebuildPhysicsStructures()
         rebuildStaticMeshBatches()
 
+        println("Client started on local port: ${clientSocket.localPort}")
+        println("Listening for server messages from ${serverAddress.hostAddress}:$serverPort")
+
+        val initialMessageString = "POSITION,${cameraPosition.x},${cameraPosition.y},${cameraPosition.z},${cameraYaw - PI}"
+        lastSentPacketData = initialMessageString
+        val initialMessage = initialMessageString.toByteArray()
+        val initialPacket = DatagramPacket(initialMessage, initialMessage.size, serverAddress, serverPort)
+        try {
+            clientSocket.send(initialPacket)
+            println("Wysłano początkową pozycję do serwera.")
+        } catch (e: Exception) {
+            println("Błąd podczas wysyłania początkowej pozycji: ${e.message}")
+        }
+
         Thread { listenForServerMessages() }.start()
+
+        keepAliveTimer.schedule(object : java.util.TimerTask() {
+            override fun run() {
+                sendKeepAlive()
+            }
+        }, 0, 1000)
 
         object : AnimationTimer() {
             override fun handle(now: Long) {
@@ -437,28 +458,47 @@ class DrawingPanel : StackPane() {
                 clientSocket.receive(packet)
                 val message = String(packet.data, 0, packet.length)
                 val parts = message.split(",")
-                if (parts.size == 5) {
-                    val receivedClientId = parts[0]
-                    if (receivedClientId != clientId) {
-                        val x = parts[1].toDouble()
-                        val y = parts[2].toDouble()
-                        val z = parts[3].toDouble()
-                        val yaw = parts[4].toDouble()
-                        val newPos = Vector3d(x, y, z)
 
-                        otherPlayers.compute(receivedClientId) { _, existingState ->
-                            if (existingState == null) {
-                                PlayerState(newPos, yaw, newPos, yaw)
-                            } else {
-                                existingState.targetPos = newPos
-                                existingState.targetYaw = yaw
-                                existingState
+                // Rozdziel logikę w zależności od typu wiadomości
+                when (parts.getOrNull(0)) {
+                    "DISCONNECT" -> {
+                        // Serwer informuje, że gracz się rozłączył
+                        if (parts.size == 2) {
+                            val disconnectedClientId = parts[1]
+                            if (otherPlayers.remove(disconnectedClientId) != null) {
+                                println("Gracz się rozłączył (ID: $disconnectedClientId).")
+                                // Usunięcie modelu 3D jest obsługiwane w `updateGameLogic`
+                            }
+                        }
+                    }
+                    else -> {
+                        // Standardowa wiadomość o pozycji gracza ("POSITION",uuid,x,y,z,yaw)
+                        if (parts.size == 6 && parts[0] == "POSITION") {
+                            val receivedClientId = parts[1]
+                            // Ignoruj pakiety od samego siebie (serwer nie powinien ich odsyłać, ale to zabezpieczenie)
+                            if (receivedClientId != clientSocket.localAddress.hostAddress) {
+                                val x = parts[2].toDouble()
+                                val y = parts[3].toDouble()
+                                val z = parts[4].toDouble()
+                                val yaw = parts[5].toDouble()
+                                val newPos = Vector3d(x, y, z)
+
+                                // Zaktualizuj stan innego gracza lub dodaj go, jeśli jest nowy
+                                otherPlayers.compute(receivedClientId) { _, existingState ->
+                                    if (existingState == null) {
+                                        println("Nowy gracz dołączył (ID: $receivedClientId)")
+                                        PlayerState(newPos, yaw, newPos, yaw)
+                                    } else {
+                                        existingState.targetPos = newPos
+                                        existingState.targetYaw = yaw
+                                        existingState
+                                    }
+                                }
                             }
                         }
                     }
                 }
             } catch (e: Exception) {
-                // Handle exceptions
             }
         }
     }
@@ -915,8 +955,12 @@ class DrawingPanel : StackPane() {
             cameraPosition.y = max(cameraPosition.y, floorLevel)
         }
 
-        val messageString = "$clientId,${cameraPosition.x},${cameraPosition.y},${cameraPosition.z},${cameraYaw - PI}"
-        if (messageString != lastSentPacketData) {
+
+        // Przygotuj wiadomość o pozycji w nowym formacie
+        val messageString = "POSITION,${cameraPosition.x},${cameraPosition.y},${cameraPosition.z},${cameraYaw - PI}"
+
+        // Wysyłaj pakiet z pozycją tylko wtedy, gdy dane faktycznie się zmieniły
+        if (messageString != lastSentPacketData) { // Prosta optymalizacja, aby nie spamować serwera identycznymi danymi
             lastSentPacketData = messageString
             val message = messageString.toByteArray()
             val packet = DatagramPacket(message, message.size, serverAddress, serverPort)
@@ -924,6 +968,15 @@ class DrawingPanel : StackPane() {
                 clientSocket.send(packet)
             } catch (e: Exception) {
             }
+        }
+    }
+
+    private fun sendKeepAlive() {
+        val message = "P".toByteArray() // "P" - Ping server
+        val packet = DatagramPacket(message, message.size, serverAddress, serverPort)
+        try {
+            clientSocket.send(packet)
+        } catch (e: Exception) {
         }
     }
 
