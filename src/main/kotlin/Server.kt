@@ -9,77 +9,49 @@ import java.net.InetAddress
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.thread
 
-class Server : JFrame("Server") {
-    private val startButton = JButton("Start Server")
-    private val stopButton = JButton("Stop Server")
-    private val portField = JTextField("1027", 5)
-    private val statusIndicator = JPanel()
+interface ServerStatusListener {
+    fun onStatusChanged(status: ServerStatus)
+}
 
+enum class ServerStatus(val color: Color) {
+    STOPPED(Color.BLACK),
+    RUNNING(Color.GREEN),
+    ERROR(Color.RED)
+}
+
+class ServerLogic(private val listener: ServerStatusListener) {
     private var serverSocket: DatagramSocket? = null
     private var running = false
-
-    // Przechowuje informacje o klientach, kluczem jest ich adres sieciowy (IP, Port)
-    private data class ClientInfo(
-        var lastSeen: Long = System.currentTimeMillis(),
-        var lastPositionData: String = "" // Ostatnia wiadomość z pozycją gracza (np. "POSITION,ip,x,y,z,yaw")
-    )
     private val clients = ConcurrentHashMap<Pair<InetAddress, Int>, ClientInfo>()
 
-    private enum class ServerStatus(val color: Color) {
-        STOPPED(Color.BLACK),
-        RUNNING(Color.GREEN),
-        ERROR(Color.RED)
-    }
+    private data class ClientInfo(
+        var lastSeen: Long = System.currentTimeMillis(),
+        var lastPositionData: String = ""
+    )
 
-    init {
-        statusIndicator.preferredSize = Dimension(15, 15)
-        updateStatus(ServerStatus.STOPPED)
+    fun start(port: Int) {
+        if (running) return
+        try {
+            serverSocket = DatagramSocket(port)
+            running = true
+            listener.onStatusChanged(ServerStatus.RUNNING)
+            println("Serwer uruchomiony na porcie $port")
 
-        defaultCloseOperation = EXIT_ON_CLOSE
-        layout = FlowLayout()
-        add(JLabel("Port:"))
-        add(portField)
-        add(startButton)
-        add(stopButton)
-        add(JLabel("Status:"))
-        add(statusIndicator)
-
-        setSize(400, 75)
-        setLocationRelativeTo(null)
-        isVisible = true
-
-        startButton.addActionListener {
-            if (!running) {
-                try {
-                    val port = portField.text.toInt()
-                    serverSocket = DatagramSocket(port)
-                    running = true
-                    updateStatus(ServerStatus.RUNNING)
-                    println("Serwer uruchomiony na porcie $port")
-
-                    thread(isDaemon = true) { listen() }
-                    thread(isDaemon = true) { checkClientTimeouts() }
-
-                } catch (e: Exception) {
-                    updateStatus(ServerStatus.ERROR)
-                    e.printStackTrace()
-                }
-            }
-        }
-
-        stopButton.addActionListener {
-            if (running) {
-                running = false
-                serverSocket?.close()
-                updateStatus(ServerStatus.STOPPED)
-                clients.clear()
-                println("Serwer zatrzymany")
-            }
+            thread(isDaemon = true) { listen() }
+            thread(isDaemon = true) { checkClientTimeouts() }
+        } catch (e: Exception) {
+            listener.onStatusChanged(ServerStatus.ERROR)
+            e.printStackTrace()
         }
     }
 
-    private fun updateStatus(status: ServerStatus) {
-        statusIndicator.background = status.color
+    fun stop() {
+        if (!running) return
+        running = false
+        serverSocket?.close()
+        clients.clear()
+        listener.onStatusChanged(ServerStatus.STOPPED)
+        println("Serwer zatrzymany")
     }
 
     private fun checkClientTimeouts() {
@@ -88,19 +60,17 @@ class Server : JFrame("Server") {
                 val now = System.currentTimeMillis()
                 val clientsToRemove = mutableListOf<Pair<InetAddress, Int>>()
 
-                // Znajdź klientów, którzy przekroczyli limit czasu
                 clients.forEach { (clientAddress, clientInfo) ->
                     if (now - clientInfo.lastSeen > 2000) {
                         clientsToRemove.add(clientAddress)
                     }
                 }
 
-                // Usuń nieaktywnych klientów i poinformuj pozostałych
                 clientsToRemove.forEach { clientAddress ->
-                    val removedClientInfo = clients.remove(clientAddress) ?: return@forEach
+                    clients.remove(clientAddress) ?: return@forEach
                     println("Klient ${clientAddress.first.hostAddress} rozłączony (timeout).")
                     val disconnectMessage = "DISCONNECT,${clientAddress.first.hostAddress}".toByteArray()
-                    // Wyślij ją do wszystkich pozostałych aktywnych klientów
+
                     clients.forEach { (addr, _) ->
                         val packet = java.net.DatagramPacket(disconnectMessage, disconnectMessage.size, addr.first, addr.second)
                         serverSocket?.send(packet)
@@ -128,9 +98,7 @@ class Server : JFrame("Server") {
                 val messageType = parts[0]
                 val clientAddress = Pair(packet.address, packet.port)
 
-                // Sprawdź typ wiadomości
                 if (messageType == "POSITION" && parts.size == 5) {
-                    // Wiadomość z pozycją od klienta: "POSITION,x,y,z,yaw"
                     val isNewClient = !clients.containsKey(clientAddress)
 
                     val clientInfo = clients.computeIfAbsent(clientAddress) {
@@ -138,14 +106,11 @@ class Server : JFrame("Server") {
                         ClientInfo()
                     }
 
-                    // Przygotuj wiadomość do rozesłania: "POSITION,ip,x,y,z,yaw"
                     val broadcastMessage = "POSITION,${clientAddress.first.hostAddress},${parts.slice(1..4).joinToString(",")}"
 
-                    // Zawsze aktualizuj czas ostatniej aktywności i pozycję
                     clientInfo.lastSeen = System.currentTimeMillis()
                     clientInfo.lastPositionData = broadcastMessage
 
-                    // Jeśli to nowy klient, wyślij mu pozycje wszystkich innych graczy
                     if (isNewClient) {
                         clients.forEach { (otherClientAddress, otherClientInfo) ->
                             if (otherClientAddress != clientAddress && otherClientInfo.lastPositionData.isNotEmpty()) {
@@ -156,7 +121,6 @@ class Server : JFrame("Server") {
                         }
                     }
 
-                    // Natychmiast roześlij otrzymaną pozycję do wszystkich INNYCH klientów
                     val data = broadcastMessage.toByteArray()
                     clients.forEach { (otherClientAddress, _) ->
                         if (otherClientAddress != clientAddress) {
@@ -165,19 +129,59 @@ class Server : JFrame("Server") {
                         }
                     }
                 } else if (messageType == "P") {
-                    // To jest wiadomość "keep-alive"
-                    val clientInfo = clients[clientAddress]
-                    // Jeśli klient istnieje, po prostu zaktualizuj jego czas. Jeśli nie, zignoruj.
-                    // Klient musi najpierw wysłać pozycję, aby zostać zarejestrowanym.
-                    clientInfo?.lastSeen = System.currentTimeMillis()
+                    clients[clientAddress]?.lastSeen = System.currentTimeMillis()
                 }
 
             } catch (e: Exception) {
                 if (running) {
-                    updateStatus(ServerStatus.ERROR)
+                    listener.onStatusChanged(ServerStatus.ERROR)
                     e.printStackTrace()
                 }
             }
+        }
+    }
+}
+
+class Server : JFrame("Server"), ServerStatusListener {
+    private val startButton = JButton("Start Server")
+    private val stopButton = JButton("Stop Server")
+    private val portField = JTextField("1027", 5)
+    private val statusIndicator = JPanel()
+    private val serverLogic = ServerLogic(this)
+
+    init {
+        statusIndicator.preferredSize = Dimension(15, 15)
+        onStatusChanged(ServerStatus.STOPPED)
+
+        defaultCloseOperation = EXIT_ON_CLOSE
+        layout = FlowLayout()
+        add(JLabel("Port:"))
+        add(portField)
+        add(startButton)
+        add(stopButton)
+        add(JLabel("Status:"))
+        add(statusIndicator)
+
+        setSize(400, 75)
+        setLocationRelativeTo(null)
+        isVisible = true
+
+        startButton.addActionListener {
+            portField.text.toIntOrNull()?.let { port ->
+                serverLogic.start(port)
+            }
+        }
+
+        stopButton.addActionListener {
+            serverLogic.stop()
+        }
+    }
+
+    override fun onStatusChanged(status: ServerStatus) {
+        SwingUtilities.invokeLater {
+            statusIndicator.background = status.color
+            startButton.isEnabled = status != ServerStatus.RUNNING
+            stopButton.isEnabled = status == ServerStatus.RUNNING
         }
     }
 }
