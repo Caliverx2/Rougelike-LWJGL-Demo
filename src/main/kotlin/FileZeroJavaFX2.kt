@@ -1740,10 +1740,11 @@ class DrawingPanel : StackPane() {
                 Vector3d(meshColor.red, meshColor.green, meshColor.blue)
             }
 
+            val bounceAttenuation = 0.5
             val outgoingLight = Vector3d(
-                (incomingLight.x * surfaceAlbedo.x).coerceIn(0.0, 1.0),
-                (incomingLight.y * surfaceAlbedo.y).coerceIn(0.0, 1.0),
-                (incomingLight.z * surfaceAlbedo.z).coerceIn(0.0, 1.0)
+                (incomingLight.x * surfaceAlbedo.x * bounceAttenuation).coerceIn(0.0, 1.0),
+                (incomingLight.y * surfaceAlbedo.y * bounceAttenuation).coerceIn(0.0, 1.0),
+                (incomingLight.z * surfaceAlbedo.z * bounceAttenuation).coerceIn(0.0, 1.0)
             )
 
             // dodaj światło do siatki trafionej powierzchni (jeśli to ostatnie odbicie) lub kontynuuj rekurencję
