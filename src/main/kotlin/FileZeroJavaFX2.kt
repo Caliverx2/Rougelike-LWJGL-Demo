@@ -1334,6 +1334,27 @@ class DrawingPanel : StackPane() {
         }
     }
 
+    private fun isPointInFace(point: Vector3d, faceWorldVerts: List<Vector3d>): Boolean {
+        if (faceWorldVerts.size < 3) return false
+
+        // Używamy rzutowania na płaszczyznę XZ, ponieważ sublightmapy są płaskie na osi Y
+        val px = point.x
+        val pz = point.z
+
+        for (i in 0 until faceWorldVerts.size - 2) {
+            val v0 = faceWorldVerts[0]
+            val v1 = faceWorldVerts[i + 1]
+            val v2 = faceWorldVerts[i + 2]
+
+            val d = (v1.z - v0.z) * (v2.x - v0.x) - (v1.x - v0.x) * (v2.z - v0.z)
+            if (d == 0.0) continue // Trójkąt zdegenerowany
+            val bary_u = ((pz - v0.z) * (v2.x - v0.x) - (px - v0.x) * (v2.z - v0.z)) / d
+            val bary_v = ((v1.z - v0.z) * (px - v0.x) - (v1.x - v0.x) * (pz - v0.z)) / d
+            if (bary_u >= 0 && bary_v >= 0 && (bary_u + bary_v) <= 1) return true
+        }
+        return false
+    }
+
     private fun generateSubLightmapsForLargeFace(light: LightSource, mesh: PlacedMesh, faceIndex: Int, resolution: Int) {
         val faceKey = Pair(mesh, faceIndex)
         val subLightmaps = largeFaceSubLightmaps.computeIfAbsent(faceKey) { Collections.synchronizedList(mutableListOf()) }
@@ -1344,20 +1365,35 @@ class DrawingPanel : StackPane() {
         val lightGridMaxZ = ceil((light.position.z + light.radius) / cubeSize).toInt()
 
         val faceWorldVerts = mesh.mesh.faces[faceIndex].map { mesh.transformMatrix.transform(mesh.mesh.vertices[it]) }
+        val faceAABB = AABB.fromCube(faceWorldVerts)
         val faceY = faceWorldVerts.firstOrNull()?.y ?: return
 
         for (gx in lightGridMinX..lightGridMaxX) {
             for (gz in lightGridMinZ..lightGridMaxZ) {
                 val subLightmapCenter = Vector3d(gx * cubeSize, faceY, gz * cubeSize)
+                val halfSize = cubeSize / 2.0
+                val subLightmapAABB = AABB(
+                    subLightmapCenter - Vector3d(halfSize, 0.1, halfSize),
+                    subLightmapCenter + Vector3d(halfSize, 0.1, halfSize)
+                )
+
+                // Sprawdź, czy sub-lightmapa przecina się z AABB ściany
+                if (!subLightmapAABB.intersects(faceAABB)) {
+                    continue // Pomiń generowanie, jeśli nie ma przecięcia
+                }
+
+                // Dokładniejszy test: sprawdź, czy jakikolwiek wierzchołek ściany jest w AABB sublightmapy
+                // LUB czy jakikolwiek wierzchołek sublightmapy jest wewnątrz wielokąta ściany.
+                if (!faceWorldVerts.any { subLightmapAABB.contains(it) } && !subLightmapAABB.getCorners().any { isPointInFace(it, faceWorldVerts) }) {
+                    continue
+                }
 
                 var subLightmap = subLightmaps.find { it.worldPosition == subLightmapCenter }
                 if (subLightmap == null) {
-                    val halfSize = cubeSize / 2.0
-                    val aabb = AABB(subLightmapCenter - Vector3d(halfSize, 0.1, halfSize), subLightmapCenter + Vector3d(halfSize, 0.1, halfSize))
                     val newGrid = Array(resolution) { Array(resolution) { Color.TRANSPARENT } }
                     val newTexture = WritableImage(resolution, resolution)
 
-                    subLightmap = SubLightmap(newGrid, newTexture, subLightmapCenter, aabb, needsUpdate = true, lastLitTime = System.nanoTime())
+                    subLightmap = SubLightmap(newGrid, newTexture, subLightmapCenter, subLightmapAABB, needsUpdate = true, lastLitTime = System.nanoTime())
                     subLightmaps.add(subLightmap)
                 }
                 subLightmap.needsUpdate = true
@@ -1631,6 +1667,9 @@ class DrawingPanel : StackPane() {
                                 subLightmap.worldPosition.y,
                                 subLightmap.worldPosition.z + (v - 0.5) * cubeSize
                             )
+
+                            // Renderuj piksel tylko jeśli jest nad rzeczywistą geometrią ściany
+                            if (!isPointInFace(pointOnSubLightmap, faceWorldVerts)) continue
 
                             val toLightDir = (light.position - pointOnSubLightmap).normalize()
                             if (faceNormal.dot(toLightDir) <= 0) continue
