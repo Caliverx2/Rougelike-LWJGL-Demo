@@ -1653,9 +1653,17 @@ class DrawingPanel : StackPane() {
                 var isLit = false
 
                 for (light in allLightsSnapshot) {
+                    // Twoja optymalizacja: Sprawdź 4 narożniki sub-lightmapy
+                    val corners = subLightmap.aabb.getCorners()
+                    val areAllCornersInside = corners.all { isPointInFace(it, faceWorldVerts) }
+
+                    // Jeśli wszystkie narożniki są wewnątrz, możemy pominąć drogie sprawdzanie per-pixel.
+                    // Jeśli nie, musimy sprawdzać każdy piksel indywidualnie.
+                    val needsPerPixelCheck = !areAllCornersInside
+
                     // Szybki test AABB
                     val lightAABB = AABB(light.position - Vector3d(light.radius, light.radius, light.radius), light.position + Vector3d(light.radius, light.radius, light.radius))
-                    if (!lightAABB.intersects(subLightmap.aabb.copy(min = subLightmap.aabb.min - Vector3d(0.0, 0.2, 0.0), max = subLightmap.aabb.max + Vector3d(0.0, 0.2, 0.0)))) continue
+                    if (!lightAABB.intersects(subLightmap.aabb)) continue
 
                     for (y in 0 until resolution) {
                         for (x in 0 until resolution) {
@@ -1668,8 +1676,8 @@ class DrawingPanel : StackPane() {
                                 subLightmap.worldPosition.z + (v - 0.5) * cubeSize
                             )
 
-                            // Renderuj piksel tylko jeśli jest nad rzeczywistą geometrią ściany
-                            if (!isPointInFace(pointOnSubLightmap, faceWorldVerts)) continue
+                            // Renderuj piksel tylko jeśli jest nad rzeczywistą geometrią ściany (tylko dla krawędziowych sub-lightmap)
+                            if (needsPerPixelCheck && !isPointInFace(pointOnSubLightmap, faceWorldVerts)) continue
 
                             val toLightDir = (light.position - pointOnSubLightmap).normalize()
                             if (faceNormal.dot(toLightDir) <= 0) continue
