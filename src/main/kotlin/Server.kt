@@ -98,7 +98,7 @@ class ServerLogic(private val listener: ServerStatusListener) {
                 val messageType = parts[0]
                 val clientAddress = Pair(packet.address, packet.port)
 
-                if (messageType == "POSITION" && parts.size == 5) { //AHAHAAJAJAJAJA
+                if (messageType == "POSITION" && parts.size == 5) {
                     val isNewClient = !clients.containsKey(clientAddress)
 
                     val clientInfo = clients.computeIfAbsent(clientAddress) {

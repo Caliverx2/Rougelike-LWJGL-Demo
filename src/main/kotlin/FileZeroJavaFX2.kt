@@ -163,22 +163,27 @@ class DrawingPanel : StackPane() {
 
     val pressedKeys = Collections.synchronizedSet(mutableSetOf<KeyCode>())
 
-    private val collisionGrid = SpatialGrid<PlacedMesh>(cubeSize * 2)
+    private val staticCollisionGrid = SpatialGrid<PlacedMesh>(cubeSize * 2)
+    private val staticBvh = BVH()
+
+    // Struktury dla obiektów dynamicznych
+    private val dynamicCollisionGrid = SpatialGrid<PlacedMesh>(cubeSize * 2)
+    private val dynamicBvh = BVH()
+
     private val meshAABBs = ConcurrentHashMap<PlacedMesh, AABB>()
     private val executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
-    private val bvh = BVH()
     private val renderQueue = ConcurrentLinkedQueue<RenderableFace>()
     private val transparentRenderQueue = ConcurrentLinkedQueue<RenderableFace>()
 
     private var lastLightCheckTime = 0L
     private val fpsFont: Font
     private val lightCheckInterval = (1_000_000_000.0 / 30.0).toLong() // 30 Hz
-    
+
     private val serverPort: Int = 1027
     private val serverAddress: InetAddress = InetAddress.getByName("lewapnoob.ddns.net")
     private val clientSocket: DatagramSocket = DatagramSocket()
     private var lastPacketSendTime = 0L
-    private val meshes = mutableListOf<PlacedMesh>()
+    private val staticMeshes = mutableListOf<PlacedMesh>()
     private val keepAliveTimer = java.util.Timer()
     private val dynamicMeshes = ConcurrentHashMap<String, PlacedMesh>()
 
@@ -322,52 +327,52 @@ class DrawingPanel : StackPane() {
         }
 
         val pos0 = Vector3d(0.0, 0.0, 0.0)
-        meshes.add(PlacedMesh(modelRegistry["skybox"]!!, Matrix4x4.translation(pos0.x, pos0.y, pos0.z), faceTextures = placedTextures("skybox", modelRegistry["skybox"]!!), collision = false))
+        staticMeshes.add(PlacedMesh(modelRegistry["skybox"]!!, Matrix4x4.translation(pos0.x, pos0.y, pos0.z), faceTextures = placedTextures("skybox", modelRegistry["skybox"]!!), collision = false))
 
         val pos1 = Vector3d(5.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["pyramid"]!!, Matrix4x4.translation(pos1.x, pos1.y, pos1.z), faceTextures = placedTextures("pyramid", modelRegistry["pyramid"]!!)))
+        staticMeshes.add(PlacedMesh(modelRegistry["pyramid"]!!, Matrix4x4.translation(pos1.x, pos1.y, pos1.z), faceTextures = placedTextures("pyramid", modelRegistry["pyramid"]!!)))
 
         val pos2 = Vector3d(7.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["invertedPyramid"]!!, Matrix4x4.translation(pos2.x, pos2.y, pos2.z), faceTextures = placedTextures("invertedPyramid", modelRegistry["invertedPyramid"]!!)))
+        staticMeshes.add(PlacedMesh(modelRegistry["invertedPyramid"]!!, Matrix4x4.translation(pos2.x, pos2.y, pos2.z), faceTextures = placedTextures("invertedPyramid", modelRegistry["invertedPyramid"]!!)))
 
         val pos3 = Vector3d(9.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["tower"]!!, Matrix4x4.translation(pos3.x, pos3.y, pos3.z) * Matrix4x4.rotationY(PI/4), texture = texBricks))
+        staticMeshes.add(PlacedMesh(modelRegistry["tower"]!!, Matrix4x4.translation(pos3.x, pos3.y, pos3.z) * Matrix4x4.rotationY(PI/4), texture = texBricks))
 
         val pos4 = Vector3d(11.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["kotlin"]!!, Matrix4x4.translation(pos4.x, pos4.y, pos4.z), texture = texFloor))
+        staticMeshes.add(PlacedMesh(modelRegistry["kotlin"]!!, Matrix4x4.translation(pos4.x, pos4.y, pos4.z), texture = texFloor))
 
         val pos5 = Vector3d(13.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["tank"]!!, Matrix4x4.translation(pos5.x, pos5.y, pos5.z), faceTextures = placedTextures("tank", modelRegistry["tank"]!!)))
+        staticMeshes.add(PlacedMesh(modelRegistry["tank"]!!, Matrix4x4.translation(pos5.x, pos5.y, pos5.z), faceTextures = placedTextures("tank", modelRegistry["tank"]!!)))
 
         val pos6 = Vector3d(15.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["offroadCar"]!!, Matrix4x4.translation(pos6.x, pos6.y, pos6.z), texture = texBlackBricks))
+        staticMeshes.add(PlacedMesh(modelRegistry["offroadCar"]!!, Matrix4x4.translation(pos6.x, pos6.y, pos6.z), texture = texBlackBricks))
 
         val pos7 = Vector3d(17.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["stair"]!!, Matrix4x4.translation(pos7.x, pos7.y, pos7.z), texture = texCeiling, faceTextures = placedTextures("stair", modelRegistry["stair"]!!)))
+        staticMeshes.add(PlacedMesh(modelRegistry["stair"]!!, Matrix4x4.translation(pos7.x, pos7.y, pos7.z), texture = texCeiling, faceTextures = placedTextures("stair", modelRegistry["stair"]!!)))
 
         val pos8 = Vector3d(19.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["sphere"]!!, Matrix4x4.translation(pos8.x, pos8.y, pos8.z), texture = texCeiling))
+        staticMeshes.add(PlacedMesh(modelRegistry["sphere"]!!, Matrix4x4.translation(pos8.x, pos8.y, pos8.z), texture = texCeiling))
 
         val pos9 = Vector3d(31.0 * cubeSize, -4.0 * cubeSize, 0 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["map"]!!, Matrix4x4.translation(pos9.x, pos9.y, pos9.z), faceTextures = placedTextures("map", modelRegistry["map"]!!)))
+        staticMeshes.add(PlacedMesh(modelRegistry["map"]!!, Matrix4x4.translation(pos9.x, pos9.y, pos9.z), faceTextures = placedTextures("map", modelRegistry["map"]!!)))
 
         val pos10 = Vector3d(50.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["colorPalette"]!!, Matrix4x4.translation(pos10.x, pos10.y, pos10.z), faceTextures = placedTextures("colorPalette", modelRegistry["colorPalette"]!!)))
+        staticMeshes.add(PlacedMesh(modelRegistry["colorPalette"]!!, Matrix4x4.translation(pos10.x, pos10.y, pos10.z), faceTextures = placedTextures("colorPalette", modelRegistry["colorPalette"]!!)))
 
         val pos11 = Vector3d(21.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["TNT"]!!, Matrix4x4.translation(pos11.x, pos11.y, pos11.z), faceTextures = placedTextures("TNT", modelRegistry["TNT"]!!)))
+        staticMeshes.add(PlacedMesh(modelRegistry["TNT"]!!, Matrix4x4.translation(pos11.x, pos11.y, pos11.z), faceTextures = placedTextures("TNT", modelRegistry["TNT"]!!)))
 
         val pos12 = Vector3d(23.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["rtMap"]!!, Matrix4x4.translation(pos12.x, pos12.y, pos12.z), faceTextures = placedTextures("rtMap", modelRegistry["rtMap"]!!)))
+        staticMeshes.add(PlacedMesh(modelRegistry["rtMap"]!!, Matrix4x4.translation(pos12.x, pos12.y, pos12.z), faceTextures = placedTextures("rtMap", modelRegistry["rtMap"]!!)))
 
         val pos13 = Vector3d(4.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["ramp"]!!, Matrix4x4.translation(pos13.x, pos13.y, pos13.z), faceTextures = placedTextures("ramp", modelRegistry["ramp"]!!)))
+        staticMeshes.add(PlacedMesh(modelRegistry["ramp"]!!, Matrix4x4.translation(pos13.x, pos13.y, pos13.z), faceTextures = placedTextures("ramp", modelRegistry["ramp"]!!)))
 
         val pos14 = Vector3d(25.5 * cubeSize, -4.0 * cubeSize, 0.5 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["fence"]!!, Matrix4x4.translation(pos14.x, pos14.y, pos14.z), faceTextures = placedTextures("fence", modelRegistry["fence"]!!)))
+        staticMeshes.add(PlacedMesh(modelRegistry["fence"]!!, Matrix4x4.translation(pos14.x, pos14.y, pos14.z), faceTextures = placedTextures("fence", modelRegistry["fence"]!!)))
 
         val pos15 = Vector3d(0.5 * cubeSize, -4.01 * cubeSize, 0 * cubeSize)
-        meshes.add(PlacedMesh(modelRegistry["plate"]!!, Matrix4x4.translation(pos15.x, pos15.y, pos15.z), faceTextures = placedTextures("plate", modelRegistry["plate"]!!)))
+        staticMeshes.add(PlacedMesh(modelRegistry["plate"]!!, Matrix4x4.translation(pos15.x, pos15.y, pos15.z), faceTextures = placedTextures("plate", modelRegistry["plate"]!!)))
 
         for (x in 0 until gridDimension) {
             for (y in 0 until gridDimension) {
@@ -380,22 +385,21 @@ class DrawingPanel : StackPane() {
                     )
                     val mat = Matrix4x4.translation(pos.x, pos.y, pos.z)
                     when (GRID_MAP[x][y][z]) {
-                        1 -> meshes.add(PlacedMesh(modelRegistry["cube"]!!, mat, texBlackBricks, collisionPos = pos))
-                        2 -> meshes.add(PlacedMesh(modelRegistry["cubeRed"]!!, mat, texBlackBricks, collisionPos = pos))
-                        3 -> {meshes.add(PlacedMesh(modelRegistry["cubeGates"]!!, mat, texBricks, collision=false, collisionPos = pos))
+                        1 -> staticMeshes.add(PlacedMesh(modelRegistry["cube"]!!, mat, texBlackBricks, collisionPos = pos))
+                        2 -> staticMeshes.add(PlacedMesh(modelRegistry["cubeRed"]!!, mat, texBlackBricks, collisionPos = pos))
+                        3 -> {staticMeshes.add(PlacedMesh(modelRegistry["cubeGates"]!!, mat, texBricks, collision=false, collisionPos = pos))
                             println("${pos.x} ${pos.y} ${pos.z}")}
                     }
                 }
             }
         }
 
-        meshes.forEach { mesh ->
+        staticMeshes.forEach { mesh ->
             val aabb = AABB.fromCube(mesh.getTransformedVertices())
             meshAABBs[mesh] = aabb
-            if (mesh.collision) {
-                collisionGrid.add(mesh, aabb)
-            }
         }
+
+        rebuildStaticPhysics()
 
         rebuildPhysicsStructures()
         rebuildStaticMeshBatches()
@@ -586,12 +590,18 @@ class DrawingPanel : StackPane() {
         playerHitboxMesh.transformMatrix = translation * rotation * scale
 
         val playerAABB = AABB.fromCube(playerHitboxMesh.getTransformedVertices())
-        val potentialColliders = collisionGrid.query(playerAABB)
-        for (mesh in potentialColliders) {
+
+        // Sprawdź kolizje ze statyczną geometrią
+        for (mesh in staticCollisionGrid.query(playerAABB)) {
             val result = checkMeshCollision(playerHitboxMesh, mesh)
             if (result.didCollide) {
                 return result
             }
+        }
+        // Sprawdź kolizje z dynamicznymi obiektami (inni gracze)
+        for (mesh in dynamicCollisionGrid.query(playerAABB)) {
+            val result = checkMeshCollision(playerHitboxMesh, mesh)
+            if (result.didCollide) return result
         }
         return CollisionResult(false)
     }
@@ -616,7 +626,10 @@ class DrawingPanel : StackPane() {
                 playerVertex + Vector3d(playerVertexRadius, playerVertexRadius, playerVertexRadius)
             )
 
-            val potentialPrimitives = bvh.queryPrimitives(vertexAABB).filter { it.mesh === worldMesh }
+            val bvhToCheck = if (dynamicMeshes.containsValue(worldMesh)) dynamicBvh else staticBvh
+
+            val potentialPrimitives = bvhToCheck.queryPrimitives(vertexAABB).filter { it.mesh === worldMesh }
+
 
             for (primitive in potentialPrimitives) {
                 val v0 = primitive.v0
@@ -889,19 +902,16 @@ class DrawingPanel : StackPane() {
                 (gridZ - offset) * cubeSize
             )
             val translationMatrix = Matrix4x4.translation(initialPos.x, initialPos.y, initialPos.z)
-            val newMesh = PlacedMesh(cubeMeshGray, transformMatrix = translationMatrix, texture = loadImage("textures/black_bricks.png"), collisionPos = initialPos)
-            meshes.add(newMesh)
+            val newMesh = PlacedMesh(cubeMeshGray, transformMatrix = translationMatrix, texture = loadImage("textures/black_bricks.png"), collisionPos = initialPos, collision = true)
+            staticMeshes.add(newMesh)
 
             val aabb = AABB.fromCube(newMesh.getTransformedVertices())
             meshAABBs[newMesh] = aabb
 
             if (newMesh.collision) {
-                collisionGrid.clear()
-                meshes.filter { it.collision }.forEach { mesh ->
-                    collisionGrid.add(mesh, meshAABBs[mesh]!!)
-                }
+                staticCollisionGrid.add(newMesh, aabb)
             }
-            rebuildPhysicsStructures()
+            rebuildStaticPhysics()
             pressedKeys.remove(KeyCode.R)
         }
         if (pressedKeys.contains(KeyCode.O)) {
@@ -1005,7 +1015,7 @@ class DrawingPanel : StackPane() {
             val projectionMatrix = Matrix4x4.perspective(dynamicFov, overlayCanvas.width / overlayCanvas.height, 0.1, renderDistanceBlocks * 2)
             val combinedMatrix = projectionMatrix * viewMatrix
 
-            val allMeshes = meshes + dynamicMeshes.values
+            val allMeshes = staticMeshes + dynamicMeshes.values
             for (mesh in allMeshes.filter { it.collision }) {
                 val aabb = meshAABBs[mesh] ?: continue
                 if (isAabbOutsideFrustum(aabb, combinedMatrix)) continue
@@ -1086,16 +1096,11 @@ class DrawingPanel : StackPane() {
                 (gridY - offset) * cubeSize,
                 (gridZ - offset) * cubeSize
             )
-            val meshToRemove = meshes.find { it.collisionPos == pos }
+            val meshToRemove = staticMeshes.find { it.collisionPos == pos }
             if (meshToRemove != null) {
-                meshes.remove(meshToRemove)
+                staticMeshes.remove(meshToRemove)
                 meshAABBs.remove(meshToRemove)
-                collisionGrid.clear()
-                meshes.filter { it.collision }.forEach { mesh ->
-                    val aabb = meshAABBs[mesh]!!
-                    collisionGrid.add(mesh, aabb)
-                }
-                rebuildPhysicsStructures()
+                rebuildStaticPhysics()
                 rebuildStaticMeshBatches()
                 GRID_MAP[gridX][gridY][gridZ] = 0
             }
@@ -1105,7 +1110,6 @@ class DrawingPanel : StackPane() {
         val orbitSpeed = 0.5 * cubeSize
         val orbitRadius = 2.5 * cubeSize
         val angularVelocity = orbitSpeed / orbitRadius // v = ω * r  => ω = v / r
-        var physicsNeedsRebuild = false
 
         synchronized(orbitingLights) {
             for (orbitingLight in orbitingLights) {
@@ -1153,7 +1157,6 @@ class DrawingPanel : StackPane() {
             val meshToRemove = dynamicMeshes.remove(id)
             if (meshToRemove != null) {
                 meshAABBs.remove(meshToRemove)
-                physicsNeedsRebuild = true
             }
         }
 
@@ -1166,7 +1169,6 @@ class DrawingPanel : StackPane() {
                 val placedGizmo = PlacedMesh(playerGizmoBaseMesh, gizmoTransform, collision = true, texture = texCeiling, faceTextures = placedTextures("player", modelRegistry["player"]!!))
                 dynamicMeshes[id] = placedGizmo
                 meshAABBs[placedGizmo] = AABB.fromCube(placedGizmo.getTransformedVertices())
-                physicsNeedsRebuild = true
             }
         }
 
@@ -1175,32 +1177,39 @@ class DrawingPanel : StackPane() {
             val playerData = otherPlayers[id]
             if (mesh != null && playerData != null) {
                 val (pos, yaw) = Pair(playerData.currentPos, playerData.currentYaw)
-                mesh.transformMatrix = Matrix4x4.translation(pos.x, pos.y - 0.6 * cubeSize, pos.z) * Matrix4x4.rotationY(yaw)
+                mesh.transformMatrix =
+                    Matrix4x4.translation(pos.x, pos.y - 0.6 * cubeSize, pos.z) * Matrix4x4.rotationY(yaw)
                 meshAABBs[mesh] = AABB.fromCube(mesh.getTransformedVertices())
-                physicsNeedsRebuild = true // obiekt się poruszył
             }
         }
-
-        if (physicsNeedsRebuild) {
-            rebuildPhysicsStructures()
-        }
+        rebuildDynamicPhysics()
     }
 
     private fun rebuildPhysicsStructures() {
-        val allMeshes = meshes + dynamicMeshes.values
-        collisionGrid.clear()
-        allMeshes.filter { it.collision }.forEach { mesh ->
-            meshAABBs[mesh]?.let { aabb ->
-                collisionGrid.add(mesh, aabb)
-            }
+        rebuildStaticPhysics()
+        rebuildDynamicPhysics()
+    }
+
+    private fun rebuildStaticPhysics() {
+        staticCollisionGrid.clear()
+        staticMeshes.filter { it.collision }.forEach { mesh ->
+            meshAABBs[mesh]?.let { aabb -> staticCollisionGrid.add(mesh, aabb) }
         }
-        bvh.build(allMeshes)
+        staticBvh.build(staticMeshes)
+    }
+
+    private fun rebuildDynamicPhysics() {
+        dynamicCollisionGrid.clear()
+        dynamicMeshes.values.filter { it.collision }.forEach { mesh ->
+            meshAABBs[mesh]?.let { aabb -> dynamicCollisionGrid.add(mesh, aabb) }
+        }
+        dynamicBvh.build(dynamicMeshes.values.toList())
     }
 
     private fun rebuildStaticMeshBatches() {
         val newBatches = mutableMapOf<Image?, MutableList<PlacedMesh>>()
 
-        meshes.filter { mesh ->
+        staticMeshes.filter { mesh ->
             !mesh.collision && mesh.texture != null && mesh.texture != texSkybox && !isTextureTransparent(mesh.texture)
         }.forEach { mesh ->
             newBatches.computeIfAbsent(mesh.texture) { mutableListOf() }.add(mesh)
@@ -1251,7 +1260,7 @@ class DrawingPanel : StackPane() {
                 if (!isMoving) {
                     val radiusVec = Vector3d(light.radius, light.radius, light.radius)
                     val lightAABB = AABB(light.position - radiusVec, light.position + radiusVec)
-                    val meshesInRadius = collisionGrid.query(lightAABB)
+                    val meshesInRadius = staticCollisionGrid.query(lightAABB) + dynamicCollisionGrid.query(lightAABB)
                     meshesInRadius.sortedBy { System.identityHashCode(it) }.forEach { mesh ->
                         currentStateHash = 31 * currentStateHash + System.identityHashCode(mesh)
                         currentStateHash = 31 * currentStateHash + mesh.transformMatrix.hashCode()
@@ -1304,7 +1313,7 @@ class DrawingPanel : StackPane() {
 
         val radiusVec = Vector3d(lightSnapshot.radius, lightSnapshot.radius, lightSnapshot.radius)
         val lightAABB = AABB(lightSnapshot.position - radiusVec, lightSnapshot.position + radiusVec)
-        val meshesInRadius = meshes.filter { mesh ->
+        val meshesInRadius = (staticMeshes + dynamicMeshes.values).filter { mesh ->
             val meshAABB = meshAABBs[mesh] ?: return@filter false
             lightAABB.intersects(meshAABB)
         }
@@ -1771,7 +1780,7 @@ class DrawingPanel : StackPane() {
         }
         val bounceOrigin = reflectionOrigin + randomDir * 0.1
 
-        val bounceHitResult = bvh.intersectWithDetails(bounceOrigin, randomDir, remainingDistance, sourceMesh, sourceFaceIndex)
+        val bounceHitResult = staticBvh.intersectWithDetails(bounceOrigin, randomDir, remainingDistance, sourceMesh, sourceFaceIndex) ?: dynamicBvh.intersectWithDetails(bounceOrigin, randomDir, remainingDistance, sourceMesh, sourceFaceIndex)
 
         if (bounceHitResult != null) {
             val (finalHitPrimitive, finalHitDist) = bounceHitResult
@@ -2005,7 +2014,8 @@ class DrawingPanel : StackPane() {
         if (rayLength < 1e-5) return false
 
         val biasedRayLength = rayLength - 0.01
-        return bvh.intersect(rayOrigin, rayDir, biasedRayLength, ignoreMesh, ignoreFaceIndex)
+        // Sprawdzamy oba BVH
+        return staticBvh.intersect(rayOrigin, rayDir, biasedRayLength, ignoreMesh, ignoreFaceIndex) || dynamicBvh.intersect(rayOrigin, rayDir, biasedRayLength, ignoreMesh, ignoreFaceIndex)
     }
 
     private fun isLineOfSightBlockedFast(start: Vector3d, end: Vector3d, ignoreMesh: PlacedMesh): Boolean {
@@ -2017,7 +2027,7 @@ class DrawingPanel : StackPane() {
             Vector3d(min(start.x, end.x), min(start.y, end.y), min(start.z, end.z)),
             Vector3d(max(start.x, end.x), max(start.y, end.y), max(start.z, end.z))
         )
-        val potentialOccluders = collisionGrid.query(rayAABB)
+        val potentialOccluders = staticCollisionGrid.query(rayAABB) + dynamicCollisionGrid.query(rayAABB)
 
         val numSteps = 5
         val stepSize = distance / numSteps
@@ -2112,7 +2122,7 @@ class DrawingPanel : StackPane() {
         val facesToProcess = mutableListOf<FaceToProcess>()
 
         // add walls from individual objects (dynamic, transparent, special)
-        val individualMeshesToRender = (meshes + lightGizmoMeshes + dynamicMeshes.values).filter { mesh ->
+        val individualMeshesToRender = (staticMeshes + lightGizmoMeshes + dynamicMeshes.values).filter { mesh ->
             val isBatched = staticMeshBatches.any { batch -> batch.texture == mesh.texture && !mesh.collision }
             !isBatched
         }
