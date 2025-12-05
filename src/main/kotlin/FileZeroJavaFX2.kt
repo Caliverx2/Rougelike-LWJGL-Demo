@@ -404,6 +404,8 @@ class DrawingPanel : StackPane() {
         rebuildPhysicsStructures()
         rebuildStaticMeshBatches()
 
+        warmUpTextureCache()
+
         println("Client started on local port: ${clientSocket.localPort}")
         println("Listening for server messages from ${serverAddress.hostAddress}:$serverPort")
 
@@ -2405,11 +2407,11 @@ class DrawingPanel : StackPane() {
         val A12 = v1.y - v2.y; val B12 = v2.x - v1.x
         val A20 = v2.y - v0.y; val B20 = v0.x - v2.x
         val A01 = v0.y - v1.y; val B01 = v1.x - v0.x
-        val C12_base = v1.x * v2.y - v2.x * v1.y
-        val C20_base = v2.x * v0.y - v0.x * v2.y
-        val C01_base = v0.x * v1.y - v1.x * v0.y
+        val C12 = v1.x * v2.y - v2.x * v1.y
+        val C20 = v2.x * v0.y - v0.x * v2.y
+        val C01 = v0.x * v1.y - v1.x * v0.y
 
-        val totalArea = A12 * v0.x + B12 * v0.y + C12_base
+        val totalArea = A12 * v0.x + B12 * v0.y + C12
         if (abs(totalArea) < 1e-5) return
         val invTotalArea = 1.0 / totalArea
 
@@ -2420,6 +2422,19 @@ class DrawingPanel : StackPane() {
         val wVert0_prime = wVert0 / w0
         val wVert1_prime = wVert1 / w1
         val wVert2_prime = wVert2 / w2
+
+        // Obliczanie gradientów dla atrybutów wzdłuż osi X
+        val alpha_dx = A12 * invTotalArea
+        val beta_dx = A20 * invTotalArea
+        val gamma_dx = A01 * invTotalArea
+
+        val z_inv_prime_dx = alpha_dx * z0_inv_prime + beta_dx * z1_inv_prime + gamma_dx * z2_inv_prime
+        val u_prime_dx = alpha_dx * u0_prime + beta_dx * u1_prime + gamma_dx * u2_prime
+        val v_prime_dx = alpha_dx * v0_prime + beta_dx * v1_prime + gamma_dx * v2_prime
+        val world_x_prime_dx = alpha_dx * wVert0_prime.x + beta_dx * wVert1_prime.x + gamma_dx * wVert2_prime.x
+        val world_y_prime_dx = alpha_dx * wVert0_prime.y + beta_dx * wVert1_prime.y + gamma_dx * wVert2_prime.y
+        val world_z_prime_dx = alpha_dx * wVert0_prime.z + beta_dx * wVert1_prime.z + gamma_dx * wVert2_prime.z
+        val z_dx = alpha_dx * v0.z + beta_dx * v1.z + gamma_dx * v2.z
 
         val ambientR = color.red * ambientIntensity
         val ambientG = color.green * ambientIntensity
@@ -2453,33 +2468,47 @@ class DrawingPanel : StackPane() {
         val applyFog = renderableFace.hasCollision || fogAffectsNonCollidables
         val lightGridResolution = lightGrid?.size ?: 1
 
-        var bary_w0_row = A12 * minX + B12 * minY + C12_base
-        var bary_w1_row = A20 * minX + B20 * minY + C20_base
-        var bary_w2_row = A01 * minX + B01 * minY + C01_base
+        // Oblicz wartości startowe dla alpha i beta na początku pierwszego wiersza
+        var alpha_row_start = (A12 * minX + B12 * minY + C12) * invTotalArea
+        var beta_row_start = (A20 * minX + B20 * minY + C20) * invTotalArea
 
         for (py in minY..maxY) {
             val rowOffset = py * screenWidth
-            var barycentric_w0 = bary_w0_row
-            var barycentric_w1 = bary_w1_row
-            var barycentric_w2 = bary_w2_row
+
+            // Ustaw wartości startowe dla bieżącego wiersza
+            var alpha_px = alpha_row_start
+            var beta_px = beta_row_start
+
+            // Oblicz wartości startowe dla atrybutów na początku wiersza
+            val gamma_row_start = 1.0 - alpha_row_start - beta_row_start
+
+            var interpolated_z_inv_prime_px = alpha_row_start * z0_inv_prime + beta_row_start * z1_inv_prime + gamma_row_start * z2_inv_prime
+            var interpolated_u_prime_px = alpha_row_start * u0_prime + beta_row_start * u1_prime + gamma_row_start * u2_prime
+            var interpolated_v_prime_px = alpha_row_start * v0_prime + beta_row_start * v1_prime + gamma_row_start * v2_prime
+            var interpolated_world_x_prime_px = alpha_row_start * wVert0_prime.x + beta_row_start * wVert1_prime.x + gamma_row_start * wVert2_prime.x
+            var interpolated_world_y_prime_px = alpha_row_start * wVert0_prime.y + beta_row_start * wVert1_prime.y + gamma_row_start * wVert2_prime.y
+            var interpolated_world_z_prime_px = alpha_row_start * wVert0_prime.z + beta_row_start * wVert1_prime.z + gamma_row_start * wVert2_prime.z
+            var interpolated_z_px = alpha_row_start * v0.z + beta_row_start * v1.z + gamma_row_start * v2.z
 
             for (px in minX..maxX) {
-                if ((barycentric_w0 >= 0 && barycentric_w1 >= 0 && barycentric_w2 >= 0) || (barycentric_w0 <= 0 && barycentric_w1 <= 0 && barycentric_w2 <= 0)) {
-                    val alpha = barycentric_w0 * invTotalArea
-                    val beta = barycentric_w1 * invTotalArea
-                    val gamma = 1.0 - alpha - beta
-
-                    val pixelIndex = px + rowOffset
-                    val interpolatedZ = alpha * v0.z + beta * v1.z + gamma * v2.z
-
-                    if (interpolatedZ < depthBuffer[pixelIndex]) {
-                        val interpolated_z_inv_prime = alpha * z0_inv_prime + beta * z1_inv_prime + gamma * z2_inv_prime
-                        if (interpolated_z_inv_prime < 1e-6) {
-                            barycentric_w0 += A12; barycentric_w1 += A20; barycentric_w2 += A01
-                            continue
-                        }
-                        val inv_z_prime = 1.0 / interpolated_z_inv_prime
-                        val interpolatedWorldPos = (wVert0_prime * alpha + wVert1_prime * beta + wVert2_prime * gamma) * inv_z_prime
+                val gamma_px = 1.0 - alpha_px - beta_px
+                if (alpha_px >= 0 && beta_px >= 0 && gamma_px >= 0) {
+                     val pixelIndex = px + rowOffset
+ 
+                     if (interpolated_z_px < depthBuffer[pixelIndex]) {
+                         if (interpolated_z_inv_prime_px < 1e-6) {
+                             alpha_px += alpha_dx; beta_px += beta_dx
+                             interpolated_z_inv_prime_px += z_inv_prime_dx; interpolated_u_prime_px += u_prime_dx; interpolated_v_prime_px += v_prime_dx
+                             interpolated_world_x_prime_px += world_x_prime_dx; interpolated_world_y_prime_px += world_y_prime_dx; interpolated_world_z_prime_px += world_z_prime_dx
+                             interpolated_z_px += z_dx
+                             continue
+                         }
+                        val inv_z_prime = 1.0 / interpolated_z_inv_prime_px
+                        val interpolatedWorldPos = Vector3d(
+                            interpolated_world_x_prime_px * inv_z_prime,
+                            interpolated_world_y_prime_px * inv_z_prime,
+                            interpolated_world_z_prime_px * inv_z_prime
+                        )
 
                         val isInBlush = blushContainerAABB?.contains(interpolatedWorldPos) == true && blushes.any { it.contains(interpolatedWorldPos) }
 
@@ -2487,22 +2516,30 @@ class DrawingPanel : StackPane() {
                             if (!hasTexture) { // This is a gizmo or untextured face
                                 val finalColor = colorToInt(color)
                                 pixelBuffer[pixelIndex] = finalColor
-                                depthBuffer[pixelIndex] = interpolatedZ
-                                barycentric_w0 += A12; barycentric_w1 += A20; barycentric_w2 += A01
+                                depthBuffer[pixelIndex] = interpolated_z_px
+                                // Inkrementuj i kontynuuj
+                                alpha_px += alpha_dx; beta_px += beta_dx
+                                interpolated_z_inv_prime_px += z_inv_prime_dx; interpolated_u_prime_px += u_prime_dx; interpolated_v_prime_px += v_prime_dx
+                                interpolated_world_x_prime_px += world_x_prime_dx; interpolated_world_y_prime_px += world_y_prime_dx; interpolated_world_z_prime_px += world_z_prime_dx
+                                interpolated_z_px += z_dx
                                 continue
                             }
 
                             val (texWidth, texHeight) = texDim
-                            val u = (alpha * u0_prime + beta * u1_prime + gamma * u2_prime) * inv_z_prime
-                            val v = (alpha * v0_prime + beta * v1_prime + gamma * v2_prime) * inv_z_prime
+                            val u = interpolated_u_prime_px * inv_z_prime
+                            val v = interpolated_v_prime_px * inv_z_prime
                             val texX = (u * texWidth).toInt().coerceIn(0, texWidth - 1)
                             val texY = (v * texHeight).toInt().coerceIn(0, texHeight - 1)
 
                             val texColorArgb = texPixels[texX + texY * texWidth]
                             val texOpacity = (texColorArgb ushr 24) / 255.0
 
-                            if (texOpacity < 0.01) { // Treat nearly transparent as fully transparent
-                                barycentric_w0 += A12; barycentric_w1 += A20; barycentric_w2 += A01
+                            if (texOpacity < 0.01) {
+                                // Inkrementuj i kontynuuj
+                                alpha_px += alpha_dx; beta_px += beta_dx
+                                interpolated_z_inv_prime_px += z_inv_prime_dx; interpolated_u_prime_px += u_prime_dx; interpolated_v_prime_px += v_prime_dx
+                                interpolated_world_x_prime_px += world_x_prime_dx; interpolated_world_y_prime_px += world_y_prime_dx; interpolated_world_z_prime_px += world_z_prime_dx
+                                interpolated_z_px += z_dx
                                 continue
                             }
 
@@ -2610,18 +2647,25 @@ class DrawingPanel : StackPane() {
                                 pixelBuffer[pixelIndex] = (0xFF shl 24) or (blendedR shl 16) or (blendedG shl 8) or blendedB
                             } else {
                                 pixelBuffer[pixelIndex] = (0xFF shl 24) or (finalR shl 16) or (finalG shl 8) or finalB
-                                depthBuffer[pixelIndex] = interpolatedZ
+                                depthBuffer[pixelIndex] = interpolated_z_px
                             }
                         }
                     }
                 }
-                barycentric_w0 += A12
-                barycentric_w1 += A20
-                barycentric_w2 += A01
+                // Inkrementuj wartości dla następnego piksela w rzędzie
+                alpha_px += alpha_dx
+                beta_px += beta_dx
+                interpolated_z_inv_prime_px += z_inv_prime_dx
+                interpolated_u_prime_px += u_prime_dx
+                interpolated_v_prime_px += v_prime_dx
+                interpolated_world_x_prime_px += world_x_prime_dx
+                interpolated_world_y_prime_px += world_y_prime_dx
+                interpolated_world_z_prime_px += world_z_prime_dx
+                interpolated_z_px += z_dx
             }
-            bary_w0_row += B12
-            bary_w1_row += B20
-            bary_w2_row += B01
+            // Przesuń wartości startowe do następnego wiersza
+            alpha_row_start += B12 * invTotalArea
+            beta_row_start += B20 * invTotalArea
         }
     }
 
@@ -2702,6 +2746,19 @@ class DrawingPanel : StackPane() {
         )
 
         return image
+    }
+
+    private fun warmUpTextureCache() {
+        println("Warming up texture cache...")
+        val allKnownTextures = mutableSetOf<Image>()
+        allKnownTextures.addAll(listOf(texBlackBricks, texBricks, texCeiling, texFloor, texSkybox))
+        allKnownTextures.addAll(dynamicTextures.values)
+        staticMeshes.forEach { mesh ->
+            mesh.texture?.let { allKnownTextures.add(it) }
+            allKnownTextures.addAll(mesh.faceTextures.values)
+        }
+        allKnownTextures.forEach { getTexturePixels(it) }
+        println("Texture cache warmed up for ${allKnownTextures.size} textures.")
     }
 
     private fun worldToGridCoords(worldPos: Vector3d): Vector3d {
