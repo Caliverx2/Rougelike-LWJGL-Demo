@@ -145,7 +145,7 @@ class ServerLogic(private val listener: ServerStatusListener) {
 class Server : JFrame("Server"), ServerStatusListener {
     private val startButton = JButton("Start Server")
     private val stopButton = JButton("Stop Server")
-    private val portField = JTextField("1027", 5)
+    private val portField = JTextField("1050", 5)
     private val statusIndicator = JPanel()
     private val serverLogic = ServerLogic(this)
 

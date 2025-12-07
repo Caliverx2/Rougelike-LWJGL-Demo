@@ -179,7 +179,7 @@ class DrawingPanel : StackPane() {
     private val fpsFont: Font
     private val lightCheckInterval = (1_000_000_000.0 / 30.0).toLong() // 30 Hz
 
-    private val serverPort: Int = 1027
+    private val serverPort: Int = 1050
     private val serverAddress: InetAddress = InetAddress.getByName("lewapnoob.ddns.net")
     private val clientSocket: DatagramSocket = DatagramSocket()
     private var lastPacketSendTime = 0L
