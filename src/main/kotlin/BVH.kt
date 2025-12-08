@@ -4,11 +4,11 @@ import kotlin.math.max
 import kotlin.math.min
 
 data class TrianglePrimitive(
-    val v0: Vector3d,
-    val v1: Vector3d,
-    val v2: Vector3d,
-    val mesh: PlacedMesh,
-    val faceIndex: Int
+        val v0: Vector3d,
+        val v1: Vector3d,
+        val v2: Vector3d,
+        val mesh: PlacedMesh,
+        val faceIndex: Int
 ) {
     var barycentricCoords: Vector3d = Vector3d(0.0, 0.0, 0.0) // u, v, w
     val center: Vector3d = (v0 + v1 + v2) / 3.0
@@ -58,10 +58,10 @@ class BVH {
             }
         }
         root = if (primitives.isNotEmpty()) {
-            recursiveBuild(primitives)
-        } else {
-            null
-        }
+                    recursiveBuild(primitives)
+                } else {
+                    null
+                }
     }
 
     private fun recursiveBuild(primitives: List<TrianglePrimitive>): BVHNode {
@@ -105,8 +105,40 @@ class BVH {
                         continue
                     }
 
-                    val intersectionDist = rayIntersectsTriangle(rayOrigin, rayDir, primitive.v0, primitive.v1, primitive.v2)
-                    if (intersectionDist != null && intersectionDist > 1e-6 && intersectionDist < maxDist) {
+                    return findFirstOpaqueIntersection(rayOrigin, rayDir, maxDist, ignoreMesh, ignoreFaceIndex) != null
+                }
+            } else {
+                currentNode.left?.let { nodesToVisit.add(it) }
+                currentNode.right?.let { nodesToVisit.add(it) }
+            }
+        }
+        return false
+    }
+
+    private fun findFirstOpaqueIntersection(rayOrigin: Vector3d, rayDir: Vector3d, maxDist: Double, ignoreMesh: PlacedMesh?, ignoreFaceIndex: Int): TrianglePrimitive? {
+        var closestOpaqueHit: TrianglePrimitive? = null
+        var closestHitDist = maxDist
+
+        val nodesToVisit = ArrayDeque<BVHNode>()
+        root?.let { nodesToVisit.add(it) }
+
+        val invDir = Vector3d(1.0 / rayDir.x, 1.0 / rayDir.y, 1.0 / rayDir.z)
+
+        while (nodesToVisit.isNotEmpty()) {
+            val currentNode = nodesToVisit.removeLast()
+
+            if (!rayIntersectsAABB(rayOrigin, invDir, closestHitDist, currentNode.bounds)) {
+                continue
+            }
+
+            if (currentNode.isLeaf()) {
+                for (primitive in currentNode.primitives) {
+                    if (primitive.mesh === ignoreMesh && primitive.faceIndex == ignoreFaceIndex) {
+                        continue
+                    }
+
+                    val intersectionDist = rayIntersectsTriangle(rayOrigin, rayDir, primitive.v0, primitive.v1, primitive.v2, primitive)
+                    if (intersectionDist != null && intersectionDist > 1e-6 && intersectionDist < closestHitDist) {
                         val intersectionPoint = rayOrigin + rayDir * intersectionDist
                         val worldBlushes by lazy {
                             primitive.mesh.mesh.blushes.map { blush ->
@@ -115,8 +147,9 @@ class BVH {
                             }
                         }
 
-                        if (worldBlushes.isEmpty() || !worldBlushes.any { it.contains(intersectionPoint) }) {
-                            return true
+                        if ((worldBlushes.isEmpty() || !worldBlushes.any { it.contains(intersectionPoint) }) && !isPixelTransparentAtIntersection(primitive, primitive.barycentricCoords)) {
+                            closestOpaqueHit = primitive
+                            closestHitDist = intersectionDist
                         }
                     }
                 }
@@ -125,7 +158,7 @@ class BVH {
                 currentNode.right?.let { nodesToVisit.add(it) }
             }
         }
-        return false
+        return closestOpaqueHit
     }
 
     fun intersectWithDetails(rayOrigin: Vector3d, rayDir: Vector3d, maxDist: Double, ignoreMesh: PlacedMesh? = null, ignoreFaceIndex: Int = -1): Pair<TrianglePrimitive, Double>? {
@@ -160,7 +193,9 @@ class BVH {
                             }
                         }
                         if (worldBlushes.isEmpty() || !worldBlushes.any { it.contains(intersectionPoint) }) {
-                            closestIntersection = Pair(primitive, intersectionDist)
+                            if (!isPixelTransparentAtIntersection(primitive, primitive.barycentricCoords)) {
+                                closestIntersection = Pair(primitive, intersectionDist)
+                            }
                         }
                     }
                 }
@@ -218,19 +253,73 @@ class BVH {
     }
 
     private fun rayIntersectsAABB(rayOrigin: Vector3d, invDir: Vector3d, maxDist: Double, aabb: AABB): Boolean {
-        val tx1 = (aabb.min.x - rayOrigin.x) * invDir.x; val tx2 = (aabb.max.x - rayOrigin.x) * invDir.x
-        var tmin = min(tx1, tx2); var tmax = max(tx1, tx2)
-        val ty1 = (aabb.min.y - rayOrigin.y) * invDir.y; val ty2 = (aabb.max.y - rayOrigin.y) * invDir.y
-        tmin = max(tmin, min(ty1, ty2)); tmax = min(tmax, max(ty1, ty2))
-        val tz1 = (aabb.min.z - rayOrigin.z) * invDir.z; val tz2 = (aabb.max.z - rayOrigin.z) * invDir.z
-        tmin = max(tmin, min(tz1, tz2)); tmax = min(tmax, max(tz1, tz2))
+        val tx1 = (aabb.min.x - rayOrigin.x) * invDir.x
+        val tx2 = (aabb.max.x - rayOrigin.x) * invDir.x
+        var tmin = min(tx1, tx2)
+        var tmax = max(tx1, tx2)
+        val ty1 = (aabb.min.y - rayOrigin.y) * invDir.y
+        val ty2 = (aabb.max.y - rayOrigin.y) * invDir.y
+        tmin = max(tmin, min(ty1, ty2))
+        tmax = min(tmax, max(ty1, ty2))
+        val tz1 = (aabb.min.z - rayOrigin.z) * invDir.z
+        val tz2 = (aabb.max.z - rayOrigin.z) * invDir.z
+        tmin = max(tmin, min(tz1, tz2))
+        tmax = min(tmax, max(tz1, tz2))
         return tmax >= max(0.0, tmin) && tmin < maxDist
+    }
+
+    private fun isPixelTransparentAtIntersection(primitive: TrianglePrimitive, barycentricCoords: Vector3d): Boolean {
+        val texture = primitive.mesh.faceTextures[primitive.faceIndex] ?: primitive.mesh.texture ?: return false
+        val faceUVs = primitive.mesh.mesh.faceUVs.getOrNull(primitive.faceIndex) ?: return false
+        if (faceUVs.size < 3) return false
+
+        val uv =
+                if (faceUVs.size == 4) {
+                val meshFaceIndices = primitive.mesh.mesh.faces[primitive.faceIndex]
+                val meshV1 = primitive.mesh.getTransformedVertices()[meshFaceIndices[1]]
+
+                val triUVs: List<Vector3d>
+                if (primitive.v1 == meshV1) {
+                    // This primitive is the first triangle (v0, v1, v2)
+                    triUVs = listOf(faceUVs[0], faceUVs[1], faceUVs[2])
+                } else {
+                    // This primitive is the second triangle (v0, v2, v3)
+                    triUVs = listOf(faceUVs[0], faceUVs[2], faceUVs[3])
+                }
+                val uCoord = triUVs[0].x * barycentricCoords.z + triUVs[1].x * barycentricCoords.x + triUVs[2].x * barycentricCoords.y
+                val vCoord = triUVs[0].y * barycentricCoords.z + triUVs[1].y * barycentricCoords.x + triUVs[2].y * barycentricCoords.y
+                    Pair(uCoord, vCoord)
+                } else {
+                    // Triangle face
+                    val uCoord = faceUVs[0].x * barycentricCoords.z + faceUVs[1].x * barycentricCoords.x + faceUVs[2].x * barycentricCoords.y
+                    val vCoord = faceUVs[0].y * barycentricCoords.z + faceUVs[1].y * barycentricCoords.x + faceUVs[2].y * barycentricCoords.y
+                    Pair(uCoord, vCoord)
+                }
+
+        // Clamp UV coordinates to [0, 1]
+        val u = uv.first.coerceIn(0.0, 1.0)
+        val v = uv.second.coerceIn(0.0, 1.0)
+
+        // Convert UV to pixel coordinates
+        val pixelX = (u * texture.width).toInt().coerceIn(0, texture.width.toInt() - 1)
+        val pixelY = (v * texture.height).toInt().coerceIn(0, texture.height.toInt() - 1)
+
+        // Sample the texture
+        val pixelReader = texture.pixelReader
+        val color = pixelReader.getColor(pixelX, pixelY)
+
+        // Check if alpha is below threshold (0.5 means more than 50% transparent)
+        return color.opacity < 0.5
     }
 }
 
-operator fun Vector3d.get(index: Int): Double = when (index) {
-    0 -> x; 1 -> y; 2 -> z; else -> throw IndexOutOfBoundsException("Invalid index for Vector3d")
-}
+operator fun Vector3d.get(index: Int): Double =
+        when (index) {
+            0 -> x
+            1 -> y
+            2 -> z
+            else -> throw IndexOutOfBoundsException("Invalid index for Vector3d")
+        }
 
 fun AABB.longestAxis(): Int {
     val extent = max - min

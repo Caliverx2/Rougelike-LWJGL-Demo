@@ -918,7 +918,7 @@ class DrawingPanel : StackPane() {
         }
         if (pressedKeys.contains(KeyCode.O)) {
             val lightRadius = 6.0 * cubeSize
-            lightSources.add(LightSource(Vector3d(cameraPosition.x, cameraPosition.y, cameraPosition.z), lightRadius, Color.rgb(160, 160, 160), intensity = 1.0, type = LightType.RAYTRACED_GI))
+            lightSources.add(LightSource(Vector3d(cameraPosition.x, cameraPosition.y, cameraPosition.z), lightRadius, Color.rgb(160, 160, 160), intensity = 1.0, type = LightType.RAYTRACED))
             pressedKeys.remove(KeyCode.O)
         }
         if (pressedKeys.contains(KeyCode.P)) {
@@ -1212,7 +1212,7 @@ class DrawingPanel : StackPane() {
         val newBatches = mutableMapOf<Image?, MutableList<PlacedMesh>>()
 
         staticMeshes.filter { mesh ->
-            !mesh.collision && mesh.texture != null && mesh.texture != texSkybox && !isTextureTransparent(mesh.texture)
+            !mesh.collision && mesh.texture != null && mesh.texture != texSkybox && !isTextureFullyTransparent(mesh.texture)
         }.forEach { mesh ->
             newBatches.computeIfAbsent(mesh.texture) { mutableListOf() }.add(mesh)
         }
@@ -1464,7 +1464,13 @@ class DrawingPanel : StackPane() {
             val faceNormal = (v1 - v0).cross(v2 - v0).normalize()
             val faceCenter = worldVerts.reduce { acc, vec -> acc + vec } / worldVerts.size.toDouble()
 
-            val subDivisions = resolution
+            val faceTexture = mesh.faceTextures[faceIndex] ?: mesh.texture
+            val hasPartialTransparency = faceTexture != null && isTextureTransparent(faceTexture) && !isTextureFullyTransparent(faceTexture)
+            val subDivisions = if (hasPartialTransparency && faceTexture != null) {
+                min(faceTexture.width.toInt(), faceTexture.height.toInt()).coerceIn(resolution, 64)
+            } else {
+                resolution
+            }
             val finalLightGrid = Array(subDivisions) { Array(subDivisions) { Color.BLACK } }
             var isFaceLitAtAll = false
 
@@ -2493,16 +2499,16 @@ class DrawingPanel : StackPane() {
             for (px in minX..maxX) {
                 val gamma_px = 1.0 - alpha_px - beta_px
                 if (alpha_px >= 0 && beta_px >= 0 && gamma_px >= 0) {
-                     val pixelIndex = px + rowOffset
- 
-                     if (interpolated_z_px < depthBuffer[pixelIndex]) {
-                         if (interpolated_z_inv_prime_px < 1e-6) {
-                             alpha_px += alpha_dx; beta_px += beta_dx
-                             interpolated_z_inv_prime_px += z_inv_prime_dx; interpolated_u_prime_px += u_prime_dx; interpolated_v_prime_px += v_prime_dx
-                             interpolated_world_x_prime_px += world_x_prime_dx; interpolated_world_y_prime_px += world_y_prime_dx; interpolated_world_z_prime_px += world_z_prime_dx
-                             interpolated_z_px += z_dx
-                             continue
-                         }
+                    val pixelIndex = px + rowOffset
+
+                    if (interpolated_z_px < depthBuffer[pixelIndex]) {
+                        if (interpolated_z_inv_prime_px < 1e-6) {
+                            alpha_px += alpha_dx; beta_px += beta_dx
+                            interpolated_z_inv_prime_px += z_inv_prime_dx; interpolated_u_prime_px += u_prime_dx; interpolated_v_prime_px += v_prime_dx
+                            interpolated_world_x_prime_px += world_x_prime_dx; interpolated_world_y_prime_px += world_y_prime_dx; interpolated_world_z_prime_px += world_z_prime_dx
+                            interpolated_z_px += z_dx
+                            continue
+                        }
                         val inv_z_prime = 1.0 / interpolated_z_inv_prime_px
                         val interpolatedWorldPos = Vector3d(
                             interpolated_world_x_prime_px * inv_z_prime,
@@ -2804,6 +2810,17 @@ class DrawingPanel : StackPane() {
             }
             false
         }
+    }
+
+    private fun isTextureFullyTransparent(texture: Image?): Boolean {
+        if (texture == null) return false
+        val reader = texture.pixelReader ?: return false
+        for (y in 0 until texture.height.toInt()) {
+            for (x in 0 until texture.width.toInt()) {
+                if (reader.getColor(x, y).opacity >= 0.5) return false
+            }
+        }
+        return true
     }
 
     private fun createTextureFromHexData(hexData: List<Int>): WritableImage {
