@@ -828,7 +828,7 @@ class DrawingPanel : StackPane() {
                     }
                 }
 
-                if (!steppedUp) {
+                if (!steppedUp) { //zara update kolizji
                     // Standardowe rozwiązywanie kolizji (przesuwanie wzdłuż ścian)
                     val resolvedPosition = cameraPosition.copy()
 
