@@ -94,6 +94,7 @@ class DrawingPanel : StackPane() {
     private val playerHitboxOffset = Vector3d(0.0, -cubeSize * 1.0 * playerHitboxScale, 0.0)
     private val playerVertexRadius = 0.1 * cubeSize * (playerHitboxScale / baseHitboxScale)
     private val playerLegHeight = 0.27 * cubeSize
+    private val collisionSkinThickness = 0.05 * cubeSize // Grubość "skórki" kolizji
     private lateinit var playerHitboxMesh: PlacedMesh
     private val maxStepHeight = 0.19 * cubeSize
 
@@ -197,7 +198,7 @@ class DrawingPanel : StackPane() {
 
     private var lastSentPacketData: String? = null
 
-    private data class CollisionResult(val didCollide: Boolean, val surfaceNormal: Vector3d? = null)
+    private data class CollisionResult(val didCollide: Boolean, val surfaceNormal: Vector3d? = null, val penetrationDepth: Double = 0.0)
 
     init {
         sceneProperty().addListener { _, _, newScene ->
@@ -583,7 +584,7 @@ class DrawingPanel : StackPane() {
         }
     }
 
-    private fun isCollidingAt(testPosition: Vector3d): CollisionResult {
+    private fun isCollidingAt(testPosition: Vector3d): CollisionResult { // TODO: Zoptymalizować, aby zwracało listę kolizji
         // Oblicz pozycję stóp gracza na podstawie pozycji kamery
         val feetPosition = testPosition.copy(y = testPosition.y - playerLegHeight)
         val translation = Matrix4x4.translation(feetPosition.x + playerHitboxOffset.x, feetPosition.y + playerHitboxOffset.y, feetPosition.z + playerHitboxOffset.z)
@@ -593,19 +594,23 @@ class DrawingPanel : StackPane() {
 
         val playerAABB = AABB.fromCube(playerHitboxMesh.getTransformedVertices())
 
+        var deepestCollision: CollisionResult? = null
+
         // Sprawdź kolizje ze statyczną geometrią
         for (mesh in staticCollisionGrid.query(playerAABB)) {
             val result = checkMeshCollision(playerHitboxMesh, mesh)
-            if (result.didCollide) {
-                return result
+            if (result.didCollide && (deepestCollision == null || result.penetrationDepth > deepestCollision.penetrationDepth)) {
+                deepestCollision = result
             }
         }
         // Sprawdź kolizje z dynamicznymi obiektami (inni gracze)
         for (mesh in dynamicCollisionGrid.query(playerAABB)) {
             val result = checkMeshCollision(playerHitboxMesh, mesh)
-            if (result.didCollide) return result
+            if (result.didCollide && (deepestCollision == null || result.penetrationDepth > deepestCollision.penetrationDepth)) {
+                deepestCollision = result
+            }
         }
-        return CollisionResult(false)
+        return deepestCollision ?: CollisionResult(false)
     }
 
     private fun checkMeshCollision(playerHitbox: PlacedMesh, worldMesh: PlacedMesh): CollisionResult {
@@ -614,6 +619,8 @@ class DrawingPanel : StackPane() {
         if (!playerAABB.intersects(worldAABB)) {
             return CollisionResult(false)
         }
+
+        var bestResult: CollisionResult? = null
 
         val playerVertices = playerHitbox.getTransformedVertices()
 
@@ -644,17 +651,30 @@ class DrawingPanel : StackPane() {
                         (closestPointOnTri.y - playerVertex.y).pow(2) +
                         (closestPointOnTri.z - playerVertex.z).pow(2)
 
-                if (distSq < playerVertexRadius.pow(2)) {
+                val effectiveRadius = playerVertexRadius + collisionSkinThickness
+                // Dodajemy "skórkę" do promienia kolizji, aby ściany były "grubsze"
+                if (distSq < effectiveRadius.pow(2)) {
                     val collisionPoint = closestPointOnTri
                     if (worldBlushes.any { it.contains(collisionPoint) }) {
                         continue
                     }
-                    val normal = (v1 - v0).cross(v2 - v0).normalize()
-                    return CollisionResult(true, normal)
+                    var normal = (v1 - v0).cross(v2 - v0).normalize()
+                    val penetrationDepth = effectiveRadius - sqrt(distSq)
+
+                    // Upewnij się, że normalna jest zawsze skierowana w stronę gracza,
+                    // aby zapobiec tunelowaniu przez cienkie ściany.
+                    val toPlayer = (playerVertex - closestPointOnTri).normalize()
+                    if (normal.dot(toPlayer) < 0) {
+                        normal *= -1.0
+                    }
+
+                    if (bestResult == null || penetrationDepth > bestResult.penetrationDepth) {
+                        bestResult = CollisionResult(true, normal, penetrationDepth)
+                    }
                 }
             }
         }
-        return CollisionResult(false)
+        return bestResult ?: CollisionResult(false)
     }
 
     private fun closestPointOnTriangle(p: Vector3d, a: Vector3d, b: Vector3d, c: Vector3d): Vector3d {
@@ -805,53 +825,95 @@ class DrawingPanel : StackPane() {
 
         if (debugNoclip) {
             cameraPosition = newCameraPosition
-        } else {
-            val collisionResult = isCollidingAt(newCameraPosition)
-            if (!collisionResult.didCollide) {
-                cameraPosition = newCameraPosition
-            } else {
-                val oldCameraPosition = cameraPosition.copy()
-                // logika wchodzenia na progi
-                var steppedUp = false
-                if (isMovingHorizontally && isGrounded && !debugFly) {
-                    // 1. Spróbuj podnieść gracza o maksymalną wysokość progu
-                    val stepTestPosition = oldCameraPosition.copy(y = oldCameraPosition.y + maxStepHeight)
-                    // 2. Z tej podniesionej pozycji, spróbuj przesunąć się do przodu
-                    val finalStepPosition = stepTestPosition.copy(x = newCameraPosition.x, z = newCameraPosition.z)
+            return
+        }
 
-                    // 3. Jeśli ruch się powiedzie, zaakceptuj nową pozycję
-                    if (!isCollidingAt(finalStepPosition).didCollide) {
-                        // Zamiast teleportacji, zainicjuj płynne wejście na stopień
-                        val stepUpSpeed = 8.0 * cubeSize // Szybkość wchodzenia na stopień
-                        cameraPosition = finalStepPosition.copy(y = oldCameraPosition.y + stepUpSpeed * deltaTime)
-                        steppedUp = true
-                    }
-                }
+        val oldCameraPosition = cameraPosition.copy()
+        var desiredPosition = newCameraPosition.copy()
 
-                if (!steppedUp) { //zara update kolizji
-                    // Standardowe rozwiązywanie kolizji (przesuwanie wzdłuż ścian)
-                    val resolvedPosition = cameraPosition.copy()
+        // --- Logika wchodzenia na progi ---
+        var steppedUp = false
+        // Sprawdź, czy ruch do przodu jest zablokowany, zanim spróbujesz wejść na próg.
+        // Zapobiega to podskakiwaniu podczas ślizgania się wzdłuż ścian.
+        val forwardMovementOnlyPosition = oldCameraPosition.copy(x = desiredPosition.x, z = desiredPosition.z)
+        val isForwardMovementBlocked = isCollidingAt(forwardMovementOnlyPosition).didCollide
 
-                    // Próba przesunięcia tylko w osi X
-                    val tempPosX = oldCameraPosition.copy(x = newCameraPosition.x)
-                    if (!isCollidingAt(tempPosX).didCollide) resolvedPosition.x = newCameraPosition.x
+        if (isMovingHorizontally && isGrounded && !debugFly && isForwardMovementBlocked) {
+            val stepTestPosition = oldCameraPosition.copy(y = oldCameraPosition.y + maxStepHeight)
+            val finalStepPositionAfterRaising = stepTestPosition.copy(x = desiredPosition.x, z = desiredPosition.z)
 
-                    // Próba przesunięcia tylko w osi Z
-                    val tempPosZ = oldCameraPosition.copy(z = newCameraPosition.z)
-                    if (!isCollidingAt(tempPosZ).didCollide) resolvedPosition.z = newCameraPosition.z
-
-                    val tempPosY = resolvedPosition.copy(y = newCameraPosition.y)
-                    if (!isCollidingAt(tempPosY).didCollide) {
-                        resolvedPosition.y = newCameraPosition.y
-                    } else {
-                        verticalVelocity = 0.0
-                        if (newCameraPosition.y < oldCameraPosition.y) {
-                            isGrounded = true
-                        }
-                    }
-                    cameraPosition = resolvedPosition
-                }
+            if (!isCollidingAt(finalStepPositionAfterRaising).didCollide) {
+                val stepUpSpeed = 8.0 * cubeSize
+                // Zamiast bezpośrednio ustawiać pozycję, modyfikujemy `desiredPosition`, aby reszta logiki mogła to uwzględnić
+                desiredPosition = finalStepPositionAfterRaising.copy(y = oldCameraPosition.y + stepUpSpeed * deltaTime)
+                steppedUp = true
             }
+        }
+
+        if (steppedUp) {
+            cameraPosition = desiredPosition
+            return
+        }
+
+        // --- Nowa, solidna logika kolizji z depenetracją ---
+        var currentPosition = cameraPosition.copy()
+        val movementVector = desiredPosition - currentPosition
+        val maxIterations = 5
+
+        // 1. Rozwiąż ruch horyzontalny
+        var horizontalMovement = Vector3d(movementVector.x, 0.0, movementVector.z)
+        if (horizontalMovement.length() > 1e-6) {
+            for (i in 0 until maxIterations) {
+                val nextHorizontalPos = currentPosition + horizontalMovement
+                val collision = isCollidingAt(nextHorizontalPos)
+
+                if (!collision.didCollide) {
+                    currentPosition = nextHorizontalPos
+                    break
+                }
+
+                val normal = collision.surfaceNormal?.copy(y = 0.0)?.normalize() ?: Vector3d(1.0, 0.0, 0.0)
+                
+                // Upewnij się, że wektor depenetracji jest skierowany od ściany.
+                // To dodatkowe zabezpieczenie przed tunelowaniem.
+                val movementDir = horizontalMovement.normalize()
+                val correctedNormal = if (normal.dot(movementDir) > 0) normal * -1.0 else normal
+
+                val depenetration = correctedNormal * (collision.penetrationDepth + 0.001) // Wypchnij z geometrii
+                currentPosition += depenetration
+
+                // Oblicz ślizg
+                val dot = horizontalMovement.dot(normal)
+                horizontalMovement -= normal * dot
+            }
+        }
+
+        // 2. Rozwiąż ruch wertykalny
+        var verticalMovement = Vector3d(0.0, movementVector.y, 0.0)
+        if (abs(verticalMovement.y) > 1e-6) {
+            val nextVerticalPos = currentPosition + verticalMovement
+            val collision = isCollidingAt(nextVerticalPos)
+
+            if (!collision.didCollide) {
+                currentPosition = nextVerticalPos
+            } else {
+                // Uderzenie w coś w pionie
+                val normal = collision.surfaceNormal ?: Vector3d(0.0, 1.0, 0.0)
+                if (normal.y > 0.707 && verticalMovement.y < 0) { // Uderzenie w podłogę
+                    isGrounded = true
+                    verticalVelocity = 0.0
+                } else if (normal.y < -0.707 && verticalMovement.y > 0) { // Uderzenie w sufit
+                    verticalVelocity = 0.0
+                }
+                // Zablokuj ruch wertykalny, ale nie wypychaj (grawitacja zrobi swoje)
+            }
+        }
+
+        cameraPosition = currentPosition
+
+        // Sprawdź ponownie, czy nie ma kolizji po ostatecznym ruchu (zabezpieczenie)
+        if (isCollidingAt(cameraPosition).didCollide) {
+            cameraPosition = oldCameraPosition
         }
 
         if (isMouseCaptured) {
