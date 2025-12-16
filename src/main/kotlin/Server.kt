@@ -69,7 +69,8 @@ class ServerLogic(private val listener: ServerStatusListener) {
                 clientsToRemove.forEach { clientAddress ->
                     clients.remove(clientAddress) ?: return@forEach
                     println("Klient ${clientAddress.first.hostAddress} rozłączony (timeout).")
-                    val disconnectMessage = "DISCONNECT,${clientAddress.first.hostAddress}".toByteArray()
+                    val clientId = "${clientAddress.first.hostAddress}:${clientAddress.second}"
+                    val disconnectMessage = "DISCONNECT,$clientId".toByteArray()
 
                     clients.forEach { (addr, _) ->
                         val packet = java.net.DatagramPacket(disconnectMessage, disconnectMessage.size, addr.first, addr.second)
@@ -98,15 +99,17 @@ class ServerLogic(private val listener: ServerStatusListener) {
                 val messageType = parts[0]
                 val clientAddress = Pair(packet.address, packet.port)
 
+                val clientId = "${clientAddress.first.hostAddress}:${clientAddress.second}"
+
                 if (messageType == "POSITION" && parts.size == 5) {
                     val isNewClient = !clients.containsKey(clientAddress)
 
                     val clientInfo = clients.computeIfAbsent(clientAddress) {
-                        println("Nowy klient połączony: ${packet.address.hostAddress}")
+                        println("Nowy klient połączony: $clientId")
                         ClientInfo()
                     }
 
-                    val broadcastMessage = "POSITION,${clientAddress.first.hostAddress},${parts.slice(1..4).joinToString(",")}"
+                    val broadcastMessage = "POSITION,$clientId,${parts.slice(1..4).joinToString(",")}"
 
                     clientInfo.lastSeen = System.currentTimeMillis()
                     clientInfo.lastPositionData = broadcastMessage
@@ -130,6 +133,26 @@ class ServerLogic(private val listener: ServerStatusListener) {
                     }
                 } else if (messageType == "P") {
                     clients[clientAddress]?.lastSeen = System.currentTimeMillis()
+                } else if (messageType == "PUSH" && parts.size == 5) {
+                    val targetClientId = parts[1]
+                    println("Odebrano PUSH dla klienta: $targetClientId od $clientId")
+
+                    val pushX = parts[2]
+                    val pushY = parts[3]
+                    val pushZ = parts[4]
+
+                    // Znajdź klienta docelowego po jego ID (IP:PORT)
+                    val targetClient = clients.entries.find { "${it.key.first.hostAddress}:${it.key.second}" == targetClientId }
+
+                    if (targetClient != null) {
+                        val (targetAddr, targetPort) = targetClient.key
+                        // Stwórz nową wiadomość dla popychanego klienta
+                        val pushMessage = "PUSH_ME,$pushX,$pushY,$pushZ".toByteArray()
+                        val sendPacket = java.net.DatagramPacket(pushMessage, pushMessage.size, targetAddr, targetPort)
+                        serverSocket?.send(sendPacket)
+                        println("Przekazano pchnięcie do $targetClientId")
+                    }
+
                 }
 
             } catch (e: Exception) {

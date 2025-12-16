@@ -93,10 +93,7 @@ class DrawingPanel : StackPane() {
     private val baseHitboxScale = 0.3
     private val playerHitboxOffset = Vector3d(0.0, -cubeSize * 1.0 * playerHitboxScale, 0.0)
     private val playerVertexRadius = 0.1 * cubeSize * (playerHitboxScale / baseHitboxScale)
-    private val playerLegHeight = 0.27 * cubeSize
-    private val collisionSkinThickness = 0.05 * cubeSize // Grubość "skórki" kolizji
     private lateinit var playerHitboxMesh: PlacedMesh
-    private val maxStepHeight = 0.19 * cubeSize
 
     private var cameraPosition = Vector3d(0.0, 0.0, 0.0)
     private var cameraYaw = 2.4
@@ -114,7 +111,10 @@ class DrawingPanel : StackPane() {
     private var isGrounded = true
     private var verticalVelocity = 0.0
     private val groundedStateHistory = ConcurrentLinkedQueue<Boolean>()
-    private val groundCheckHistorySize = 15 // Liczba klatek do uśredniania (15: ok. 0.25s przy 60fps)
+    // Minimalna „pionowość” normalnej, aby traktować powierzchnię jako podłogę/rampę (a nie ścianę)
+    private val minGroundNormalY = 0.7 // ~45° nachylenia
+    // Punkt kontaktu musi być wyraźnie pod środkiem sfery, żeby nie „łapać” boków ścian jako podłoże
+    private val groundContactVerticalOffset = 0.3
 
     private val fogColor = Color.rgb(180, 180, 180)
     private val fogStartDistance = 1.5 * cubeSize
@@ -197,8 +197,7 @@ class DrawingPanel : StackPane() {
     private val otherPlayers = ConcurrentHashMap<String, PlayerState>()
 
     private var lastSentPacketData: String? = null
-
-    private data class CollisionResult(val didCollide: Boolean, val surfaceNormal: Vector3d? = null, val penetrationDepth: Double = 0.0)
+    private var externalPushVector = Vector3d(0.0, 0.0, 0.0)
 
     init {
         sceneProperty().addListener { _, _, newScene ->
@@ -273,7 +272,7 @@ class DrawingPanel : StackPane() {
 
         children.addAll(imageView, overlayCanvas)
 
-        cameraPosition = Vector3d(-2.5 * cubeSize, floorLevel, 1.5 * cubeSize)
+        cameraPosition = Vector3d(-2.5 * cubeSize, floorLevel + cubeSize, 1.5 * cubeSize)
 
         val grids = listOf(GRID_1, GRID_2, GRID_3, GRID_4)
         for (x in 0 until gridDimension) {
@@ -317,7 +316,7 @@ class DrawingPanel : StackPane() {
         )
 
         // Inicjalizacja hitboxa gracza
-        val playerCollisionModel = modelRegistry["player"] ?: throw IllegalStateException("Player model not found in registry")
+        val playerCollisionModel = modelRegistry["sphere"] ?: throw IllegalStateException("Sphere model not found in registry")
         playerHitboxMesh = PlacedMesh(playerCollisionModel, collision = true)
 
         modelRegistry.forEach { (modelName, mesh) ->
@@ -474,8 +473,17 @@ class DrawingPanel : StackPane() {
                             val disconnectedClientId = parts[1]
                             if (otherPlayers.remove(disconnectedClientId) != null) {
                                 println("Gracz się rozłączył (ID: $disconnectedClientId).")
-                                // Usunięcie modelu 3D jest obsługiwane w `updateGameLogic`
+                                dynamicMeshes.remove(disconnectedClientId)
                             }
+                        }
+                    }
+                    "PUSH_ME" -> {
+                        if (parts.size == 4) {
+                            val pushX = parts[1].toDoubleOrNull() ?: 0.0
+                            val pushY = parts[2].toDoubleOrNull() ?: 0.0
+                            val pushZ = parts[3].toDoubleOrNull() ?: 0.0
+
+                            externalPushVector += Vector3d(pushX, pushY, pushZ)
                         }
                     }
                     else -> {
@@ -483,7 +491,7 @@ class DrawingPanel : StackPane() {
                         if (parts.size == 6 && parts[0] == "POSITION") {
                             val receivedClientId = parts[1]
                             // Ignoruj pakiety od samego siebie (serwer nie powinien ich odsyłać, ale to zabezpieczenie)
-                            if (receivedClientId != clientSocket.localAddress.hostAddress) {
+                            if (receivedClientId != "${clientSocket.localAddress.hostAddress}:${clientSocket.localPort}") {
                                 val x = parts[2].toDouble()
                                 val y = parts[3].toDouble()
                                 val z = parts[4].toDouble()
@@ -584,99 +592,6 @@ class DrawingPanel : StackPane() {
         }
     }
 
-    private fun isCollidingAt(testPosition: Vector3d): CollisionResult { // TODO: Zoptymalizować, aby zwracało listę kolizji
-        // Oblicz pozycję stóp gracza na podstawie pozycji kamery
-        val feetPosition = testPosition.copy(y = testPosition.y - playerLegHeight)
-        val translation = Matrix4x4.translation(feetPosition.x + playerHitboxOffset.x, feetPosition.y + playerHitboxOffset.y, feetPosition.z + playerHitboxOffset.z)
-        val rotation = Matrix4x4.rotationY(cameraYaw + PI)
-        val scale = Matrix4x4.scale(playerHitboxScale, playerHitboxScale, playerHitboxScale)
-        playerHitboxMesh.transformMatrix = translation * rotation * scale
-
-        val playerAABB = AABB.fromCube(playerHitboxMesh.getTransformedVertices())
-
-        var deepestCollision: CollisionResult? = null
-
-        // Sprawdź kolizje ze statyczną geometrią
-        for (mesh in staticCollisionGrid.query(playerAABB)) {
-            val result = checkMeshCollision(playerHitboxMesh, mesh)
-            if (result.didCollide && (deepestCollision == null || result.penetrationDepth > deepestCollision.penetrationDepth)) {
-                deepestCollision = result
-            }
-        }
-        // Sprawdź kolizje z dynamicznymi obiektami (inni gracze)
-        for (mesh in dynamicCollisionGrid.query(playerAABB)) {
-            val result = checkMeshCollision(playerHitboxMesh, mesh)
-            if (result.didCollide && (deepestCollision == null || result.penetrationDepth > deepestCollision.penetrationDepth)) {
-                deepestCollision = result
-            }
-        }
-        return deepestCollision ?: CollisionResult(false)
-    }
-
-    private fun checkMeshCollision(playerHitbox: PlacedMesh, worldMesh: PlacedMesh): CollisionResult {
-        val playerAABB = AABB.fromCube(playerHitbox.getTransformedVertices())
-        val worldAABB = AABB.fromCube(worldMesh.getTransformedVertices())
-        if (!playerAABB.intersects(worldAABB)) {
-            return CollisionResult(false)
-        }
-
-        var bestResult: CollisionResult? = null
-
-        val playerVertices = playerHitbox.getTransformedVertices()
-
-        val worldBlushes = worldMesh.mesh.blushes.map { blush ->
-            val transformedCorners = blush.getCorners().map { corner -> worldMesh.transformMatrix.transform(corner) }
-            AABB.fromCube(transformedCorners)
-        }
-
-        for (playerVertex in playerVertices) {
-            val vertexAABB = AABB(
-                playerVertex - Vector3d(playerVertexRadius, playerVertexRadius, playerVertexRadius),
-                playerVertex + Vector3d(playerVertexRadius, playerVertexRadius, playerVertexRadius)
-            )
-
-            val bvhToCheck = if (dynamicMeshes.containsValue(worldMesh)) dynamicBvh else staticBvh
-
-            val potentialPrimitives = bvhToCheck.queryPrimitives(vertexAABB).filter { it.mesh === worldMesh }
-
-
-            for (primitive in potentialPrimitives) {
-                val v0 = primitive.v0
-                val v1 = primitive.v1
-                val v2 = primitive.v2
-
-                val closestPointOnTri = closestPointOnTriangle(playerVertex, v0, v1, v2)
-
-                val distSq = (closestPointOnTri.x - playerVertex.x).pow(2) +
-                        (closestPointOnTri.y - playerVertex.y).pow(2) +
-                        (closestPointOnTri.z - playerVertex.z).pow(2)
-
-                val effectiveRadius = playerVertexRadius + collisionSkinThickness
-                // Dodajemy "skórkę" do promienia kolizji, aby ściany były "grubsze"
-                if (distSq < effectiveRadius.pow(2)) {
-                    val collisionPoint = closestPointOnTri
-                    if (worldBlushes.any { it.contains(collisionPoint) }) {
-                        continue
-                    }
-                    var normal = (v1 - v0).cross(v2 - v0).normalize()
-                    val penetrationDepth = effectiveRadius - sqrt(distSq)
-
-                    // Upewnij się, że normalna jest zawsze skierowana w stronę gracza,
-                    // aby zapobiec tunelowaniu przez cienkie ściany.
-                    val toPlayer = (playerVertex - closestPointOnTri).normalize()
-                    if (normal.dot(toPlayer) < 0) {
-                        normal *= -1.0
-                    }
-
-                    if (bestResult == null || penetrationDepth > bestResult.penetrationDepth) {
-                        bestResult = CollisionResult(true, normal, penetrationDepth)
-                    }
-                }
-            }
-        }
-        return bestResult ?: CollisionResult(false)
-    }
-
     private fun closestPointOnTriangle(p: Vector3d, a: Vector3d, b: Vector3d, c: Vector3d): Vector3d {
         val ab = b - a
         val ac = c - a
@@ -728,37 +643,170 @@ class DrawingPanel : StackPane() {
         return a + ab * v + ac * w
     }
 
-    private fun checkGroundStatus(): Boolean {
-        if (cameraPosition.y <= floorLevel + 1e-4) {
-            return true
-        }
+    private fun closestPointOnSegment(p: Vector3d, a: Vector3d, b: Vector3d): Vector3d {
+        val ap = p - a
+        val ab = b - a
+        val ab2 = ab.dot(ab)
+        if (ab2 == 0.0) return a
+        val t = (ap.dot(ab) / ab2).coerceIn(0.0, 1.0)
+        return a + ab * t
+    }
 
-        // 1. Sprawdź, czy pod graczem jest podłoże w zasięgu "przyklejenia" (stepHeight) [Używamy pełnego hitboxa do tego testu]
-        val groundSnapDistance = maxStepHeight
-        val groundCheckPosition = cameraPosition.copy(y = cameraPosition.y - groundSnapDistance)
-        val collisionResult = isCollidingAt(groundCheckPosition)
+    /**
+     * Zaawansowany resolver kolizji gracza oparty o sferyczny hitbox (model „sphere”).
+     *
+     * - obsługuje rampy (pochylone ściany) – wypchnięcie odbywa się wzdłuż lokalnej normalnej,
+     * - uniemożliwia przechodzenie przez grube bryły i cienkie ściany,
+     * - zwraca informację czy kontakt był „pod stopami” (grunt/rampa), aby poprawnie obsłużyć skakanie.
+     */
+    private fun resolveCollisions(oldPos: Vector3d, desiredPos: Vector3d): Pair<Vector3d, Boolean> {
+        if (debugNoclip) return Pair(desiredPos, false)
 
-        if (!collisionResult.didCollide || collisionResult.surfaceNormal == null) {
-            // Jeśli nic nie ma pod nami w zasięgu, na pewno jesteśmy w powietrzu.
-            return false
-        }
+        var resolvedPos = desiredPos.copy()
+        var isGroundContact = false
 
-        // 2. Sprawdź, czy powierzchnia, na której stoimy, jest "chodliwa"
-        val upVector = Vector3d(0.0, 1.0, 0.0)
-        val dot = collisionResult.surfaceNormal.dot(upVector)
-        val angleRad = acos(dot.coerceIn(-1.0, 1.0))
-        val angleDeg = Math.toDegrees(angleRad)
+        val playerRadius = playerVertexRadius
+        val epsilon = 1e-4 * cubeSize
 
-        if (angleDeg < 56.0) {
-            // 3. Przyklej gracza do podłoża, aby zapobiec mikro-spadkom.
-            val feetPosition = cameraPosition.copy(y = cameraPosition.y - playerLegHeight)
-            if (feetPosition.y > groundCheckPosition.y) { // Zapobiegaj zapadaniu się w ziemię
-                cameraPosition.y = groundCheckPosition.y + playerLegHeight
+        // Wysokość kapsuły - od stóp do głowy. playerHitboxOffset to teraz środek kapsuły.
+        val capsuleHalfHeight = playerHitboxOffset.y.absoluteValue
+
+        // Podział ruchu na mniejsze kroki – zabezpiecza przed „tunelowaniem” przez cienkie ściany.
+        // Zamiast dzielić ruch, będziemy iteracyjnie rozwiązywać kolizje dla pełnego kroku.
+        // To zapobiega drżeniu, ponieważ nie pozwalamy na ruch "w głąb" ściany.
+        val maxIterations = 8
+        for (iteration in 0 until maxIterations) {
+            var maxPenetration = 0.0
+            var correctionVector = Vector3d(0.0, 0.0, 0.0)
+            var groundCandidate = false
+
+            // Logika przepychania graczy ---
+            var pushVector = Vector3d(0.0, 0.0, 0.0)
+            var pushedMesh: PlacedMesh? = null
+            var isDynamicCollision = false
+
+            // AABB dla całej kapsuły w jej docelowej pozycji
+            run {
+                val capsuleCenter = resolvedPos + playerHitboxOffset
+                val capsuleTop = capsuleCenter + Vector3d(0.0, capsuleHalfHeight, 0.0)
+                val capsuleBottom = capsuleCenter - Vector3d(0.0, capsuleHalfHeight, 0.0)
+
+                // AABB dla całej kapsuły
+                val queryAabb = AABB(
+                    Vector3d(capsuleBottom.x - playerRadius, capsuleBottom.y - playerRadius, capsuleBottom.z - playerRadius),
+                    Vector3d(capsuleTop.x + playerRadius, capsuleTop.y + playerRadius, capsuleTop.z + playerRadius)
+                )
+
+                val candidateMeshes = staticCollisionGrid.query(queryAabb) + dynamicCollisionGrid.query(queryAabb)
+
+                for (mesh in candidateMeshes) {
+                    val meshAabb = meshAABBs[mesh] ?: continue
+                    if (!meshAabb.intersects(queryAabb)) continue
+
+                    // Definicja segmentu osiowego kapsuły (ponownie, wewnątrz pętli po meshu, na wypadek zmian)
+                    val capsuleCenter = resolvedPos + playerHitboxOffset
+                    val capsuleTop = capsuleCenter + Vector3d(0.0, capsuleHalfHeight, 0.0)
+                    val capsuleBottom = capsuleCenter - Vector3d(0.0, capsuleHalfHeight, 0.0)
+
+                    val worldBlushes by lazy {
+                        mesh.mesh.blushes.map { blush ->
+                            val transformedCorners = blush.getCorners().map { corner -> mesh.transformMatrix.transform(corner) }
+                            AABB.fromCube(transformedCorners)
+                        }
+                    }
+
+                    val worldVertices = mesh.getTransformedVertices()
+                    for (faceIndices in mesh.mesh.faces) {
+                        if (faceIndices.size < 3) continue
+
+                        // Triangulacja „triangle fan” – działa dla grubych brył i cienkich ścian 3/4-wierzchołkowych
+                        for (i in 1 until faceIndices.size - 1) {
+                            val v0 = worldVertices[faceIndices[0]]
+                            val v1 = worldVertices[faceIndices[i]]
+                            val v2 = worldVertices[faceIndices[i + 1]]
+
+                            val closestPointOnCapsuleAxis = closestPointOnSegment(closestPointOnTriangle(capsuleCenter, v0, v1, v2), capsuleBottom, capsuleTop)
+                            val closestPointOnTriangle = closestPointOnTriangle(closestPointOnCapsuleAxis, v0, v1, v2)
+
+                            // Promień do przepychania graczy ---
+                            val isDynamicObject = dynamicMeshes.containsValue(mesh)
+                            val effectiveRadius = if (isDynamicObject) playerRadius * 1.5 else playerRadius
+
+                            val penetrationVector = closestPointOnCapsuleAxis - closestPointOnTriangle
+                            val penetrationDepth = effectiveRadius - penetrationVector.length()
+
+                            if (penetrationDepth > 0) {
+                                // Sprawdź, czy punkt kolizji na trójkącie jest wewnątrz "blush"
+                                if (worldBlushes.isNotEmpty() && worldBlushes.any { it.contains(closestPointOnTriangle) }) {
+                                    continue // Ignoruj tę kolizję, ponieważ jest wewnątrz "blush"
+                                }
+
+                                val correctionNormal = penetrationVector.normalize()
+
+                                // Jeśli to kolizja z innym graczem, tylko go odepchnij, nie koryguj własnej pozycji
+                                if (isDynamicObject) {
+                                    isDynamicCollision = true
+                                    val pushPenetration = playerRadius - (closestPointOnCapsuleAxis - closestPointOnTriangle).length()
+                                    if (pushPenetration > 0) {
+                                        pushVector = correctionNormal * (pushPenetration + epsilon)
+                                        pushedMesh = mesh
+                                    }
+                                    continue // Przejdź do następnego trójkąta, nie rozwiązuj tej kolizji dla siebie
+                                }
+
+                                // Prawdziwy „grunt” tylko wtedy, gdy:
+                                // 1) normalna jest wystarczająco „pionowa” (max kąt rampy),
+                                // 2) punkt kontaktu jest pod środkiem sfery (nie z boku ściany).
+                                val isSlopeOk = correctionNormal.y >= minGroundNormalY
+                                val isBelowFeet = closestPointOnTriangle.y <= capsuleBottom.y + playerRadius * (1.0 - groundContactVerticalOffset)
+                                if (isSlopeOk && isBelowFeet) {
+                                    groundCandidate = true
+                                }
+
+                                // Zamiast natychmiast przesuwać, znajdujemy największą penetrację w tej iteracji
+                                if (penetrationDepth > maxPenetration) {
+                                    maxPenetration = penetrationDepth
+                                    correctionVector = correctionNormal * (penetrationDepth + epsilon)
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            return true // Jesteśmy na ziemi.
+
+            // Wysłanie siły pchania do innego gracza
+            if (isDynamicCollision && pushedMesh != null) {
+                val pushedPlayerId = dynamicMeshes.entries.find { it.value == pushedMesh }?.key
+                if (pushedPlayerId != null) {
+                    otherPlayers[pushedPlayerId]?.let { playerState ->
+                        val horizontalPushVector = pushVector.copy(y = 0.0)
+                        if (horizontalPushVector.length() > 0) {
+                            val pushStrength = 0.03
+                            val finalPush = horizontalPushVector * -pushStrength
+                            val pushMessage = "PUSH,$pushedPlayerId,${finalPush.x},0.0,${finalPush.z}"
+                            val data = pushMessage.toByteArray()
+                            clientSocket.send(DatagramPacket(data, data.size, serverAddress, serverPort))
+                        }
+                    }
+                }
+                isDynamicCollision = false
+            }
+
+            if (maxPenetration > 0) {
+                // Zastosuj korektę do pozycji
+                resolvedPos += correctionVector
+
+                // Jeśli ta korekta była zderzeniem z podłożem, oznaczamy to
+                if (groundCandidate) {
+                    isGroundContact = true
+                }
+            } else {
+                // Jeśli nie było żadnej penetracji, pozycja jest prawidłowa i możemy zakończyć pętlę
+                break
+            }
         }
-        // Powierzchnia jest zbyt stroma (gracz będzie się zsuwać).
-        return false
+
+        return Pair(resolvedPos, isGroundContact)
     }
 
     private fun updateCameraPosition(deltaTime: Double) {
@@ -792,6 +840,14 @@ class DrawingPanel : StackPane() {
         if (pressedKeys.contains(KeyCode.A)) newCameraPosition -= rightVector * currentMovementSpeed * deltaTime
         if (pressedKeys.contains(KeyCode.SPACE) && debugFly) newCameraPosition += Vector3d(0.0, currentMovementSpeed, 0.0) * deltaTime
 
+        // Zastosuj pchnięcie ---
+        if (externalPushVector.length() > 0.0) {
+            newCameraPosition += externalPushVector
+            // Stopniowo wygaszaj pchnięcie, aby nie trwało wiecznie
+            externalPushVector *= 0.9 // Współczynnik tłumienia
+            if (externalPushVector.length() < 0.01) externalPushVector = Vector3d(0.0, 0.0, 0.0)
+        }
+
         // Logika skoku
         if (pressedKeys.contains(KeyCode.SPACE) && !debugFly && isGrounded) {
             val jumpHeight = 0.75 * cubeSize
@@ -801,119 +857,65 @@ class DrawingPanel : StackPane() {
         }
         if (pressedKeys.contains(KeyCode.CONTROL) && debugFly) newCameraPosition -= Vector3d(0.0, currentMovementSpeed, 0.0) * deltaTime
 
-        // Logika opadania
+        // Wykrywanie strefy antygrawitacyjnej (powierzchnie pochylone)
+        var isInGravityZone = false
         if (!debugFly) {
-            // Aktualizuj historię stanu "na ziemi"
-            groundedStateHistory.add(checkGroundStatus())
-            if (groundedStateHistory.size > groundCheckHistorySize) {
-                groundedStateHistory.poll()
+            val playerFeetAABB = AABB(
+                min = newCameraPosition + playerHitboxOffset - Vector3d(playerVertexRadius, 0.0, playerVertexRadius),
+                max = newCameraPosition + playerHitboxOffset + Vector3d(playerVertexRadius, playerVertexRadius, playerVertexRadius)
+            )
+            for (placedMesh in staticMeshes) {
+                if (placedMesh.mesh.gravityZoneFaces.isNotEmpty()) {
+                    val worldVertices = placedMesh.getTransformedVertices()
+                    for (faceIndex in placedMesh.mesh.gravityZoneFaces) {
+                        val faceVertexIndices = placedMesh.mesh.faces[faceIndex]
+                        val faceVertices = faceVertexIndices.map { worldVertices[it] }
+                        val faceAABB = AABB.fromCube(faceVertices)
+                        if (faceAABB.intersects(playerFeetAABB)) {
+                            isInGravityZone = true
+                            break
+                        }
+                    }
+                }
+                if (isInGravityZone) break
             }
+        }
 
-            // Ustal, czy gracz jest stabilnie na ziemi
-            val groundedCount = groundedStateHistory.count { it }
-            isGrounded = groundedCount > groundCheckHistorySize / 2
-
-            if (!isGrounded) {
-                verticalVelocity -= gravityAcceleration * deltaTime
-                newCameraPosition.y += verticalVelocity * deltaTime
-            } else {
-                verticalVelocity = 0.0 // Zresetuj prędkość pionową, gdy gracz jest na ziemi
-            }
+        // Logika opadania oparta o lokalną prędkość pionową – kolizje z geometrią są obsługiwane niżej.
+        if (!debugFly && (!isInGravityZone || verticalVelocity > 0)) {
+            verticalVelocity -= gravityAcceleration * deltaTime
+            newCameraPosition.y += verticalVelocity * deltaTime
         }
 
         val isMovingHorizontally = pressedKeys.contains(KeyCode.W) || pressedKeys.contains(KeyCode.A) || pressedKeys.contains(KeyCode.S) || pressedKeys.contains(KeyCode.D)
 
-        if (debugNoclip) {
-            cameraPosition = newCameraPosition
-            return
-        }
+        // Zaawansowany system kolizji 3D z rampami i ścianami
+        val (resolvedPos, groundHit) = resolveCollisions(cameraPosition, newCameraPosition)
 
-        val oldCameraPosition = cameraPosition.copy()
-        var desiredPosition = newCameraPosition.copy()
+        cameraPosition = resolvedPos
 
-        // --- Logika wchodzenia na progi ---
-        var steppedUp = false
-        // Sprawdź, czy ruch do przodu jest zablokowany, zanim spróbujesz wejść na próg.
-        // Zapobiega to podskakiwaniu podczas ślizgania się wzdłuż ścian.
-        val forwardMovementOnlyPosition = oldCameraPosition.copy(x = desiredPosition.x, z = desiredPosition.z)
-        val isForwardMovementBlocked = isCollidingAt(forwardMovementOnlyPosition).didCollide
-
-        if (isMovingHorizontally && isGrounded && !debugFly && isForwardMovementBlocked) {
-            val stepTestPosition = oldCameraPosition.copy(y = oldCameraPosition.y + maxStepHeight)
-            val finalStepPositionAfterRaising = stepTestPosition.copy(x = desiredPosition.x, z = desiredPosition.z)
-
-            if (!isCollidingAt(finalStepPositionAfterRaising).didCollide) {
-                val stepUpSpeed = 8.0 * cubeSize
-                // Zamiast bezpośrednio ustawiać pozycję, modyfikujemy `desiredPosition`, aby reszta logiki mogła to uwzględnić
-                desiredPosition = finalStepPositionAfterRaising.copy(y = oldCameraPosition.y + stepUpSpeed * deltaTime)
-                steppedUp = true
+        if (!debugFly && !isInGravityZone) {
+            // Dodatkowe ograniczenie nieskończonej płaszczyzny „floorLevel”
+            if (cameraPosition.y < floorLevel) {
+                cameraPosition = cameraPosition.copy(y = floorLevel)
+                verticalVelocity = 0.0
+                isGrounded = true
             }
-        }
 
-        if (steppedUp) {
-            cameraPosition = desiredPosition
-            return
-        }
-
-        // --- Nowa, solidna logika kolizji z depenetracją ---
-        var currentPosition = cameraPosition.copy()
-        val movementVector = desiredPosition - currentPosition
-        val maxIterations = 5
-
-        // 1. Rozwiąż ruch horyzontalny
-        var horizontalMovement = Vector3d(movementVector.x, 0.0, movementVector.z)
-        if (horizontalMovement.length() > 1e-6) {
-            for (i in 0 until maxIterations) {
-                val nextHorizontalPos = currentPosition + horizontalMovement
-                val collision = isCollidingAt(nextHorizontalPos)
-
-                if (!collision.didCollide) {
-                    currentPosition = nextHorizontalPos
-                    break
-                }
-
-                val normal = collision.surfaceNormal?.copy(y = 0.0)?.normalize() ?: Vector3d(1.0, 0.0, 0.0)
-                
-                // Upewnij się, że wektor depenetracji jest skierowany od ściany.
-                // To dodatkowe zabezpieczenie przed tunelowaniem.
-                val movementDir = horizontalMovement.normalize()
-                val correctedNormal = if (normal.dot(movementDir) > 0) normal * -1.0 else normal
-
-                val depenetration = correctedNormal * (collision.penetrationDepth + 0.001) // Wypchnij z geometrii
-                currentPosition += depenetration
-
-                // Oblicz ślizg
-                val dot = horizontalMovement.dot(normal)
-                horizontalMovement -= normal * dot
-            }
-        }
-
-        // 2. Rozwiąż ruch wertykalny
-        var verticalMovement = Vector3d(0.0, movementVector.y, 0.0)
-        if (abs(verticalMovement.y) > 1e-6) {
-            val nextVerticalPos = currentPosition + verticalMovement
-            val collision = isCollidingAt(nextVerticalPos)
-
-            if (!collision.didCollide) {
-                currentPosition = nextVerticalPos
+            if (groundHit && verticalVelocity <= 0.0) {
+                isGrounded = true
+                verticalVelocity = 0.0 // Resetuj prędkość tylko przy kontakcie z ziemią
             } else {
-                // Uderzenie w coś w pionie
-                val normal = collision.surfaceNormal ?: Vector3d(0.0, 1.0, 0.0)
-                if (normal.y > 0.707 && verticalMovement.y < 0) { // Uderzenie w podłogę
-                    isGrounded = true
-                    verticalVelocity = 0.0
-                } else if (normal.y < -0.707 && verticalMovement.y > 0) { // Uderzenie w sufit
-                    verticalVelocity = 0.0
-                }
-                // Zablokuj ruch wertykalny, ale nie wypychaj (grawitacja zrobi swoje)
+                isGrounded = false // Jeśli nie ma kontaktu z ziemią (lub jesteśmy w trakcie wznoszenia), jesteśmy w powietrzu
             }
-        }
-
-        cameraPosition = currentPosition
-
-        // Sprawdź ponownie, czy nie ma kolizji po ostatecznym ruchu (zabezpieczenie)
-        if (isCollidingAt(cameraPosition).didCollide) {
-            cameraPosition = oldCameraPosition
+        } else if (isInGravityZone) {
+            // W strefie grawitacyjnej gracz jest zawsze "uziemiony", ale grawitacja nie działa
+            isGrounded = true
+            verticalVelocity = 0.0
+        } else { // debugFly == true
+            // W trybie latania ignorujemy grawitację i kolizje pod kątem „uziemienia”
+            isGrounded = false
+            verticalVelocity = 0.0
         }
 
         if (isMouseCaptured) {

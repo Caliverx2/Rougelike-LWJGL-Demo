@@ -193,16 +193,40 @@ data class Mesh(
     val color: Color,
     val faceTextureNames: Map<Int, String> = emptyMap(),
     val blushes: List<AABB> = emptyList(),
-    val customTextures: Map<Int, List<Int>> = emptyMap()
-)
+    val customTextures: Map<Int, List<Int>> = emptyMap(),
+) {
+    val gravityZoneFaces: Set<Int>
+
+    init {
+        val mutableGravityZoneFaces = mutableSetOf<Int>()
+        val minSlopeNormalY = 0.01 // Próg do odróżnienia od ścian pionowych
+        val maxSlopeNormalY = 0.99 // Próg do odróżnienia od podłóg
+
+        faces.forEachIndexed { index, faceIndices ->
+            if (faceIndices.size >= 3) {
+                val v0 = vertices[faceIndices[0]]
+                val v1 = vertices[faceIndices[1]]
+                val v2 = vertices[faceIndices[2]]
+
+                val normal = (v1 - v0).cross(v2 - v0).normalize()
+                val normalY = abs(normal.y)
+
+                if (normalY > minSlopeNormalY && normalY < maxSlopeNormalY) {
+                    mutableGravityZoneFaces.add(index)
+                }
+            }
+        }
+        gravityZoneFaces = mutableGravityZoneFaces
+    }
+}
 
 class PlacedMesh(
     val mesh: Mesh,
     var transformMatrix: Matrix4x4 = Matrix4x4.identity(),
     val texture: Image? = null,
     val faceTextures: Map<Int, Image> = emptyMap(),
-    var collision: Boolean = true,
-    var collisionPos: Vector3d = Vector3d(0.0,0.0,0.0)
+    val collision: Boolean = true,
+    var collisionPos: Vector3d = Vector3d(0.0, 0.0, 0.0)
 ) {
     fun getTransformedVertices(): List<Vector3d> =
         mesh.vertices.map { transformMatrix.transform(it) }
