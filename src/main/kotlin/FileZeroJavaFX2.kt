@@ -71,6 +71,19 @@ class DrawingPanel : StackPane() {
         val hasCollision: Boolean
     )
 
+    private data class PathfindingAgent(
+        val id: Long,
+        var position: Vector3d,
+        var targetPosition: Vector3d,
+        var path: List<Vector3d>? = null,
+        var currentPathIndex: Int = 0,
+        val speed: Double = 200.0,
+        var mesh: PlacedMesh,
+        var lastPathUpdateTime: Long = 0,
+        var lastNavMeshCheckTime: Long = 0
+    )
+
+
     private var staticMeshBatches = listOf<StaticMeshBatch>()
     private val textureTransparencyCache = ConcurrentHashMap<Image, Boolean>()
     private val textureCache = ConcurrentHashMap<Image, IntArray>()
@@ -188,6 +201,7 @@ class DrawingPanel : StackPane() {
     private val keepAliveTimer = java.util.Timer()
     private val dynamicMeshes = ConcurrentHashMap<String, PlacedMesh>()
 
+    private val pathfindingAgents = Collections.synchronizedList(mutableListOf<PathfindingAgent>())
     private data class PlayerState(
         var currentPos: Vector3d,
         var currentYaw: Double,
@@ -198,6 +212,8 @@ class DrawingPanel : StackPane() {
 
     private var lastSentPacketData: String? = null
     private var externalPushVector = Vector3d(0.0, 0.0, 0.0)
+    private var navMesh: NavMesh? = null
+    private val generatedNavMeshRegions = mutableSetOf<Triple<Int, Int, Int>>()
 
     init {
         sceneProperty().addListener { _, _, newScene ->
@@ -590,6 +606,54 @@ class DrawingPanel : StackPane() {
             debugShowHitboxes = !debugShowHitboxes
             println("debugShowHitboxes: $debugShowHitboxes")
         }
+        if (code == KeyCode.J) {
+            val agentStartPos = Vector3d(63.2, -331.0, -868.3)
+            if (navMesh == null) {
+                navMesh = NavMesh(mutableListOf(), mutableMapOf(), cubeSize / 2.0)
+                extendNavMesh(agentStartPos, 5.0 * cubeSize)
+            }
+
+            val agentModel = modelRegistry["player"] ?: return
+            val agentMesh = PlacedMesh(
+                agentModel,
+                Matrix4x4.translation(agentStartPos.x, agentStartPos.y - 0.6 * cubeSize, agentStartPos.z) * Matrix4x4.scale(0.3, 0.3, 0.3),
+                collision = false,
+                faceTextures = placedTextures("player", agentModel)
+            )
+            val newAgent = PathfindingAgent(System.nanoTime(), agentStartPos, cameraPosition.copy(), mesh = agentMesh, lastNavMeshCheckTime = System.nanoTime())
+            pathfindingAgents.add(newAgent)
+            println("Spawned pathfinding agent at $agentStartPos")
+        }
+        if (code == KeyCode.R) {
+            val cubeMeshGray = createCubeMesh(cubeSize, Color.GRAY)
+            val playerGridPos = worldToGridCoords(cameraPosition)
+            val gridX = playerGridPos.x.toInt()
+            val gridY = playerGridPos.y.toInt()
+            val gridZ = playerGridPos.z.toInt()
+            val offset = gridDimension / 2.0
+            val initialPos = Vector3d(
+                (gridX - offset) * cubeSize,
+                (gridY - offset) * cubeSize,
+                (gridZ - offset) * cubeSize
+            )
+            val translationMatrix = Matrix4x4.translation(initialPos.x, initialPos.y, initialPos.z)
+            val newMesh = PlacedMesh(cubeMeshGray, transformMatrix = translationMatrix, texture = loadImage("textures/black_bricks.png"), collisionPos = initialPos, collision = true)
+            staticMeshes.add(newMesh)
+
+            // 1. NAJPIERW zaktualizuj fizykę, aby NavMesh "wiedział" o nowym bloku.
+            rebuildStaticPhysics()
+
+            // 2. DOPIERO TERAZ zaktualizuj NavMesh, który użyje nowej fizyki.
+            val blockAABB = AABB.fromCube(newMesh.getTransformedVertices())
+            invalidateNavMeshInAABB(blockAABB)
+            extendNavMesh(initialPos, cubeSize * 1.5) // Użyj nieco większego promienia
+        }
+    }
+
+    private fun invalidateNavMeshInAABB(aabb: AABB) {
+        navMesh?.let {
+            it.removeNodesInAABB(aabb)
+        }
     }
 
     private fun closestPointOnTriangle(p: Vector3d, a: Vector3d, b: Vector3d, c: Vector3d): Vector3d {
@@ -948,38 +1012,6 @@ class DrawingPanel : StackPane() {
                         " VERTICAL_VELOCITY: $verticalVelocity")
         }
 
-        if (pressedKeys.contains(KeyCode.H)) {
-            println(
-                "X:${cameraPosition.x}" +
-                        " Y:${cameraPosition.y}" +
-                        " Z:${cameraPosition.z}")
-        }
-
-        if (pressedKeys.contains(KeyCode.R)) {
-            val cubeMeshGray = createCubeMesh(cubeSize, Color.GRAY)
-            val playerGridPos = worldToGridCoords(cameraPosition)
-            val gridX = playerGridPos.x.toInt()
-            val gridY = playerGridPos.y.toInt()
-            val gridZ = playerGridPos.z.toInt()
-            val offset = gridDimension / 2.0
-            val initialPos = Vector3d(
-                (gridX - offset) * cubeSize,
-                (gridY - offset) * cubeSize,
-                (gridZ - offset) * cubeSize
-            )
-            val translationMatrix = Matrix4x4.translation(initialPos.x, initialPos.y, initialPos.z)
-            val newMesh = PlacedMesh(cubeMeshGray, transformMatrix = translationMatrix, texture = loadImage("textures/black_bricks.png"), collisionPos = initialPos, collision = true)
-            staticMeshes.add(newMesh)
-
-            val aabb = AABB.fromCube(newMesh.getTransformedVertices())
-            meshAABBs[newMesh] = aabb
-
-            if (newMesh.collision) {
-                staticCollisionGrid.add(newMesh, aabb)
-            }
-            rebuildStaticPhysics()
-            pressedKeys.remove(KeyCode.R)
-        }
         if (pressedKeys.contains(KeyCode.O)) {
             val lightRadius = 6.0 * cubeSize
             lightSources.add(LightSource(Vector3d(cameraPosition.x, cameraPosition.y, cameraPosition.z), lightRadius, Color.rgb(160, 160, 160), intensity = 1.0, type = LightType.RAYTRACED))
@@ -1111,6 +1143,25 @@ class DrawingPanel : StackPane() {
                     blushFaces.forEach { drawFaceWireframe(gc, it, combinedMatrix) }
                 }
             }
+
+            // Draw pathfinding agent paths
+            synchronized(pathfindingAgents) {
+                gc.stroke = Color.CYAN
+                gc.lineWidth = 2.0
+                for (agent in pathfindingAgents) {
+                    agent.path?.let { path ->
+                        if (path.size > 1) {
+                            for (i in 0 until path.size - 1) {
+                                val p1 = projectToScreen(path[i], combinedMatrix, overlayCanvas.width, overlayCanvas.height)
+                                val p2 = projectToScreen(path[i+1], combinedMatrix, overlayCanvas.width, overlayCanvas.height)
+                                if (p1 != null && p2 != null) {
+                                    gc.strokeLine(p1.x, p1.y, p2.x, p2.y)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         /*for (x in 0 until gridDimension) {
             for (z in 0 until gridDimension) {
@@ -1121,6 +1172,20 @@ class DrawingPanel : StackPane() {
                 }
             }
         }*/
+    }
+
+    private fun projectToScreen(worldPos: Vector3d, viewProjMatrix: Matrix4x4, screenWidth: Double, screenHeight: Double): Vector3d? {
+        val projected = viewProjMatrix.transformHomogeneous(worldPos)
+        if (projected.w <= 0) return null // Point is behind the camera
+
+        val screenX = (projected.x / projected.w + 1) * screenWidth / 2.0
+        val screenY = (1 - projected.y / projected.w) * screenHeight / 2.0
+
+        // Check if the point is within the screen bounds (with a small margin)
+        if (screenX < -10 || screenX > screenWidth + 10 || screenY < -10 || screenY > screenHeight + 10) {
+            return null
+        }
+        return Vector3d(screenX, screenY, projected.z / projected.w)
     }
 
     private fun drawFaceWireframe(gc: javafx.scene.canvas.GraphicsContext, worldVertices: List<Vector3d>, combinedMatrix: Matrix4x4) {
@@ -1186,6 +1251,74 @@ class DrawingPanel : StackPane() {
             }
         }
 
+        // Update pathfinding agents
+        synchronized(pathfindingAgents) {
+            val agentsToRemove = mutableListOf<PathfindingAgent>()
+            for (agent in pathfindingAgents) {
+                agent.targetPosition = cameraPosition.copy()
+                val now = System.nanoTime()
+
+                // Co sekundę sprawdzaj i rozszerzaj NavMesh wokół agenta ORAZ gracza
+                if (now - agent.lastNavMeshCheckTime > 1_000_000_000) {
+                    val nodesNearby = navMesh?.countNodesInRadius(agent.position, 3.0 * cubeSize) ?: 0
+                    if (nodesNearby < 200) {
+                        // Rozszerz siatkę wokół agenta i gracza, aby połączyć ich światy
+                        extendNavMesh(cameraPosition, 5.0 * cubeSize)
+                        extendNavMesh(agent.position, 5.0 * cubeSize)
+                    }
+                     agent.lastNavMeshCheckTime = now
+                }
+
+                // Recalculate path periodically
+                if (agent.path == null || now - agent.lastPathUpdateTime > 1_000_000_000) { // Update path every second
+                    val currentNavMesh = navMesh ?: continue
+                    val startNode = currentNavMesh.findClosestNode(agent.position) ?: continue
+                    val endNode = currentNavMesh.findClosestNode(agent.targetPosition)
+
+                    if (endNode != null) {
+                        agent.path = currentNavMesh.findPath(startNode, endNode)
+                        agent.currentPathIndex = 0
+                        agent.lastPathUpdateTime = now
+                    } else {
+                        // Cel jest poza znanym NavMesh, rozszerz go w następnej iteracji sprawdzania
+                    }
+                }
+
+                agent.path?.let { path ->
+                    if (agent.currentPathIndex >= path.size) {
+                        // Reached destination or path ended, maybe remove agent or set to idle
+                        // For now, let's just clear the path to trigger recalculation
+                        agent.path = null
+                        return@let
+                    }
+
+                    val nextWaypoint = path[agent.currentPathIndex]
+                    val direction = (nextWaypoint - agent.position).normalize()
+                    val distanceToWaypoint = (nextWaypoint - agent.position).length()
+
+                    if (distanceToWaypoint < 10.0) { // Threshold to move to next waypoint
+                        agent.currentPathIndex++
+                    } else {
+                        val moveVector = direction * agent.speed * deltaTime
+                        agent.position += moveVector
+
+                        // Update mesh position and rotation
+                        val agentYaw = atan2(direction.x, direction.z) + PI // Dodaj PI, aby obrócić o 180 stopni
+                        agent.mesh.transformMatrix = Matrix4x4.translation(agent.position.x, agent.position.y, agent.position.z) * Matrix4x4.rotationY(agentYaw) * Matrix4x4.scale(0.3, 0.3, 0.3)
+                        meshAABBs[agent.mesh] = AABB.fromCube(agent.mesh.getTransformedVertices())
+                    }
+                } ?: run {
+                    // If no path, try to find the closest node and move towards it to get back on track
+                    navMesh?.findClosestNode(agent.position)?.let { closestNode ->
+                        val direction = (closestNode.position - agent.position).normalize()
+                        agent.position += direction * agent.speed * deltaTime
+                    }
+                }
+            }
+            pathfindingAgents.removeAll(agentsToRemove)
+        }
+
+
         // Update light gizmos
         lightGizmoMeshes.clear()
         val lightGizmoBaseMesh = createCubeMesh(0.1 * cubeSize, Color.WHITE)
@@ -1196,6 +1329,11 @@ class DrawingPanel : StackPane() {
             val placedGizmo = PlacedMesh(coloredGizmoMesh, gizmoTransform, collision = false)
             meshAABBs[placedGizmo] = AABB.fromCube(placedGizmo.getTransformedVertices())
             lightGizmoMeshes.add(placedGizmo)
+        }
+
+        // Add agent meshes to dynamic meshes for rendering
+        pathfindingAgents.forEach { agent ->
+            dynamicMeshes["agent_${agent.id}"] = agent.mesh
         }
 
         // Interpolate other players' positions
@@ -1214,8 +1352,11 @@ class DrawingPanel : StackPane() {
         // Update dynamic player meshes
         val currentDynamicMeshIds = dynamicMeshes.keys.toSet()
         val activePlayerIds = otherPlayers.keys.toSet()
+        val activeAgentIds = pathfindingAgents.map { "agent_${it.id}" }.toSet()
 
-        val toRemove = currentDynamicMeshIds - activePlayerIds
+        // Clear old agent meshes before update
+        currentDynamicMeshIds.filter { it.startsWith("agent_") && it !in activeAgentIds }.forEach { dynamicMeshes.remove(it) }
+        val toRemove = currentDynamicMeshIds - activePlayerIds - activeAgentIds
         val toAdd = activePlayerIds - currentDynamicMeshIds
         val toUpdate = currentDynamicMeshIds.intersect(activePlayerIds)
 
@@ -1260,6 +1401,11 @@ class DrawingPanel : StackPane() {
         staticCollisionGrid.clear()
         staticMeshes.filter { it.collision }.forEach { mesh ->
             meshAABBs[mesh]?.let { aabb -> staticCollisionGrid.add(mesh, aabb) }
+                ?: run { // Jeśli AABB nie istnieje, stwórz je
+                    val newAabb = AABB.fromCube(mesh.getTransformedVertices())
+                    meshAABBs[mesh] = newAabb
+                    staticCollisionGrid.add(mesh, newAabb)
+                }
         }
         staticBvh.build(staticMeshes)
     }
@@ -1837,6 +1983,85 @@ class DrawingPanel : StackPane() {
         applyGILightPoints(resolution)
     }
 
+    private fun extendNavMesh(center: Vector3d, radius: Double) {
+        val currentNavMesh = navMesh ?: return
+        val navMeshCellSize = cubeSize / 2.0
+        val step = navMeshCellSize.toInt()
+        val checkRadius = playerVertexRadius * 0.5 // Mniejszy promień do sprawdzania, aby przejść przez węższe miejsca
+        val agentHeight = playerHitboxScale * cubeSize * 2.0 // Przybliżona wysokość agenta
+        val maxWalkableSlope = 0.7 // Cosinus kąta ~45 stopni, tak jak u gracza
+
+        val minX = floor((center.x - radius) / navMeshCellSize).toInt()
+        val maxX = ceil((center.x + radius) / navMeshCellSize).toInt()
+        val minZ = floor((center.z - radius) / navMeshCellSize).toInt()
+        val maxZ = ceil((center.z + radius) / navMeshCellSize).toInt()
+
+        val navMeshNodes = mutableListOf<NavMeshNode>()
+        val nodeGrid = mutableMapOf<Triple<Int, Int, Int>, NavMeshNode>()
+
+        println("Extending NavMesh in area: X($minX..$maxX), Z($minZ..$maxZ)")
+
+        for (gx in minX..maxX) {
+            for (gz in minZ..maxZ) {
+                val regionKey = Triple(gx, 0, gz)
+                if (generatedNavMeshRegions.contains(regionKey)) continue
+
+                val x = gx * navMeshCellSize
+                val z = gz * navMeshCellSize
+
+                // Rzutuj promień z góry w dół, aby znaleźć podłoże
+                val rayOrigin = Vector3d(x, center.y + 2 * cubeSize, z)
+                val rayDir = Vector3d(0.0, -1.0, 0.0)
+
+                val hitResult = staticBvh.intersectWithDetails(rayOrigin, rayDir, 10 * cubeSize)
+
+                if (hitResult != null) {
+                    val (hitPrimitive, hitDist) = hitResult
+                    val hitPoint = rayOrigin + rayDir * hitDist
+                    val hitNormal = (hitPrimitive.v1 - hitPrimitive.v0).cross(hitPrimitive.v2 - hitPrimitive.v0).normalize()
+
+                    // Sprawdź, czy powierzchnia jest wystarczająco płaska do chodzenia
+                    if (hitNormal.y < maxWalkableSlope) continue
+
+                    // Sprawdź, czy jest wystarczająco dużo miejsca nad głową
+                    val headCheckOrigin = hitPoint + Vector3d(0.0, agentHeight, 0.0)
+                    if (staticBvh.intersect(headCheckOrigin, Vector3d(0.0, -1.0, 0.0), agentHeight - 0.1, hitPrimitive.mesh, hitPrimitive.faceIndex)) {
+                        continue // Coś jest tuż nad głową
+                    }
+
+                    // Sprawdź, czy agent się zmieści (uproszczone sprawdzenie)
+                    val checkAABB = AABB(hitPoint - Vector3d(checkRadius, 0.1, checkRadius), hitPoint + Vector3d(checkRadius, agentHeight, checkRadius))
+                    val isObstructed = staticCollisionGrid.query(checkAABB).any { potentialObstacle ->
+                        if (potentialObstacle != hitPrimitive.mesh && meshAABBs[potentialObstacle]?.intersects(checkAABB) == true) {
+                            // Wykryto kolizję. Sprawdź, czy nie jest ona zanegowana przez "blush".
+                            val worldBlushes by lazy {
+                                potentialObstacle.mesh.blushes.map { blush ->
+                                    val transformedCorners = blush.getCorners().map { corner -> potentialObstacle.transformMatrix.transform(corner) }
+                                    AABB.fromCube(transformedCorners)
+                                }
+                            }
+                            // Jeśli obszar testowy agenta jest wewnątrz "blusha", to nie jest to przeszkoda.
+                            // Używamy uproszczonego sprawdzenia - czy środek AABB agenta jest w blushu.
+                            !worldBlushes.any { it.contains(checkAABB.min + (checkAABB.max - checkAABB.min) / 2.0) }
+                        } else false
+                    }
+                    if (isObstructed) {
+                        continue // Miejsce jest zablokowane przez geometrię bez blusha
+                    }
+
+                    val node = NavMeshNode(hitPoint + Vector3d(0.0, 1.0, 0.0)) // Lekko nad ziemią
+                    navMeshNodes.add(node)
+                    val gridKey = Triple(floor(hitPoint.x / navMeshCellSize).toInt(), floor(hitPoint.y / navMeshCellSize).toInt(), floor(hitPoint.z / navMeshCellSize).toInt())
+                    nodeGrid[gridKey] = node
+                }
+            }
+        }
+
+        generatedNavMeshRegions.addAll(nodeGrid.keys)
+        currentNavMesh.addAndConnectNodes(navMeshNodes, nodeGrid)
+        println("NavMesh extended with ${navMeshNodes.size} new nodes.")
+    }
+
     private fun traceReflection(reflectionOrigin: Vector3d, incidentDirection: Vector3d, surfaceNormal: Vector3d, incomingLight: Vector3d, bouncesLeft: Int, sourceMesh: PlacedMesh, sourceFaceIndex: Int, remainingDistance: Double, resolution: Int = HIGH_QualityRes) {
         if (bouncesLeft <= 0 || remainingDistance <= 0) {
             return
@@ -1891,6 +2116,18 @@ class DrawingPanel : StackPane() {
                         val gridX = (u * resolution).toInt().coerceIn(0, resolution - 1)
                         val gridY = (v * resolution).toInt().coerceIn(0, resolution - 1)
 
+                        giLightPoints.add(GI_LightPoint(hitFaceKey, gridX, gridY, outgoingLight))
+                    }
+                    /*
+                    // Stara logika, która bezpośrednio modyfikowała siatkę
+                    if (subLightmap != null) {
+                        val localPos = finalHitPoint - subLightmap.worldPosition
+                        val u = (localPos.x / cubeSize) + 0.5
+                        val v = (localPos.z / cubeSize) + 0.5
+
+                        val gridX = (u * resolution).toInt().coerceIn(0, resolution - 1)
+                        val gridY = (v * resolution).toInt().coerceIn(0, resolution - 1)
+
                         val existingColor = subLightmap.grid[gridX][gridY]
                         val newR = (existingColor.red + outgoingLight.x * GI_LightIntensity).coerceIn(0.0, 1.0)
                         val newG = (existingColor.green + outgoingLight.y * GI_LightIntensity).coerceIn(0.0, 1.0)
@@ -1898,6 +2135,7 @@ class DrawingPanel : StackPane() {
                         subLightmap.grid[gridX][gridY] = Color(newR, newG, newB, 1.0)
                         subLightmap.needsUpdate = true // Oznacz do ponownego wypalenia tekstury
                     }
+                    */
                 } else {
                     // Trafiono w normalną ścianę, użyj starego systemu giLightPoints
                     val barycentricCoords = finalHitPrimitive.barycentricCoords

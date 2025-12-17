@@ -10,6 +10,7 @@ import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.math.tan
@@ -366,6 +367,121 @@ class SpatialGrid<T>(private val cellSize: Double) {
 
     fun clear() {
         grid.clear()
+    }
+}
+
+class NavMeshNode(val position: Vector3d, val neighbors: MutableList<NavMeshNode> = mutableListOf()) {
+    // Ręczne zaimplementowanie equals i hashCode, aby uniknąć StackOverflowError
+    // z powodu rekurencyjnego wywoływania na sąsiadach w data class.
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+        other as NavMeshNode
+        return position == other.position
+    }
+
+    override fun hashCode(): Int {
+        return position.hashCode()
+    }
+}
+
+class NavMesh(
+    private val nodes: MutableList<NavMeshNode>,
+    private val nodeGrid: MutableMap<Triple<Int, Int, Int>, NavMeshNode>,
+    private val cellSize: Double
+) {
+    fun findClosestNode(position: Vector3d): NavMeshNode? {
+        val gridX = floor(position.x / cellSize).toInt()
+        val gridY = floor(position.y / cellSize).toInt()
+        val gridZ = floor(position.z / cellSize).toInt()
+
+        // Proste wyszukiwanie w najbliższym otoczeniu, jeśli dokładny klucz nie istnieje
+        return nodeGrid[Triple(gridX, gridY, gridZ)] ?: nodes.minByOrNull { it.position.distanceSquared(position) }
+    }
+
+    fun addAndConnectNodes(newNodes: List<NavMeshNode>, newGridEntries: Map<Triple<Int, Int, Int>, NavMeshNode>) {
+        nodes.addAll(newNodes)
+        nodeGrid.putAll(newGridEntries)
+
+        // Połącz nowe węzły ze sobą i z istniejącymi
+        for (node in newNodes) {
+            for (otherNode in nodes) { // Iteruj po wszystkich węzłach (starych i nowych)
+                if (node !== otherNode && node.position.distanceSquared(otherNode.position) < (cellSize * 1.5).pow(2)) {
+                    // Sprawdź, czy różnica wysokości jest akceptowalna (np. mniejsza niż wysokość kroku)
+                    val heightDifference = abs(node.position.y - otherNode.position.y)
+                    if (heightDifference < cellSize * 1.5) { // Pozwala na wchodzenie na "schody" o wysokości cellSize
+                        if (!node.neighbors.contains(otherNode)) node.neighbors.add(otherNode)
+                        if (!otherNode.neighbors.contains(node)) otherNode.neighbors.add(node)
+                    }
+                }
+            }
+        }
+    }
+
+    fun removeNodesInAABB(aabb: AABB) {
+        val nodesToRemove = nodes.filter { aabb.contains(it.position) }
+        if (nodesToRemove.isEmpty()) return
+
+        println("Removing ${nodesToRemove.size} NavMesh nodes in AABB...")
+        nodes.removeAll(nodesToRemove)
+
+        // Usuń usunięte węzły z siatki i z list sąsiadów pozostałych węzłów
+        val nodesToRemoveSet = nodesToRemove.toSet()
+        nodeGrid.entries.removeIf { it.value in nodesToRemoveSet }
+
+        // Użyj iteratora, aby bezpiecznie usuwać podczas iteracji
+        nodes.forEach { node ->
+            val iterator = node.neighbors.iterator()
+            while (iterator.hasNext()) {
+                if (iterator.next() in nodesToRemoveSet) {
+                    iterator.remove()
+                }
+            }
+        }
+    }
+
+    fun countNodesInRadius(center: Vector3d, radius: Double): Int {
+        val radiusSq = radius * radius
+        return nodes.count { it.position.distanceSquared(center) <= radiusSq }
+    }
+
+    fun findPath(startNode: NavMeshNode, endNode: NavMeshNode): List<Vector3d>? {
+        val openSet = mutableListOf(startNode)
+        val cameFrom = mutableMapOf<NavMeshNode, NavMeshNode>()
+        val gScore = mutableMapOf<NavMeshNode, Double>().withDefault { Double.POSITIVE_INFINITY }
+        gScore[startNode] = 0.0
+
+        val fScore = mutableMapOf<NavMeshNode, Double>().withDefault { Double.POSITIVE_INFINITY }
+        fScore[startNode] = startNode.position.distanceSquared(endNode.position)
+
+        while (openSet.isNotEmpty()) {
+            val current = openSet.minByOrNull { fScore.getValue(it) }!!
+
+            if (current == endNode) {
+                val path = mutableListOf<Vector3d>()
+                var temp = current
+                while (temp in cameFrom) {
+                    path.add(temp.position)
+                    temp = cameFrom.getValue(temp)
+                }
+                path.add(startNode.position)
+                return path.reversed()
+            }
+
+            openSet.remove(current)
+            for (neighbor in current.neighbors) {
+                val tentativeGScore = gScore.getValue(current) + current.position.distanceSquared(neighbor.position)
+                if (tentativeGScore < gScore.getValue(neighbor)) {
+                    cameFrom[neighbor] = current
+                    gScore[neighbor] = tentativeGScore
+                    fScore[neighbor] = tentativeGScore + neighbor.position.distanceSquared(endNode.position)
+                    if (neighbor !in openSet) {
+                        openSet.add(neighbor)
+                    }
+                }
+            }
+        }
+        return null // No path found
     }
 }
 
