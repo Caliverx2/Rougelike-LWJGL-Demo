@@ -1,4 +1,4 @@
-package org.lewapnoob.FileZero2
+package org.lewapnoob.FileZero
 
 import javafx.animation.AnimationTimer
 import javafx.embed.swing.SwingFXUtils

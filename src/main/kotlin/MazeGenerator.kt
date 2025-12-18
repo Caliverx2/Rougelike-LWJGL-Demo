@@ -1,4 +1,4 @@
-package org.lewapnoob.mazeGeneratorDijkstra
+package org.lewapnoob.MazeGeneratorDijkstra
 
 import java.awt.*
 import java.awt.event.ActionEvent

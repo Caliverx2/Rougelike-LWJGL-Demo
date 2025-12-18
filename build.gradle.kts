@@ -27,8 +27,9 @@ javafx {
     modules = listOf("javafx.controls", "javafx.graphics", "javafx.swing")
 }
 
-group = "org.lewapnoob.FileZero2"
+group = "org.lewapnoob.FileZero"
 version = "1.0-SNAPSHOT"
+val MainClass = "org.lewapnoob.FileZero.MainFileZeroKt"
 
 tasks {
     shadowJar {
@@ -40,15 +41,15 @@ tasks {
 
 tasks.withType<Jar> {
     manifest {
-        attributes["Main-Class"] = "org.lewapnoob.FileZero2.FileZeroJavaFXKt"
+        attributes["Main-Class"] = MainClass
     }
 }
 
 tasks.jar {
     manifest {
         attributes(
-            "Main-Class" to "org.lewapnoob.FileZero2.FileZeroJavaFXKt",
-            "Class-Path" to "org.lewapnoob.FileZero2.FileZeroJavaFXKt",
+            "Main-Class" to MainClass,
+            "Class-Path" to MainClass,
             "JVM-Options" to "-Xmx2048m -Xms1024m"
         )
     }
