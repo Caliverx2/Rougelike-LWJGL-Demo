@@ -118,6 +118,7 @@ class DrawingPanel : StackPane() {
     private var debugFly = false
     private var debugNoclip = false
     private var debugShowHitboxes = false
+    private var debugShowNavMesh = false
 
     // Stan opadania
     private val gravityAcceleration = 9.8 * cubeSize // Przyspieszenie grawitacyjne (cubeSize/s2)
@@ -605,6 +606,10 @@ class DrawingPanel : StackPane() {
         if (code == KeyCode.B) {
             debugShowHitboxes = !debugShowHitboxes
             println("debugShowHitboxes: $debugShowHitboxes")
+        }
+        if (code == KeyCode.N) {
+            debugShowNavMesh = !debugShowNavMesh
+            println("debugShowNavMesh: $debugShowNavMesh")
         }
         if (code == KeyCode.J) {
             val agentStartPos = Vector3d(63.2, -331.0, -868.3)
@@ -1106,58 +1111,76 @@ class DrawingPanel : StackPane() {
         val fpsText = "$fps"
         gc.fillText(fpsText, overlayCanvas.width - gc.font.size*2, gc.font.size + 4)
 
-        if (debugShowHitboxes) {
+        if (debugShowHitboxes || debugShowNavMesh) {
             val lookDirection = Vector3d(cos(cameraPitch) * sin(cameraYaw), sin(cameraPitch), cos(cameraPitch) * cos(cameraYaw)).normalize()
             val upVector = Vector3d(0.0, 1.0, 0.0)
             val viewMatrix = Matrix4x4.lookAt(cameraPosition, cameraPosition + lookDirection, upVector)
             val projectionMatrix = Matrix4x4.perspective(dynamicFov, overlayCanvas.width / overlayCanvas.height, 0.1, renderDistanceBlocks * 2)
             val combinedMatrix = projectionMatrix * viewMatrix
 
-            val allMeshes = staticMeshes + dynamicMeshes.values
-            for (mesh in allMeshes.filter { it.collision }) {
-                val aabb = meshAABBs[mesh] ?: continue
-                if (isAabbOutsideFrustum(aabb, combinedMatrix)) continue
+            if (debugShowHitboxes) {
+                val allMeshes = staticMeshes + dynamicMeshes.values
+                for (mesh in allMeshes.filter { it.collision }) {
+                    val aabb = meshAABBs[mesh] ?: continue
+                    if (isAabbOutsideFrustum(aabb, combinedMatrix)) continue
 
-                // Draw collision mesh (green)
-                gc.stroke = Color.LIMEGREEN
-                gc.lineWidth = 1.5
-                val worldVertices = mesh.getTransformedVertices()
-                for (faceIndices in mesh.mesh.faces) {
-                    if (faceIndices.size < 3) continue
-                    drawFaceWireframe(gc, faceIndices.map { worldVertices[it] }, combinedMatrix)
+                    // Draw collision mesh (green)
+                    gc.stroke = Color.LIMEGREEN
+                    gc.lineWidth = 1.5
+                    val worldVertices = mesh.getTransformedVertices()
+                    for (faceIndices in mesh.mesh.faces) {
+                        if (faceIndices.size < 3) continue
+                        drawFaceWireframe(gc, faceIndices.map { worldVertices[it] }, combinedMatrix)
+                    }
+
+                    // Draw blushes (red)
+                    gc.stroke = Color.RED
+                    gc.lineWidth = 1.0
+                    for (blush in mesh.mesh.blushes) {
+                        val blushCorners = blush.getCorners().map { mesh.transformMatrix.transform(it) }
+                        val blushFaces = listOf(
+                            listOf(blushCorners[0], blushCorners[1], blushCorners[3], blushCorners[2]), // Bottom
+                            listOf(blushCorners[4], blushCorners[5], blushCorners[7], blushCorners[6]), // Top
+                            listOf(blushCorners[0], blushCorners[1], blushCorners[5], blushCorners[4]), // Front
+                            listOf(blushCorners[2], blushCorners[3], blushCorners[7], blushCorners[6]), // Back
+                            listOf(blushCorners[1], blushCorners[3], blushCorners[7], blushCorners[5]), // Right
+                            listOf(blushCorners[0], blushCorners[2], blushCorners[6], blushCorners[4])  // Left
+                        )
+                        blushFaces.forEach { drawFaceWireframe(gc, it, combinedMatrix) }
+                    }
                 }
 
-                // Draw blushes (red)
-                gc.stroke = Color.RED
-                gc.lineWidth = 1.0
-                for (blush in mesh.mesh.blushes) {
-                    val blushCorners = blush.getCorners().map { mesh.transformMatrix.transform(it) }
-                    val blushFaces = listOf(
-                        listOf(blushCorners[0], blushCorners[1], blushCorners[3], blushCorners[2]), // Bottom
-                        listOf(blushCorners[4], blushCorners[5], blushCorners[7], blushCorners[6]), // Top
-                        listOf(blushCorners[0], blushCorners[1], blushCorners[5], blushCorners[4]), // Front
-                        listOf(blushCorners[2], blushCorners[3], blushCorners[7], blushCorners[6]), // Back
-                        listOf(blushCorners[1], blushCorners[3], blushCorners[7], blushCorners[5]), // Right
-                        listOf(blushCorners[0], blushCorners[2], blushCorners[6], blushCorners[4])  // Left
-                    )
-                    blushFaces.forEach { drawFaceWireframe(gc, it, combinedMatrix) }
+                // Draw pathfinding agent paths
+                synchronized(pathfindingAgents) {
+                    gc.stroke = Color.CYAN
+                    gc.lineWidth = 2.0
+                    for (agent in pathfindingAgents) {
+                        agent.path?.let { path ->
+                            if (path.size > 1) {
+                                for (i in 0 until path.size - 1) {
+                                    val p1 = projectToScreen(path[i], combinedMatrix, overlayCanvas.width, overlayCanvas.height)
+                                    val p2 = projectToScreen(path[i+1], combinedMatrix, overlayCanvas.width, overlayCanvas.height)
+                                    if (p1 != null && p2 != null) {
+                                        gc.strokeLine(p1.x, p1.y, p2.x, p2.y)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
-            // Draw pathfinding agent paths
-            synchronized(pathfindingAgents) {
-                gc.stroke = Color.CYAN
-                gc.lineWidth = 2.0
-                for (agent in pathfindingAgents) {
-                    agent.path?.let { path ->
-                        if (path.size > 1) {
-                            for (i in 0 until path.size - 1) {
-                                val p1 = projectToScreen(path[i], combinedMatrix, overlayCanvas.width, overlayCanvas.height)
-                                val p2 = projectToScreen(path[i+1], combinedMatrix, overlayCanvas.width, overlayCanvas.height)
-                                if (p1 != null && p2 != null) {
-                                    gc.strokeLine(p1.x, p1.y, p2.x, p2.y)
-                                }
-                            }
+            if (debugShowNavMesh) {
+                navMesh?.let { mesh ->
+                    gc.stroke = Color.BLUE
+                    gc.lineWidth = 1.0
+                    gc.fill = Color.LIGHTBLUE
+                    for (node in mesh.nodes) {
+                        val screenPos = projectToScreen(node.position, combinedMatrix, overlayCanvas.width, overlayCanvas.height) ?: continue
+                        gc.fillOval(screenPos.x - 2, screenPos.y - 2, 4.0, 4.0)
+                        for (neighbor in node.neighbors) {
+                            val neighborScreenPos = projectToScreen(neighbor.position, combinedMatrix, overlayCanvas.width, overlayCanvas.height) ?: continue
+                            gc.strokeLine(screenPos.x, screenPos.y, neighborScreenPos.x, neighborScreenPos.y)
                         }
                     }
                 }

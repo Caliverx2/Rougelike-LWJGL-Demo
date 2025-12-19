@@ -50,7 +50,7 @@ tasks.jar {
         attributes(
             "Main-Class" to MainClass,
             "Class-Path" to MainClass,
-            "JVM-Options" to "-Xmx512m -Xms256m"
+            "JVM-Options" to "-Xmx1024m -Xms512m"
         )
     }
 }

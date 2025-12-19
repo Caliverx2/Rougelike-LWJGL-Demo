@@ -386,7 +386,7 @@ class NavMeshNode(val position: Vector3d, val neighbors: MutableList<NavMeshNode
 }
 
 class NavMesh(
-    private val nodes: MutableList<NavMeshNode>,
+    val nodes: MutableList<NavMeshNode>,
     private val nodeGrid: MutableMap<Triple<Int, Int, Int>, NavMeshNode>,
     private val cellSize: Double
 ) {
