@@ -316,7 +316,7 @@ class DrawingPanel : StackPane() {
             "pyramid" to createPyramidMesh(cubeSize, Color.RED),
             "invertedPyramid" to createInvertedPyramidMesh(cubeSize, Color.DEEPSKYBLUE),
             "tower" to createTowerMesh(cubeSize, Color.WHITE),
-            "kotlin" to createKotlinModelMesh(cubeSize, Color.GRAY),
+            "kotlin" to createKotlinModelMesh(cubeSize, Color.DARKVIOLET),
             "tank" to createTankMesh(cubeSize, Color.GREEN),
             "offroadCar" to createOffroadCarMesh(cubeSize, Color.GRAY),
             "stair" to createStairMesh(cubeSize, Color.WHITE),
@@ -913,7 +913,7 @@ class DrawingPanel : StackPane() {
         }
 
         // Logika skoku
-        if (pressedKeys.contains(KeyCode.SPACE) && !debugFly && isGrounded) {
+        if ((pressedKeys.contains(KeyCode.SPACE) && !debugFly) && (debugNoclip || isGrounded)) {
             val jumpHeight = 0.75 * cubeSize
             verticalVelocity = sqrt(2 * gravityAcceleration * jumpHeight)
             isGrounded = false
@@ -1256,14 +1256,18 @@ class DrawingPanel : StackPane() {
             val agentsToRemove = mutableListOf<PathfindingAgent>()
             for (agent in pathfindingAgents) {
                 agent.targetPosition = cameraPosition.copy()
+                val distSq = agent.position.distanceSquared(agent.targetPosition)
+                val activationDist = 20.0 * cubeSize
+                if (distSq > activationDist * activationDist) {
+                    continue
+                }
                 val now = System.nanoTime()
 
-                // Co sekundę sprawdzaj i rozszerzaj NavMesh wokół agenta ORAZ gracza
+                // Co sekundę sprawdzaj i rozszerzaj NavMesh wokół agenta
                 if (now - agent.lastNavMeshCheckTime > 1_000_000_000) {
                     val nodesNearby = navMesh?.countNodesInRadius(agent.position, 3.0 * cubeSize) ?: 0
-                    if (nodesNearby < 200) {
-                        // Rozszerz siatkę wokół agenta i gracza, aby połączyć ich światy
-                        extendNavMesh(cameraPosition, 5.0 * cubeSize)
+                    if (agent.path == null || nodesNearby < 200) {
+                        // Rozszerz siatkę wokół agenta
                         extendNavMesh(agent.position, 5.0 * cubeSize)
                     }
                      agent.lastNavMeshCheckTime = now
@@ -1271,16 +1275,18 @@ class DrawingPanel : StackPane() {
 
                 // Recalculate path periodically
                 if (agent.path == null || now - agent.lastPathUpdateTime > 1_000_000_000) { // Update path every second
-                    val currentNavMesh = navMesh ?: continue
-                    val startNode = currentNavMesh.findClosestNode(agent.position) ?: continue
-                    val endNode = currentNavMesh.findClosestNode(agent.targetPosition)
+                    agent.lastPathUpdateTime = now
+                    val currentNavMesh = navMesh
+                    if (currentNavMesh != null) {
+                        val startNode = currentNavMesh.findClosestNode(agent.position)
+                        val endNode = currentNavMesh.findClosestNode(agent.targetPosition)
 
-                    if (endNode != null) {
-                        agent.path = currentNavMesh.findPath(startNode, endNode)
-                        agent.currentPathIndex = 0
-                        agent.lastPathUpdateTime = now
-                    } else {
-                        // Cel jest poza znanym NavMesh, rozszerz go w następnej iteracji sprawdzania
+                        if (startNode != null && endNode != null) {
+                            agent.path = currentNavMesh.findPath(startNode, endNode)
+                            agent.currentPathIndex = 0
+                        } else {
+                            agent.path = null
+                        }
                     }
                 }
 
@@ -1299,20 +1305,50 @@ class DrawingPanel : StackPane() {
                     if (distanceToWaypoint < 10.0) { // Threshold to move to next waypoint
                         agent.currentPathIndex++
                     } else {
-                        val moveVector = direction * agent.speed * deltaTime
-                        agent.position += moveVector
+                        val proposedPos = agent.position + direction * agent.speed * deltaTime
+                        val rayOrigin = Vector3d(proposedPos.x, agent.position.y + 2.0 * cubeSize, proposedPos.z)
+                        val hit = staticBvh.intersectWithDetails(rayOrigin, Vector3d(0.0, -1.0, 0.0), 10.0 * cubeSize)
 
-                        // Update mesh position and rotation
-                        val agentYaw = atan2(direction.x, direction.z) + PI // Dodaj PI, aby obrócić o 180 stopni
+                        if (hit != null) {
+                            val groundY = rayOrigin.y - hit.second
+                            // NavMesh nodes są generowane +1.0 nad ziemią, więc agenta też trzymamy +1.0, lub po prostu na ziemi + epsilon.
+                            // Tutaj trzymamy go na poziomie węzłów NavMesh (groundY + 1.0), aby pasował do ścieżki.
+                            val targetY = groundY + 1.0
+                            val heightDiff = targetY - agent.position.y
+
+                            // Pozwól na wejście (rampa) max 0.6 bloku, i spadanie (grawitacja)
+                            if (heightDiff <= 0.6 * cubeSize && heightDiff >= -3.0 * cubeSize) {
+                                agent.position = Vector3d(proposedPos.x, targetY, proposedPos.z)
+                            }
+                        }
+
+                        val agentYaw = atan2(direction.x, direction.z) + PI
                         agent.mesh.transformMatrix = Matrix4x4.translation(agent.position.x, agent.position.y, agent.position.z) * Matrix4x4.rotationY(agentYaw) * Matrix4x4.scale(0.3, 0.3, 0.3)
                         meshAABBs[agent.mesh] = AABB.fromCube(agent.mesh.getTransformedVertices())
                     }
                 } ?: run {
-                    // If no path, try to find the closest node and move towards it to get back on track
-                    navMesh?.findClosestNode(agent.position)?.let { closestNode ->
-                        val direction = (closestNode.position - agent.position).normalize()
-                        agent.position += direction * agent.speed * deltaTime
+                    // Fallback: No path found. Move towards target and generate mesh.
+                    val direction = (agent.targetPosition - agent.position).normalize()
+                    val proposedPos = agent.position + direction * agent.speed * deltaTime
+
+                    // Fizyka dla ruchu "mimowolnego" - pozwala wejść na rampę, ale blokuje ściany
+                    val rayOrigin = Vector3d(proposedPos.x, agent.position.y + 2.0 * cubeSize, proposedPos.z)
+                    val hit = staticBvh.intersectWithDetails(rayOrigin, Vector3d(0.0, -1.0, 0.0), 10.0 * cubeSize)
+
+                    if (hit != null) {
+                        val groundY = rayOrigin.y - hit.second
+                        val targetY = groundY + 1.0 // Utrzymujemy konwencję wysokości NavMesh
+                        val heightDiff = targetY - agent.position.y
+
+                        // Sprawdź czy to nie ściana (max 0.6 bloku w górę)
+                        if (heightDiff <= 0.9 * cubeSize && heightDiff >= -3.0 * cubeSize) {
+                            agent.position = Vector3d(proposedPos.x, targetY, proposedPos.z)
+                        }
                     }
+                    // Update mesh position and rotation
+                    val agentYaw = atan2(direction.x, direction.z) + PI
+                    agent.mesh.transformMatrix = Matrix4x4.translation(agent.position.x, agent.position.y, agent.position.z) * Matrix4x4.rotationY(agentYaw) * Matrix4x4.scale(0.3, 0.3, 0.3)
+                    meshAABBs[agent.mesh] = AABB.fromCube(agent.mesh.getTransformedVertices())
                 }
             }
             pathfindingAgents.removeAll(agentsToRemove)

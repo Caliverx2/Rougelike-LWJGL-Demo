@@ -406,7 +406,7 @@ class NavMesh(
         // Połącz nowe węzły ze sobą i z istniejącymi
         for (node in newNodes) {
             for (otherNode in nodes) { // Iteruj po wszystkich węzłach (starych i nowych)
-                if (node !== otherNode && node.position.distanceSquared(otherNode.position) < (cellSize * 1.5).pow(2)) {
+                if (node !== otherNode && node.position.distanceSquared(otherNode.position) < (cellSize * 2.1).pow(2)) {
                     // Sprawdź, czy różnica wysokości jest akceptowalna (np. mniejsza niż wysokość kroku)
                     val heightDifference = abs(node.position.y - otherNode.position.y)
                     if (heightDifference < cellSize * 1.5) { // Pozwala na wchodzenie na "schody" o wysokości cellSize
