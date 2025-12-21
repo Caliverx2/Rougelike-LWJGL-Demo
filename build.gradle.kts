@@ -28,7 +28,6 @@ javafx {
 }
 
 group = "org.lewapnoob.FileZero"
-version = "1.0-SNAPSHOT"
 val MainClass = "org.lewapnoob.FileZero.MainFileZeroKt"
 
 tasks {
@@ -46,6 +45,10 @@ tasks.withType<Jar> {
 }
 
 tasks.jar {
+    archiveBaseName.set("FileZero_POCO_X6_PRO_5G")
+    archiveVersion.set("")
+    archiveClassifier.set("")
+
     manifest {
         attributes(
             "Main-Class" to MainClass,
