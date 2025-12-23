@@ -1329,7 +1329,7 @@ class DrawingPanel : StackPane() {
                         agent.currentPathIndex++
                     } else {
                         val proposedPos = agent.position + direction * agent.speed * deltaTime
-                        val rayOrigin = Vector3d(proposedPos.x, agent.position.y + 2.0 * cubeSize, proposedPos.z)
+                        val rayOrigin = Vector3d(proposedPos.x, agent.position.y + 1.9 * cubeSize, proposedPos.z)
                         val hit = staticBvh.intersectWithDetails(rayOrigin, Vector3d(0.0, -1.0, 0.0), 10.0 * cubeSize)
 
                         if (hit != null) {
@@ -1355,7 +1355,7 @@ class DrawingPanel : StackPane() {
                     val proposedPos = agent.position + direction * agent.speed * deltaTime
 
                     // Fizyka dla ruchu "mimowolnego" - pozwala wejść na rampę, ale blokuje ściany
-                    val rayOrigin = Vector3d(proposedPos.x, agent.position.y + 2.0 * cubeSize, proposedPos.z)
+                    val rayOrigin = Vector3d(proposedPos.x, agent.position.y + 1.9 * cubeSize, proposedPos.z)
                     val hit = staticBvh.intersectWithDetails(rayOrigin, Vector3d(0.0, -1.0, 0.0), 10.0 * cubeSize)
 
                     if (hit != null) {
@@ -2069,7 +2069,7 @@ class DrawingPanel : StackPane() {
                 val z = gz * navMeshCellSize
 
                 // Rzutuj promień z góry w dół, aby znaleźć podłoże
-                val rayOrigin = Vector3d(x, center.y + 2 * cubeSize, z)
+                val rayOrigin = Vector3d(x, center.y + 1.9 * cubeSize, z)
                 val rayDir = Vector3d(0.0, -1.0, 0.0)
 
                 val hitResult = staticBvh.intersectWithDetails(rayOrigin, rayDir, 10 * cubeSize)
