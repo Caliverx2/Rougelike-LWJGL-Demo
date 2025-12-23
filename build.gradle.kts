@@ -52,8 +52,11 @@ tasks.jar {
     manifest {
         attributes(
             "Main-Class" to MainClass,
-            "Class-Path" to MainClass,
             "JVM-Options" to "-Xmx1024m -Xms512m"
         )
     }
+
+    from(configurations.runtimeClasspath.get().map { if (it.isDirectory) it else zipTree(it) })
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
 }
