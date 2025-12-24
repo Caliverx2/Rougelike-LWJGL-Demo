@@ -650,7 +650,11 @@ class DrawingPanel : StackPane() {
 
             // 2. DOPIERO TERAZ zaktualizuj NavMesh, który użyje nowej fizyki.
             val blockAABB = AABB.fromCube(newMesh.getTransformedVertices())
-            invalidateNavMeshInAABB(blockAABB)
+            val expandedAABB = AABB(
+                blockAABB.min - Vector3d(cubeSize, cubeSize, cubeSize),
+                blockAABB.max + Vector3d(cubeSize, cubeSize, cubeSize)
+            )
+            invalidateNavMeshInAABB(expandedAABB)
             extendNavMesh(initialPos, cubeSize * 1.5) // Użyj nieco większego promienia
         }
     }
@@ -658,6 +662,17 @@ class DrawingPanel : StackPane() {
     private fun invalidateNavMeshInAABB(aabb: AABB) {
         navMesh?.let {
             it.removeNodesInAABB(aabb)
+        }
+        val navMeshCellSize = cubeSize / 2.0
+        val minX = floor(aabb.min.x / navMeshCellSize).toInt()
+        val maxX = ceil(aabb.max.x / navMeshCellSize).toInt()
+        val minZ = floor(aabb.min.z / navMeshCellSize).toInt()
+        val maxZ = ceil(aabb.max.z / navMeshCellSize).toInt()
+
+        for (gx in minX..maxX) {
+            for (gz in minZ..maxZ) {
+                generatedNavMeshRegions.remove(Triple(gx, 0, gz))
+            }
         }
     }
 
@@ -2065,8 +2080,8 @@ class DrawingPanel : StackPane() {
                 val regionKey = Triple(gx, 0, gz)
                 if (generatedNavMeshRegions.contains(regionKey)) continue
 
-                val x = gx * navMeshCellSize
-                val z = gz * navMeshCellSize
+                val x = (gx + 0.5) * navMeshCellSize
+                val z = (gz + 0.5) * navMeshCellSize
 
                 // Rzutuj promień z góry w dół, aby znaleźć podłoże
                 val rayOrigin = Vector3d(x, center.y + 1.9 * cubeSize, z)
@@ -2116,8 +2131,67 @@ class DrawingPanel : StackPane() {
             }
         }
 
-        generatedNavMeshRegions.addAll(nodeGrid.keys)
+        generatedNavMeshRegions.addAll(nodeGrid.keys.map { Triple(it.first, 0, it.third) })
         currentNavMesh.addAndConnectNodes(navMeshNodes, nodeGrid)
+
+        // Post-processing: Validate diagonal connections
+        // Remove connections that pass through walls or over air (gaps)
+        val checkRadius2 = playerVertexRadius * 0.5
+        for (node in navMeshNodes) {
+            val neighbors = ArrayList(node.neighbors)
+            for (neighbor in neighbors) {
+                // Check if diagonal (distance check)
+                val distSq = node.position.distanceSquared(neighbor.position)
+                // cellSize is cubeSize / 2.0. Diagonal is sqrt(2) * cellSize.
+                // Threshold: slightly larger than cellSize^2
+                if (distSq > (navMeshCellSize * navMeshCellSize * 1.1)) {
+                    // Only validate diagonal connections on the same level (flat terrain)
+                    // Multi-level connections (ramps) are skipped to avoid breaking them
+                    if (abs(node.position.y - neighbor.position.y) > 0.1 * cubeSize) continue
+
+                    val midPos = (node.position + neighbor.position) * 0.5
+
+                    // 1. Check for ground at midpoint
+                    val rayOrigin = midPos + Vector3d(0.0, 1.0, 0.0)
+                    val hit = staticBvh.intersectWithDetails(rayOrigin, Vector3d(0.0, -1.0, 0.0), 5.0 * cubeSize)
+
+                    var isValid = true
+                    if (hit == null) {
+                        isValid = false
+                    } else {
+                        val groundY = rayOrigin.y - hit.second
+                        // Ensure ground is at similar height (not a drop)
+                        if (abs(groundY - node.position.y) > 0.5 * cubeSize) {
+                            isValid = false
+                        }
+                    }
+
+                    // 2. Check for obstruction at midpoint
+                    if (isValid) {
+                        val checkAABB = AABB(
+                            midPos - Vector3d(checkRadius2, 0.1, checkRadius2),
+                            midPos + Vector3d(checkRadius2, agentHeight, checkRadius2)
+                        )
+                        val isObstructed = staticCollisionGrid.query(checkAABB).any { potentialObstacle ->
+                            if (potentialObstacle != hit!!.first.mesh && meshAABBs[potentialObstacle]?.intersects(checkAABB) == true) {
+                                val worldBlushes = potentialObstacle.mesh.blushes.map { blush ->
+                                    val transformedCorners = blush.getCorners().map { corner -> potentialObstacle.transformMatrix.transform(corner) }
+                                    AABB.fromCube(transformedCorners)
+                                }
+                                !worldBlushes.any { it.contains(checkAABB.min + (checkAABB.max - checkAABB.min) / 2.0) }
+                            } else false
+                        }
+                        if (isObstructed) isValid = false
+                    }
+
+                    if (!isValid) {
+                        node.neighbors.remove(neighbor)
+                        neighbor.neighbors.remove(node)
+                    }
+                }
+            }
+        }
+
         println("NavMesh extended with ${navMeshNodes.size} new nodes.")
     }
 
