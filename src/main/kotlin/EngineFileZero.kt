@@ -154,6 +154,11 @@ class DrawingPanel : StackPane() {
     private val virtualWidth = baseResolutionWidth / renderDownscaleFactor
     private val virtualHeight = baseResolutionHeight / renderDownscaleFactor
 
+    private val outputUpscaleFactor = 2
+    private val outputWidth = virtualWidth * outputUpscaleFactor
+    private val outputHeight = virtualHeight * outputUpscaleFactor
+    private lateinit var upscaledPixelBuffer: IntArray
+    private var previousCombinedMatrix: Matrix4x4? = null
     private lateinit var depthBuffer: DoubleArray
     private lateinit var pixelBuffer: IntArray
     private var bgColorInt: Int
@@ -239,7 +244,8 @@ class DrawingPanel : StackPane() {
 
         depthBuffer = DoubleArray(virtualWidth * virtualHeight) { Double.MAX_VALUE }
         pixelBuffer = IntArray(virtualWidth * virtualHeight)
-        backBuffer = WritableImage(virtualWidth, virtualHeight)
+        upscaledPixelBuffer = IntArray(outputWidth * outputHeight)
+        backBuffer = WritableImage(outputWidth, outputHeight)
 
         val bgColor = Color.rgb(40, 40, 40)
         bgColorInt = colorToInt(bgColor)
@@ -1186,19 +1192,6 @@ class DrawingPanel : StackPane() {
             }
 
             if (debugShowNavMesh) {
-                navMesh?.let { mesh ->
-                    gc.stroke = Color.BLUE
-                    gc.lineWidth = 1.0
-                    gc.fill = Color.LIGHTBLUE
-                    for (node in mesh.nodes) {
-                        val screenPos = projectToScreen(node.position, combinedMatrix, overlayCanvas.width, overlayCanvas.height) ?: continue
-                        gc.fillOval(screenPos.x - 2, screenPos.y - 2, 4.0, 4.0)
-                        for (neighbor in node.neighbors) {
-                            val neighborScreenPos = projectToScreen(neighbor.position, combinedMatrix, overlayCanvas.width, overlayCanvas.height) ?: continue
-                            gc.strokeLine(screenPos.x, screenPos.y, neighborScreenPos.x, neighborScreenPos.y)
-                        }
-                    }
-                }
             }
         }
         /*for (x in 0 until gridDimension) {
@@ -2547,7 +2540,8 @@ class DrawingPanel : StackPane() {
         if (depthBuffer.size != virtualWidth * virtualHeight) {
             depthBuffer = DoubleArray(virtualWidth * virtualHeight) { Double.MAX_VALUE }
             pixelBuffer = IntArray(virtualWidth * virtualHeight)
-            backBuffer = WritableImage(virtualWidth, virtualHeight)
+            upscaledPixelBuffer = IntArray(outputWidth * outputHeight)
+            backBuffer = WritableImage(outputWidth, outputHeight)
             imageView.image = backBuffer
         }
 
@@ -2821,12 +2815,129 @@ class DrawingPanel : StackPane() {
             rasterizeTexturedTriangle(pixelBuffer, renderableFace, virtualWidth, virtualHeight)
         }
 
-        backBuffer.pixelWriter.setPixels(0, 0, virtualWidth, virtualHeight, PixelFormat.getIntArgbInstance(), pixelBuffer, 0, virtualWidth)
+        if (debugShowNavMesh) {
+            drawNavMeshDebug(combinedMatrix)
+        }
+
+        // Upscaling pass (Nearest Neighbor Dynamic)
+        val upscaleTasks = mutableListOf<Future<*>>()
+        val upscaleBandHeight = virtualHeight / coreCount
+
+        for (i in 0 until coreCount) {
+            val yStart = i * upscaleBandHeight
+            val yEnd = if (i == coreCount - 1) virtualHeight else yStart + upscaleBandHeight
+
+            upscaleTasks.add(executor.submit {
+                for (y in yStart until yEnd) {
+                    val srcRowStart = y * virtualWidth
+
+                    for (dy in 0 until outputUpscaleFactor) {
+                        val dstRowStart = ((y * outputUpscaleFactor) + dy) * outputWidth
+                        var dstIndex = dstRowStart
+                        for (x in 0 until virtualWidth) {
+                            val color = pixelBuffer[srcRowStart + x]
+                            for (dx in 0 until outputUpscaleFactor) {
+                                upscaledPixelBuffer[dstIndex++] = color
+                            }
+                        }
+                    }
+                }
+            })
+        }
+        for (task in upscaleTasks) { task.get() }
+
+        backBuffer.pixelWriter.setPixels(0, 0, outputWidth, outputHeight, PixelFormat.getIntArgbInstance(), upscaledPixelBuffer, 0, outputWidth)
         imageView.image = backBuffer
         drawOverlay()
 
+        previousCombinedMatrix = combinedMatrix
         frameCount++
         isRendering.set(false)
+    }
+
+    private fun drawNavMeshDebug(matrix: Matrix4x4) {
+        val mesh = navMesh ?: return
+        val nodeColor = 0xFFADD8E6.toInt() // LightBlue
+        val edgeColor = 0xFF0000FF.toInt() // Blue
+
+        for (node in mesh.nodes) {
+            val proj = matrix.transformHomogeneous(node.position)
+            if (proj.w > 0) {
+                val x = ((proj.x / proj.w + 1) * virtualWidth / 2.0).toInt()
+                val y = ((1 - proj.y / proj.w) * virtualHeight / 2.0).toInt()
+                val z = proj.z / proj.w
+
+                for (dy in -1..1) {
+                    for (dx in -1..1) {
+                        val px = x + dx
+                        val py = y + dy
+                        if (px in 0 until virtualWidth && py in 0 until virtualHeight) {
+                            val idx = py * virtualWidth + px
+                            if (z < depthBuffer[idx]) {
+                                pixelBuffer[idx] = nodeColor
+                            }
+                        }
+                    }
+                }
+            }
+
+            for (neighbor in node.neighbors) {
+                rasterizeLine(node.position, neighbor.position, edgeColor, matrix)
+            }
+        }
+    }
+
+    private fun rasterizeLine(p0: Vector3d, p1: Vector3d, color: Int, matrix: Matrix4x4) {
+        val proj0 = matrix.transformHomogeneous(p0)
+        val proj1 = matrix.transformHomogeneous(p1)
+
+        var x0h = proj0.x; var y0h = proj0.y; var z0h = proj0.z; var w0 = proj0.w
+        var x1h = proj1.x; var y1h = proj1.y; var z1h = proj1.z; var w1 = proj1.w
+
+        if (w0 <= 0 && w1 <= 0) return
+
+        if (w0 <= 0 || w1 <= 0) {
+            val near = 0.001
+            val t = (near - w0) / (w1 - w0)
+            val x = x0h + (x1h - x0h) * t
+            val y = y0h + (y1h - y0h) * t
+            val z = z0h + (z1h - z0h) * t
+            val w = near
+            if (w0 <= 0) { x0h = x; y0h = y; z0h = z; w0 = w }
+            else { x1h = x; y1h = y; z1h = z; w1 = w }
+        }
+
+        val x0 = ((x0h / w0 + 1) * virtualWidth / 2.0).toInt()
+        val y0 = ((1 - y0h / w0) * virtualHeight / 2.0).toInt()
+        val z0 = z0h / w0
+
+        val x1 = ((x1h / w1 + 1) * virtualWidth / 2.0).toInt()
+        val y1 = ((1 - y1h / w1) * virtualHeight / 2.0).toInt()
+        val z1 = z1h / w1
+
+        var x = x0; var y = y0; var z = z0
+        val dx = abs(x1 - x0); val dy = abs(y1 - y0)
+        val sx = if (x0 < x1) 1 else -1; val sy = if (y0 < y1) 1 else -1
+        var err = dx - dy
+        val dist = max(dx, dy).toDouble()
+        val dz = if (dist > 0) (z1 - z0) / dist else 0.0
+        val maxSteps = max(virtualWidth, virtualHeight) * 2
+        var steps = 0
+
+        while (true) {
+            if (x in 0 until virtualWidth && y in 0 until virtualHeight) {
+                val idx = y * virtualWidth + x
+                if (z < depthBuffer[idx]) {
+                    pixelBuffer[idx] = color
+                }
+            }
+            if (x == x1 && y == y1) break
+            if (steps++ > maxSteps) break
+            val e2 = 2 * err
+            if (e2 > -dy) { err -= dy; x += sx }
+            if (e2 < dx) { err += dx; y += sy }
+            z += dz
+        }
     }
 
     private fun rasterizeTexturedTriangle(pixelBuffer: IntArray, renderableFace: RenderableFace, screenWidth: Int, screenHeight: Int, bandYStart: Int = 0, bandYEnd: Int = screenHeight) {
